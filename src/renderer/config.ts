@@ -253,7 +253,7 @@ export const defaultConfig: AppConfig = {
     openai: {
       enabled: false,
       apiKey: '',
-      baseUrl: 'https://api.openai.com',
+      baseUrl: 'https://api.openai.com/v1',
       apiFormat: 'openai',
       models: [
         { id: 'gpt-5.4', name: 'GPT-5.4', supportsImage: true },
