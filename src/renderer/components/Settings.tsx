@@ -3130,7 +3130,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
 
                   {/* API Key mode */}
                   {!minimaxIsOAuthMode && (
-                    <div>
+                    <div className="min-h-[68px]">
                       <div className="flex items-center justify-between mb-1">
                         <label htmlFor="minimax-apiKey" className="block text-xs font-medium dark:text-claude-darkText text-claude-text">
                           {i18nService.t('apiKey')}
@@ -3180,7 +3180,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
 
                   {/* OAuth mode */}
                   {minimaxIsOAuthMode && (
-                    <div className="space-y-2">
+                    <div className="space-y-2 min-h-[68px]">
                       {/* Already logged in */}
                       {minimaxOAuthPhase.kind === 'idle' && providers.minimax.apiKey && (
                         <div className="p-3 rounded-xl bg-green-500/10 border border-green-500/20 space-y-2">
@@ -3418,7 +3418,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
 
                       {/* API Key Tab */}
                       {qwenAuthTab === 'apikey' && (
-                        <div>
+                        <div className="min-h-[68px]">
                           <div className="flex items-center justify-between mb-1">
                             <label htmlFor="qwen-apiKey" className="block text-xs font-medium dark:text-claude-darkText text-claude-text">
                               API Key
@@ -3468,7 +3468,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
 
                       {/* OAuth Tab */}
                       {qwenAuthTab === 'oauth' && (
-                        <div>
+                        <div className="min-h-[68px]">
                           <label className="block text-xs font-medium dark:text-claude-darkText text-claude-text mb-2">
                             {i18nService.t('qwenOAuthLoginFree')}
                           </label>
