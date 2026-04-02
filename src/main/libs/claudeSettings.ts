@@ -580,24 +580,6 @@ export function resolveAllEnabledProviderConfigs(): ProviderRawConfig[] {
 }
 
 /**
- * Resolve the API config for a specific (providerKey, modelId) pair.
- * Used by yd_cowork engine when a session has a per-session model override.
- * Returns null if the provider is not found or not configured.
- */
-export function resolveApiConfigForModel(providerKey: string, modelId: string): CoworkApiConfig | null {
-  const providers = resolveAllEnabledProviderConfigs();
-  const provider = providers.find((p) => p.providerName === providerKey);
-  if (!provider) return null;
-  const apiType = provider.apiType === 'anthropic' ? 'anthropic' : 'openai';
-  return {
-    apiKey: provider.apiKey,
-    baseURL: provider.baseURL,
-    model: modelId,
-    apiType,
-  };
-}
-
-/**
  * Returns the long-lived GitHub OAuth token used by OpenClaw's built-in
  * github-copilot provider to exchange for short-lived Copilot API tokens.
  * OpenClaw reads this from the COPILOT_GITHUB_TOKEN env var.

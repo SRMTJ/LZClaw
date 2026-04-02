@@ -382,8 +382,6 @@ export interface CoworkSession {
   executionMode: CoworkExecutionMode;
   activeSkillIds: string[];
   agentId: string;
-  modelId?: string;
-  providerKey?: string;
   messages: CoworkMessage[];
   createdAt: number;
   updatedAt: number;
@@ -395,8 +393,6 @@ export interface CoworkSessionSummary {
   status: CoworkSessionStatus;
   pinned: boolean;
   agentId: string;
-  modelId?: string;
-  providerKey?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -610,14 +606,12 @@ export class CoworkStore {
       execution_mode?: string | null;
       active_skill_ids?: string | null;
       agent_id?: string | null;
-      model_id?: string | null;
-      provider_key?: string | null;
       created_at: number;
       updated_at: number;
     }
 
     const row = this.getOne<SessionRow>(`
-      SELECT id, title, claude_session_id, status, pinned, cwd, system_prompt, execution_mode, active_skill_ids, agent_id, model_id, provider_key, created_at, updated_at
+      SELECT id, title, claude_session_id, status, pinned, cwd, system_prompt, execution_mode, active_skill_ids, agent_id, created_at, updated_at
       FROM cowork_sessions
       WHERE id = ?
     `, [id]);
@@ -647,8 +641,6 @@ export class CoworkStore {
       executionMode: (row.execution_mode as CoworkExecutionMode) || 'local',
       activeSkillIds,
       agentId: row.agent_id || 'main',
-      modelId: row.model_id || undefined,
-      providerKey: row.provider_key || undefined,
       messages,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
@@ -721,15 +713,6 @@ export class CoworkStore {
     this.saveDb();
   }
 
-  updateSessionModel(id: string, modelId: string | null, providerKey: string | null): void {
-    const now = Date.now();
-    this.db.run(
-      'UPDATE cowork_sessions SET model_id = ?, provider_key = ?, updated_at = ? WHERE id = ?',
-      [modelId, providerKey, now, id],
-    );
-    this.saveDb();
-  }
-
   listSessions(agentId?: string): CoworkSessionSummary[] {
     interface SessionSummaryRow {
       id: string;
@@ -737,8 +720,6 @@ export class CoworkStore {
       status: string;
       pinned: number | null;
       agent_id: string | null;
-      model_id: string | null;
-      provider_key: string | null;
       created_at: number;
       updated_at: number;
     }
@@ -746,14 +727,14 @@ export class CoworkStore {
     let rows: SessionSummaryRow[];
     if (agentId) {
       rows = this.getAll<SessionSummaryRow>(`
-        SELECT id, title, status, pinned, agent_id, model_id, provider_key, created_at, updated_at
+        SELECT id, title, status, pinned, agent_id, created_at, updated_at
         FROM cowork_sessions
         WHERE agent_id = ?
         ORDER BY pinned DESC, updated_at DESC
       `, [agentId]);
     } else {
       rows = this.getAll<SessionSummaryRow>(`
-        SELECT id, title, status, pinned, agent_id, model_id, provider_key, created_at, updated_at
+        SELECT id, title, status, pinned, agent_id, created_at, updated_at
         FROM cowork_sessions
         ORDER BY pinned DESC, updated_at DESC
       `);
@@ -765,8 +746,6 @@ export class CoworkStore {
       status: row.status as CoworkSessionStatus,
       pinned: Boolean(row.pinned),
       agentId: row.agent_id || 'main',
-      modelId: row.model_id || undefined,
-      providerKey: row.provider_key || undefined,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));

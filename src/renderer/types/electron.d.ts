@@ -26,8 +26,6 @@ interface CoworkSession {
   executionMode: 'auto' | 'local' | 'sandbox';
   activeSkillIds: string[];
   agentId: string;
-  modelId?: string;
-  providerKey?: string;
   messages: CoworkMessage[];
   createdAt: number;
   updatedAt: number;
@@ -47,8 +45,6 @@ interface CoworkSessionSummary {
   status: 'idle' | 'running' | 'completed' | 'error';
   pinned: boolean;
   agentId?: string;
-  modelId?: string;
-  providerKey?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -342,7 +338,6 @@ interface IElectronAPI {
     deleteSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
     deleteSessions: (sessionIds: string[]) => Promise<{ success: boolean; error?: string }>;
     setSessionPinned: (options: { sessionId: string; pinned: boolean }) => Promise<{ success: boolean; error?: string }>;
-    setSessionModel: (options: { sessionId: string; modelId: string | null; providerKey: string | null }) => Promise<{ success: boolean; error?: string }>;
     renameSession: (options: { sessionId: string; title: string }) => Promise<{ success: boolean; error?: string }>;
     getSession: (sessionId: string) => Promise<{ success: boolean; session?: CoworkSession; error?: string }>;
     remoteManaged: (sessionId: string) => Promise<{ success: boolean; remoteManaged: boolean; error?: string }>;

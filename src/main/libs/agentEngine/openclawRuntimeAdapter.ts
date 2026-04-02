@@ -32,7 +32,7 @@ import { extractOpenClawAssistantStreamText } from '../openclawAssistantText';
 import { buildOpenClawLocalTimeContextPrompt } from '../openclawLocalTimeContextPrompt';
 import { isDeleteCommand, getCommandDangerLevel } from '../commandSafety';
 import { setCoworkProxySessionId } from '../coworkOpenAICompatProxy';
-import { OPENCLAW_AGENT_TIMEOUT_SECONDS, computeModelAgentId } from '../openclawConfigSync';
+import { OPENCLAW_AGENT_TIMEOUT_SECONDS } from '../openclawConfigSync';
 import { t } from '../../i18n';
 
 const OPENCLAW_GATEWAY_TOOL_EVENTS_CAP = 'tool-events';
@@ -1005,29 +1005,22 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   async startSession(sessionId: string, prompt: string, options: CoworkStartOptions = {}): Promise<void> {
-    const agentId = options.modelOverride
-      ? computeModelAgentId(options.modelOverride.providerKey, options.modelOverride.modelId)
-      : options.agentId;
     await this.runTurn(sessionId, prompt, {
       skipInitialUserMessage: options.skipInitialUserMessage,
       skillIds: options.skillIds,
       systemPrompt: options.systemPrompt,
       confirmationMode: options.confirmationMode,
       imageAttachments: options.imageAttachments,
-      agentId,
+      agentId: options.agentId,
     });
   }
 
   async continueSession(sessionId: string, prompt: string, options: CoworkContinueOptions = {}): Promise<void> {
-    const agentId = options.modelOverride
-      ? computeModelAgentId(options.modelOverride.providerKey, options.modelOverride.modelId)
-      : undefined;
     await this.runTurn(sessionId, prompt, {
       skipInitialUserMessage: false,
       systemPrompt: options.systemPrompt,
       skillIds: options.skillIds,
       imageAttachments: options.imageAttachments,
-      ...(agentId ? { agentId } : {}),
     });
   }
 

@@ -169,9 +169,6 @@ const coworkSlice = createSlice({
         title: action.payload.title,
         status: action.payload.status,
         pinned: action.payload.pinned ?? false,
-        agentId: action.payload.agentId,
-        modelId: action.payload.modelId,
-        providerKey: action.payload.providerKey,
         createdAt: action.payload.createdAt,
         updatedAt: action.payload.updatedAt,
       };
@@ -278,29 +275,6 @@ const coworkSlice = createSlice({
       }
     },
 
-    updateSessionModel(state, action: PayloadAction<{ sessionId: string; modelId: string | null; providerKey: string | null }>) {
-      const { sessionId, modelId, providerKey } = action.payload;
-      const sessionIndex = state.sessions.findIndex(s => s.id === sessionId);
-      if (sessionIndex !== -1) {
-        if (modelId && providerKey) {
-          state.sessions[sessionIndex].modelId = modelId;
-          state.sessions[sessionIndex].providerKey = providerKey;
-        } else {
-          delete state.sessions[sessionIndex].modelId;
-          delete state.sessions[sessionIndex].providerKey;
-        }
-      }
-      if (state.currentSession?.id === sessionId) {
-        if (modelId && providerKey) {
-          state.currentSession.modelId = modelId;
-          state.currentSession.providerKey = providerKey;
-        } else {
-          delete state.currentSession.modelId;
-          delete state.currentSession.providerKey;
-        }
-      }
-    },
-
     enqueuePendingPermission(state, action: PayloadAction<CoworkPermissionRequest>) {
       const alreadyQueued = state.pendingPermissions.some(
         (permission) => permission.requestId === action.payload.requestId
@@ -372,7 +346,6 @@ export const {
   setRemoteManaged,
   updateSessionPinned,
   updateSessionTitle,
-  updateSessionModel,
   enqueuePendingPermission,
   dequeuePendingPermission,
   clearPendingPermissions,

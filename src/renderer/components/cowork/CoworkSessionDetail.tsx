@@ -14,7 +14,6 @@ import { getScheduledReminderDisplayText } from '../../../scheduledTask/reminder
 import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
 import { RootState } from '../../store';
-import { isSameModelIdentity } from '../../store/slices/modelSlice';
 import { setActiveSkillIds } from '../../store/slices/skillSlice';
 import type { CoworkImageAttachment,CoworkMessage, CoworkMessageMetadata } from '../../types/cowork';
 import type { Skill } from '../../types/skill';
@@ -1398,13 +1397,6 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const isStreaming = useSelector((state: RootState) => state.cowork.isStreaming);
   const remoteManaged = useSelector((state: RootState) => state.cowork.remoteManaged);
   const skills = useSelector((state: RootState) => state.skill.skills);
-  const availableModels = useSelector((state: RootState) => state.model.availableModels);
-  const sessionModel = useMemo(() => {
-    if (!currentSession?.modelId || !currentSession?.providerKey) return null;
-    return availableModels.find(m =>
-      isSameModelIdentity(m, { id: currentSession.modelId!, providerKey: currentSession.providerKey })
-    ) ?? { id: currentSession.modelId, providerKey: currentSession.providerKey, name: currentSession.modelId, provider: currentSession.providerKey };
-  }, [availableModels, currentSession?.modelId, currentSession?.providerKey]);
   const detailRootRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const promptInputRef = useRef<CoworkPromptInputRef>(null);
@@ -2620,15 +2612,6 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
             onManageSkills={remoteManaged ? undefined : onManageSkills}
             showModelSelector={!remoteManaged}
             sessionId={currentSession?.id}
-            sessionModel={sessionModel}
-            onSessionModelChange={async (model) => {
-              if (!currentSession) return;
-              await coworkService.setSessionModel(
-                currentSession.id,
-                model ? model.id : null,
-                model ? (model.providerKey ?? null) : null,
-              );
-            }}
           />
         </div>
         <p className="text-center text-[10px] text-muted opacity-50 mt-2 mb-[-8px] select-none">

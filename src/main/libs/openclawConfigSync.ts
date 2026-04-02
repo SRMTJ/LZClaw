@@ -22,20 +22,6 @@ export type McpBridgeConfig = {
   tools: McpToolManifestEntry[];
 };
 
-/**
- * Compute a stable, deterministic agent ID for a given (providerKey, modelId) pair.
- * Used to create synthetic "model agents" in the OpenClaw config so that sessions
- * can independently select their model by binding to the corresponding agent ID.
- */
-export function computeModelAgentId(providerKey: string, modelId: string): string {
-  const key = `${providerKey}::${modelId}`;
-  let h = 0;
-  for (let i = 0; i < key.length; i++) {
-    h = (Math.imul(31, h) + key.charCodeAt(i)) >>> 0;
-  }
-  return `model-${h.toString(36)}`;
-}
-
 const mapExecutionModeToSandboxMode = (mode: CoworkExecutionMode, isEnterprise: boolean): 'off' | 'non-main' | 'all' => {
   if (!isEnterprise) return 'off';
   switch (mode) {
@@ -906,10 +892,7 @@ export class OpenClawConfigSync {
           },
           ...(workspaceDir ? { workspace: path.resolve(workspaceDir) } : {}),
         },
-        ...this.buildAgentsList({
-          proxyPort,
-          serverModels: getAllServerModelMetadata(),
-        }),
+        ...this.buildAgentsList(),
       },
       ...this.buildBindings(),
       session: {
@@ -1787,10 +1770,7 @@ export class OpenClawConfigSync {
    * Per-agent `identity` (name, emoji) is set from the agent database so
    * OpenClaw picks it up natively.
    */
-  private buildAgentsList(options: {
-    proxyPort?: number;
-    serverModels?: Array<{ modelId: string; supportsImage?: boolean }>;
-  } = {}): { list?: Array<Record<string, unknown>> } {
+  private buildAgentsList(): { list?: Array<Record<string, unknown>> } {
     const agents = this.getAgents?.() ?? [];
 
     const list: Array<Record<string, unknown>> = [
@@ -1799,12 +1779,9 @@ export class OpenClawConfigSync {
         default: true,
       },
     ];
-    const seenAgentIds = new Set<string>(['main']);
 
     for (const agent of agents) {
       if (agent.id === 'main' || !agent.enabled) continue;
-      if (seenAgentIds.has(agent.id)) continue;
-      seenAgentIds.add(agent.id);
 
       list.push({
         id: agent.id,
@@ -1820,54 +1797,6 @@ export class OpenClawConfigSync {
         // OpenClaw's resolveAgentSkillsFilter() uses this to filter available skills.
         ...(agent.skillIds && agent.skillIds.length > 0 ? { skills: agent.skillIds } : {}),
       });
-    }
-
-    // Synthetic model agents: one per (providerKey, modelId) pair.
-    // Sessions that select a specific model bind to the corresponding agent ID,
-    // which causes OpenClaw to use that agent's model config for every turn.
-    for (const p of resolveAllEnabledProviderConfigs()) {
-      for (const m of p.models) {
-        const sel = buildProviderSelection({
-          apiKey: p.apiKey,
-          baseURL: p.baseURL,
-          modelId: m.id,
-          apiType: p.apiType,
-          providerName: p.providerName,
-          codingPlanEnabled: p.codingPlanEnabled,
-          supportsImage: m.supportsImage,
-          modelName: m.name,
-        });
-        const agentId = computeModelAgentId(p.providerName, m.id);
-        if (seenAgentIds.has(agentId)) continue;
-        seenAgentIds.add(agentId);
-        list.push({
-          id: agentId,
-          model: { primary: sel.primaryModel },
-        });
-      }
-    }
-
-    if (options.proxyPort && options.serverModels && options.serverModels.length > 0) {
-      const serverBaseUrl = `http://127.0.0.1:${options.proxyPort}/v1`;
-      for (const model of options.serverModels) {
-        const modelId = model.modelId?.trim();
-        if (!modelId) continue;
-        const sel = buildProviderSelection({
-          apiKey: 'proxy-managed',
-          baseURL: serverBaseUrl,
-          modelId,
-          apiType: 'openai',
-          providerName: ProviderName.LobsteraiServer,
-          supportsImage: model.supportsImage,
-        });
-        const agentId = computeModelAgentId(ProviderName.LobsteraiServer, modelId);
-        if (seenAgentIds.has(agentId)) continue;
-        seenAgentIds.add(agentId);
-        list.push({
-          id: agentId,
-          model: { primary: sel.primaryModel },
-        });
-      }
     }
 
     return list.length > 0 ? { list } : {};

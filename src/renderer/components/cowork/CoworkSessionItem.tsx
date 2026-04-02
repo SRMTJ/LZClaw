@@ -15,9 +15,6 @@ interface CoworkSessionItemProps {
   isBatchMode: boolean;
   isSelected: boolean;
   showBatchOption?: boolean;
-  fallbackModelName?: string;
-  /** Resolved display name for the session's own model (from availableModels). */
-  modelDisplayName?: string;
   onSelect: () => void;
   onDelete: () => void;
   onTogglePin: (pinned: boolean) => void;
@@ -97,8 +94,6 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
   isBatchMode,
   isSelected,
   showBatchOption = true,
-  fallbackModelName,
-  modelDisplayName,
   onSelect,
   onDelete,
   onTogglePin,
@@ -362,11 +357,6 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
             <span className="whitespace-nowrap" title={relativeTime.full}>
               {relativeTime.compact}
             </span>
-            {(modelDisplayName || fallbackModelName) && (
-              <span className="text-[10px] bg-surface-raised px-1 py-0.5 rounded truncate max-w-[80px]" title={modelDisplayName || fallbackModelName}>
-                {modelDisplayName || fallbackModelName}
-              </span>
-            )}
             <span className="text-[10px] uppercase tracking-wider whitespace-nowrap">
               {i18nService.t(statusLabels[session.status])}
             </span>

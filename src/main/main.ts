@@ -2144,12 +2144,6 @@ if (!gotTheLock) {
       if (data.code !== 0) return { success: false };
       // Cache server model metadata for use in OpenClaw config sync (supportsImage, etc.)
       updateServerModelMetadata(data.data);
-      syncOpenClawConfig({
-        reason: 'auth-models-updated',
-        restartGatewayIfRunning: false,
-      }).catch((error) => {
-        console.warn('[Auth:getModels] Failed to resync OpenClaw config after model refresh:', error);
-      });
       return { success: true, models: data.data };
     } catch (e) {
       console.error('[Auth:getModels] Error:', e);
@@ -2445,8 +2439,6 @@ if (!gotTheLock) {
     activeSkillIds?: string[];
     imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
     agentId?: string;
-    modelId?: string;
-    providerKey?: string;
   }) => {
     try {
       const activeEngine = resolveCoworkAgentEngine();
@@ -2454,18 +2446,6 @@ if (!gotTheLock) {
         const engineStatus = await ensureOpenClawRunningForCowork();
         if (engineStatus.phase !== 'running') {
           return getEngineNotReadyResponse(engineStatus);
-        }
-        if (options.modelId && options.providerKey) {
-          const syncResult = await syncOpenClawConfig({
-            reason: 'session-start-model-override',
-            restartGatewayIfRunning: false,
-          });
-          if (!syncResult.success) {
-            return {
-              success: false,
-              error: syncResult.error || 'Failed to sync OpenClaw config for session model override',
-            };
-          }
         }
       }
 
@@ -2497,13 +2477,6 @@ if (!gotTheLock) {
         options.activeSkillIds || [],
         options.agentId || 'main'
       );
-
-      // Persist per-session model selection if provided
-      if (options.modelId && options.providerKey) {
-        coworkStoreInstance.updateSessionModel(session.id, options.modelId, options.providerKey);
-        session.modelId = options.modelId;
-        session.providerKey = options.providerKey;
-      }
 
       // Update session status to 'running' before starting async task
       // This ensures the frontend receives the correct status immediately
@@ -2539,9 +2512,6 @@ if (!gotTheLock) {
         confirmationMode: 'modal',
         imageAttachments: options.imageAttachments,
         agentId: options.agentId,
-        modelOverride: options.modelId && options.providerKey
-          ? { modelId: options.modelId, providerKey: options.providerKey }
-          : undefined,
       }).catch(error => {
         console.error('Cowork session error:', error);
         // The engine router already emits an 'error' event (handled at line ~990)
@@ -2579,27 +2549,15 @@ if (!gotTheLock) {
   }) => {
     try {
       const activeEngine = resolveCoworkAgentEngine();
-      const existingSession = getCoworkStore().getSession(options.sessionId);
       if (activeEngine === 'openclaw') {
         const engineStatus = await ensureOpenClawRunningForCowork();
         if (engineStatus.phase !== 'running') {
           return getEngineNotReadyResponse(engineStatus);
         }
-        if (existingSession?.modelId && existingSession?.providerKey) {
-          const syncResult = await syncOpenClawConfig({
-            reason: 'session-continue-model-override',
-            restartGatewayIfRunning: false,
-          });
-          if (!syncResult.success) {
-            return {
-              success: false,
-              error: syncResult.error || 'Failed to sync OpenClaw config for session model override',
-            };
-          }
-        }
       }
 
       const runtime = getCoworkEngineRouter();
+      const existingSession = getCoworkStore().getSession(options.sessionId);
       runtime.continueSession(options.sessionId, options.prompt, {
         systemPrompt: mergeCoworkSystemPrompt(
           activeEngine,
@@ -2607,9 +2565,6 @@ if (!gotTheLock) {
         ),
         skillIds: options.activeSkillIds,
         imageAttachments: options.imageAttachments,
-        modelOverride: existingSession?.modelId && existingSession?.providerKey
-          ? { modelId: existingSession.modelId, providerKey: existingSession.providerKey }
-          : undefined,
       }).catch(error => {
         console.error('Cowork continue error:', error);
         // The engine router already emits an 'error' event (handled at line ~990)
@@ -2715,31 +2670,6 @@ if (!gotTheLock) {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to update session pin',
-      };
-    }
-  });
-
-  ipcMain.handle('cowork:session:setModel', async (_event, options: {
-    sessionId: string;
-    modelId: string | null;
-    providerKey: string | null;
-  }) => {
-    try {
-      const coworkStoreInstance = getCoworkStore();
-      coworkStoreInstance.updateSessionModel(options.sessionId, options.modelId, options.providerKey);
-      if (resolveCoworkAgentEngine() === 'openclaw') {
-        syncOpenClawConfig({
-          reason: 'session-model-updated',
-          restartGatewayIfRunning: false,
-        }).catch((error) => {
-          console.warn('[CoworkSession] Failed to resync OpenClaw config after session model change:', error);
-        });
-      }
-      return { success: true };
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to update session model',
       };
     }
   });

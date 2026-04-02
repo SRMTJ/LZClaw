@@ -12,7 +12,6 @@ import {
   setRemoteManaged,
   updateSessionPinned,
   updateSessionTitle,
-  updateSessionModel,
   enqueuePendingPermission,
   dequeuePendingPermission,
   clearPendingPermissions,
@@ -46,7 +45,6 @@ class CoworkService {
   private openClawEngineListenerAttached = false;
   private latestLoadSessionsRequestId = 0;
   private latestLoadSessionRequestId = 0;
-  private unsubscribeBackfill: (() => void) | null = null;
 
   async init(): Promise<void> {
     if (this.initialized) return;
@@ -211,11 +209,6 @@ class CoworkService {
         return;
       }
       store.dispatch(setSessions(result.sessions));
-
-      const sessionsWithoutModel = result.sessions.filter(s => !s.modelId);
-      if (sessionsWithoutModel.length > 0) {
-        this.scheduleBackfill(sessionsWithoutModel.map(s => s.id));
-      }
     }
   }
 
@@ -390,58 +383,6 @@ class CoworkService {
     return false;
   }
 
-  /**
-   * Lock in the global model for sessions that have no per-session model yet.
-   * Defers via a single store subscription when selectedModel is not yet available.
-   * Only one deferred subscription is ever active at a time.
-   */
-  private scheduleBackfill(sessionIds: string[]): void {
-    const globalModel = store.getState().model.selectedModel;
-    if (globalModel?.id && globalModel?.providerKey) {
-      const { id: modelId, providerKey } = globalModel;
-      const current = store.getState().cowork.sessions;
-      const currentById = new Map(current.map(s => [s.id, s]));
-      const toBackfill = sessionIds.filter(id => !currentById.get(id)?.modelId);
-      for (const id of toBackfill) {
-        this.setSessionModel(id, modelId, providerKey).catch(() => {});
-      }
-      return;
-    }
-
-    // selectedModel not ready yet — register a single deferred subscription.
-    this.unsubscribeBackfill?.();
-    const snapshotIds = new Set(sessionIds);
-    const unsubscribe = store.subscribe(() => {
-      const model = store.getState().model.selectedModel;
-      if (model?.id && model?.providerKey) {
-        unsubscribe();
-        this.unsubscribeBackfill = null;
-        const { id: modelId, providerKey } = model;
-        const sessions = store.getState().cowork.sessions;
-        for (const s of sessions) {
-          if (snapshotIds.has(s.id) && !s.modelId) {
-            this.setSessionModel(s.id, modelId, providerKey).catch(() => {});
-          }
-        }
-      }
-    });
-    this.unsubscribeBackfill = unsubscribe;
-  }
-
-  async setSessionModel(sessionId: string, modelId: string | null, providerKey: string | null): Promise<boolean> {
-    const cowork = window.electron?.cowork;
-    if (!cowork?.setSessionModel) return false;
-
-    const result = await cowork.setSessionModel({ sessionId, modelId, providerKey });
-    if (result.success) {
-      store.dispatch(updateSessionModel({ sessionId, modelId, providerKey }));
-      return true;
-    }
-
-    console.error('[CoworkService] Failed to update session model:', result.error);
-    return false;
-  }
-
   async renameSession(sessionId: string, title: string): Promise<boolean> {
     const cowork = window.electron?.cowork;
     if (!cowork?.renameSession) return false;
@@ -531,19 +472,6 @@ class CoworkService {
       }
       store.dispatch(setCurrentSession(result.session));
       store.dispatch(setStreaming(result.session.status === 'running'));
-
-      // Race-condition fix: the batch backfill may have already updated sessions[]
-      // with a modelId before this loadSession completed (DB data may be stale).
-      // Sync the modelId from the summary into currentSession when the DB result is behind.
-      const loadedSession = result.session;
-      if (!loadedSession.modelId) {
-        const summary = store.getState().cowork.sessions.find(s => s.id === loadedSession.id);
-        if (summary?.modelId) {
-          store.dispatch(updateSessionModel({ sessionId: loadedSession.id, modelId: summary.modelId, providerKey: summary.providerKey ?? null }));
-        } else {
-          this.scheduleBackfill([loadedSession.id]);
-        }
-      }
 
       const imResult = await cowork.remoteManaged(sessionId);
       if (requestId === this.latestLoadSessionRequestId) {

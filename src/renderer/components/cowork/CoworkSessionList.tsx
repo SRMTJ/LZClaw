@@ -5,7 +5,6 @@ import type { CoworkSessionSummary } from '../../types/cowork';
 import CoworkSessionItem from './CoworkSessionItem';
 import { i18nService } from '../../services/i18n';
 import { ChatBubbleLeftRightIcon } from '@heroicons/react/24/outline';
-import { getModelIdentityKey } from '../../store/slices/modelSlice';
 
 interface CoworkSessionListProps {
   sessions: CoworkSessionSummary[];
@@ -36,15 +35,6 @@ const CoworkSessionList: React.FC<CoworkSessionListProps> = ({
 }) => {
   const unreadSessionIds = useSelector((state: RootState) => state.cowork.unreadSessionIds);
   const unreadSessionIdSet = useMemo(() => new Set(unreadSessionIds), [unreadSessionIds]);
-  const globalModelName = useSelector((state: RootState) => state.model.selectedModel?.name);
-  const availableModels = useSelector((state: RootState) => state.model.availableModels);
-  const modelNameMap = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const m of availableModels) {
-      map.set(getModelIdentityKey(m), m.name);
-    }
-    return map;
-  }, [availableModels]);
 
   const sortedSessions = useMemo(() => {
     const sortByRecentActivity = (a: CoworkSessionSummary, b: CoworkSessionSummary) => {
@@ -94,11 +84,6 @@ const CoworkSessionList: React.FC<CoworkSessionListProps> = ({
           onRename={(title) => onRenameSession(session.id, title)}
           onToggleSelection={() => onToggleSelection(session.id)}
           onEnterBatchMode={() => onEnterBatchMode(session.id)}
-          fallbackModelName={globalModelName}
-          modelDisplayName={session.modelId && session.providerKey
-            ? (modelNameMap.get(getModelIdentityKey({ id: session.modelId, providerKey: session.providerKey })) ?? session.modelId)
-            : undefined
-          }
         />
       ))}
     </div>

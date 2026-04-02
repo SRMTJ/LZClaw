@@ -285,21 +285,6 @@ export class SqliteStore {
       console.warn('Failed to ensure main agent:', error);
     }
 
-    // Migration: Add model_id and provider_key columns to cowork_sessions
-    try {
-      const sessionCols2 = this.db.exec("PRAGMA table_info(cowork_sessions);");
-      const sessionColNames2 = sessionCols2[0]?.values.map((row) => row[1]) || [];
-      if (!sessionColNames2.includes('model_id')) {
-        this.db.run('ALTER TABLE cowork_sessions ADD COLUMN model_id TEXT;');
-      }
-      if (!sessionColNames2.includes('provider_key')) {
-        this.db.run('ALTER TABLE cowork_sessions ADD COLUMN provider_key TEXT;');
-      }
-      this.save();
-    } catch {
-      // Column already exists or migration not needed.
-    }
-
     try {
       this.db.run(`UPDATE cowork_sessions SET execution_mode = 'local' WHERE execution_mode = 'container';`);
       this.db.run(`

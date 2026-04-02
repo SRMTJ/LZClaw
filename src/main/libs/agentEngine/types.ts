@@ -35,14 +35,12 @@ export type CoworkStartOptions = {
   confirmationMode?: 'modal' | 'text';
   imageAttachments?: CoworkImageAttachment[];
   agentId?: string;
-  modelOverride?: { modelId: string; providerKey: string };
 };
 
 export type CoworkContinueOptions = {
   systemPrompt?: string;
   skillIds?: string[];
   imageAttachments?: CoworkImageAttachment[];
-  modelOverride?: { modelId: string; providerKey: string };
 };
 
 export interface CoworkRuntime {

@@ -59,7 +59,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
   const quickActions = useSelector((state: RootState) => state.quickAction.actions);
   const selectedActionId = useSelector((state: RootState) => state.quickAction.selectedActionId);
   const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
-  const globalSelectedModel = useSelector((state: RootState) => state.model.selectedModel);
 
   const buildApiConfigNotice = (error?: string): { noticeI18nKey: string; noticeExtra?: string } => {
     const key = 'coworkModelSettingsRequired';
@@ -233,8 +232,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
               : undefined,
           },
         ],
-        modelId: globalSelectedModel?.id,
-        providerKey: globalSelectedModel?.providerKey,
       };
 
       // Immediately show the session detail page with user message
@@ -268,8 +265,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
         activeSkillIds: sessionSkillIds,
         agentId: currentAgentId,
         imageAttachments,
-        modelId: globalSelectedModel?.id,
-        providerKey: globalSelectedModel?.providerKey,
       });
 
       if (!startedSession && startError) {
