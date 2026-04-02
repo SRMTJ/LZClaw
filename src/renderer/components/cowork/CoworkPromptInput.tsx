@@ -9,6 +9,7 @@ import FolderSelectorPopover from './FolderSelectorPopover';
 import { SkillsButton, ActiveSkillBadge } from '../skills';
 import { i18nService } from '../../services/i18n';
 import { configService } from '../../services/config';
+import { defaultConfig } from '../../config';
 import { skillService } from '../../services/skill';
 import { RootState } from '../../store';
 import { setDraftPrompt, setDraftAttachments, clearDraftAttachments, type DraftAttachment } from '../../store/slices/coworkSlice';
@@ -305,7 +306,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const isComposing = event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229;
     if (event.key !== 'Enter' || isComposing) return;
 
-    const sendKey = configService.getConfig().shortcuts?.sendMessage ?? 'Enter';
+    // Use synced state (kept up-to-date via config-updated event) so that
+    // changes made in the Settings panel are reflected immediately without
+    // requiring a configService read at event time.
+    const sendKey = currentSendShortcut;
 
     let isSendCombo = false;
     switch (sendKey) {
@@ -657,7 +661,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   const handleSendShortcutChange = async (value: string) => {
     const config = configService.getConfig();
     await configService.updateConfig({
-      shortcuts: { ...config.shortcuts!, sendMessage: value },
+      shortcuts: { ...(config.shortcuts ?? defaultConfig.shortcuts), sendMessage: value } as NonNullable<typeof config.shortcuts>,
     });
     setCurrentSendShortcut(value);
     setShowSendShortcutMenu(false);

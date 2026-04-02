@@ -578,7 +578,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, onUpda
     newChat: 'Ctrl+N',
     search: 'Ctrl+F',
     settings: 'Ctrl+,',
-    sendMessage: 'Enter',
+    sendMessage: defaultConfig.shortcuts!.sendMessage,
   });
 
   // State for model editing
