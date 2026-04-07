@@ -11,7 +11,7 @@ import { getCoworkOpenAICompatProxyBaseURL } from './coworkOpenAICompatProxy';
 import type { OpenClawEngineManager } from './openclawEngineManager';
 import { parseChannelSessionKey } from './openclawChannelSessionSync';
 import type { McpToolManifestEntry } from './mcpServerManager';
-import { hasBundledOpenClawExtension } from './openclawLocalExtensions';
+import { hasBundledOpenClawExtension, findThirdPartyExtensionsDir } from './openclawLocalExtensions';
 import { buildScheduledTaskEnginePrompt } from '../../scheduledTask/enginePrompt';
 import { getOpenClawTokenProxyPort } from './openclawTokenProxy';
 
@@ -951,6 +951,9 @@ export class OpenClawConfigSync {
           ...(preinstalledPluginIds.includes('feishu-openclaw-plugin')
             ? { feishu: { enabled: false } }
             : {}),
+          ...(preinstalledPluginIds.includes('openclaw-qqbot')
+            ? { qqbot: { enabled: false } }
+            : {}),
           ...(hasMcpBridgePlugin
             ? { 'mcp-bridge': { enabled: true } }
             : {}),
@@ -967,6 +970,14 @@ export class OpenClawConfigSync {
         return Object.keys(pluginEntries).length > 0
           ? {
               plugins: {
+                // Third-party plugins live in a separate `extensions/` dir (not
+                // `dist/extensions/`) and need `load.paths` so the gateway discovers
+                // them with origin="config", bypassing the bundled-channel-entry
+                // contract check.  See openclaw/openclaw#60196.
+                ...((() => {
+                  const thirdPartyDir = findThirdPartyExtensionsDir();
+                  return thirdPartyDir ? { load: { paths: [thirdPartyDir] } } : {};
+                })()),
                 entries: pluginEntries,
               },
             }

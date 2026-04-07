@@ -14,7 +14,8 @@
       {
         "id": "dingtalk",
         "npm": "@soimy/dingtalk",
-        "version": "3.4.0"
+        "version": "3.5.2",
+        "optional": true
       },
       {
         "id": "feishu-openclaw-plugin",
@@ -24,17 +25,17 @@
       {
         "id": "openclaw-qqbot",
         "npm": "@tencent-connect/openclaw-qqbot",
-        "version": "1.6.4"
+        "version": "1.7.1"
       },
       {
         "id": "wecom-openclaw-plugin",
         "npm": "@wecom/wecom-openclaw-plugin",
-        "version": "1.0.12"
+        "version": "2026.4.3"
       },
       {
         "id": "openclaw-weixin",
         "npm": "@tencent-weixin/openclaw-weixin",
-        "version": "1.0.3"
+        "version": "2.1.7"
       },
       {
         "id": "moltbot-popo",

@@ -6,7 +6,7 @@ import fs from 'fs';
 import net from 'net';
 import path from 'path';
 import { getElectronNodeRuntimePath, ensureElectronNodeShim, getSkillsRoot } from './coworkUtil';
-import { syncLocalOpenClawExtensionsIntoRuntime } from './openclawLocalExtensions';
+import { syncLocalOpenClawExtensionsIntoRuntime, cleanupStaleThirdPartyPluginsFromBundledDir } from './openclawLocalExtensions';
 import { appendPythonRuntimeToEnv } from './pythonRuntime';
 import { isSystemProxyEnabled, resolveSystemProxyUrl } from './systemProxy';
 
@@ -288,6 +288,21 @@ export class OpenClawEngineManager extends EventEmitter {
       console.log(`[OpenClaw] synced local extensions: ${localExtensionSync.copied.join(', ')}`);
     }
 
+    // Clean up third-party plugins that may linger in dist/extensions/ after an
+    // overlay upgrade from a version that placed them there.
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.join(app.getAppPath(), 'package.json'), 'utf8'));
+      const thirdPartyIds: string[] = (pkg.openclaw?.plugins ?? [])
+        .map((p: { id?: string }) => p.id)
+        .filter((id: unknown): id is string => typeof id === 'string');
+      const cleaned = cleanupStaleThirdPartyPluginsFromBundledDir(runtime.root, thirdPartyIds);
+      if (cleaned.length > 0) {
+        console.log(`[OpenClaw] cleaned stale third-party plugins from dist/extensions/: ${cleaned.join(', ')}`);
+      }
+    } catch {
+      // Best-effort cleanup; don't block startup.
+    }
+
     if (this.status.phase === 'running') {
       return this.getStatus();
     }
@@ -405,7 +420,10 @@ export class OpenClawEngineManager extends EventEmitter {
       OPENCLAW_GATEWAY_PORT: String(port),
       OPENCLAW_NO_RESPAWN: '1',
       OPENCLAW_ENGINE_VERSION: runtime.version || DEFAULT_OPENCLAW_VERSION,
-      OPENCLAW_BUNDLED_PLUGINS_DIR: path.join(runtime.root, 'extensions'),
+      // Point to dist/extensions for runtime-bundled plugins that satisfy the
+      // bundled-channel-entry contract.  Third-party plugins (in extensions/)
+      // are discovered separately via plugins.load.paths in openclaw.json.
+      OPENCLAW_BUNDLED_PLUGINS_DIR: path.join(runtime.root, 'dist', 'extensions'),
       // Enable debug-level logging so gateway emits phase-level detail during startup.
       OPENCLAW_LOG_LEVEL: 'debug',
       // Enable V8 compile cache for both CJS and ESM modules.
