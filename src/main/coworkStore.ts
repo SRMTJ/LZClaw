@@ -1064,7 +1064,7 @@ export class CoworkStore {
       memoryUserMemoriesMaxItems: clampMemoryUserMemoriesMaxItems(
         Number(cfg.get('memoryUserMemoriesMaxItems')),
       ),
-      skipMissedJobs: parseBooleanConfig(cfg.get('skipMissedJobs'), false),
+      skipMissedJobs: parseBooleanConfig(cfg.get('skipMissedJobs'), true),
     };
   }
 

@@ -714,7 +714,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
   const [coworkAgentEngine, setCoworkAgentEngine] = useState<CoworkAgentEngine>(coworkConfig.agentEngine || 'openclaw');
   const [coworkMemoryEnabled, setCoworkMemoryEnabled] = useState<boolean>(coworkConfig.memoryEnabled ?? true);
   const [coworkMemoryLlmJudgeEnabled, setCoworkMemoryLlmJudgeEnabled] = useState<boolean>(coworkConfig.memoryLlmJudgeEnabled ?? false);
-  const [skipMissedJobs, setSkipMissedJobs] = useState<boolean>(coworkConfig.skipMissedJobs ?? false);
+  const [skipMissedJobs, setSkipMissedJobs] = useState<boolean>(coworkConfig.skipMissedJobs ?? true);
   const [openClawSessionKeepAlive, setOpenClawSessionKeepAlive] = useState<OpenClawSessionKeepAlive>(
     coworkConfig.openClawSessionPolicy?.keepAlive || OpenClawSessionKeepAliveValues.ThirtyDays,
   );
@@ -735,7 +735,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
     setCoworkAgentEngine(coworkConfig.agentEngine || 'openclaw');
     setCoworkMemoryEnabled(coworkConfig.memoryEnabled ?? true);
     setCoworkMemoryLlmJudgeEnabled(coworkConfig.memoryLlmJudgeEnabled ?? false);
-    setSkipMissedJobs(coworkConfig.skipMissedJobs ?? false);
+    setSkipMissedJobs(coworkConfig.skipMissedJobs ?? true);
     setOpenClawSessionKeepAlive(coworkConfig.openClawSessionPolicy?.keepAlive || OpenClawSessionKeepAliveValues.ThirtyDays);
   }, [
     coworkConfig.agentEngine,
@@ -1364,7 +1364,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
   const hasCoworkConfigChanges = coworkAgentEngine !== coworkConfig.agentEngine
     || coworkMemoryEnabled !== coworkConfig.memoryEnabled
     || coworkMemoryLlmJudgeEnabled !== coworkConfig.memoryLlmJudgeEnabled
-    || skipMissedJobs !== (coworkConfig.skipMissedJobs ?? false)
+    || skipMissedJobs !== (coworkConfig.skipMissedJobs ?? true)
     || openClawSessionKeepAlive !== (coworkConfig.openClawSessionPolicy?.keepAlive || OpenClawSessionKeepAliveValues.ThirtyDays);
   const isOpenClawAgentEngine = coworkAgentEngine === 'openclaw';
 
