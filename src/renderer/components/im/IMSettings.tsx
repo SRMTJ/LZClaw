@@ -1869,14 +1869,26 @@ const IMSettings: React.FC = () => {
               <div>
                 <label className={labelClass}>{i18nService.t('emailApiKey')} <span className="text-red-500">*</span></label>
                 <div className="flex gap-2">
-                  <input
-                    type="password"
-                    value={inst.apiKey || ''}
-                    onChange={e => dispatch(setEmailInstanceConfig({ instanceId: inst.instanceId, config: { apiKey: e.target.value } }))}
-                    onBlur={e => void imService.persistEmailInstanceConfig(inst.instanceId, { apiKey: e.target.value })}
-                    placeholder={i18nService.t('emailApiKeyPlaceholder')}
-                    className={`${inputClass} flex-1`}
-                  />
+                  <div className="relative flex-1">
+                    <input
+                      type={showSecrets[`email.${inst.instanceId}.apiKey`] ? 'text' : 'password'}
+                      value={inst.apiKey || ''}
+                      onChange={e => dispatch(setEmailInstanceConfig({ instanceId: inst.instanceId, config: { apiKey: e.target.value } }))}
+                      onBlur={e => void imService.persistEmailInstanceConfig(inst.instanceId, { apiKey: e.target.value })}
+                      placeholder={i18nService.t('emailApiKeyPlaceholder')}
+                      className={`${inputClass} w-full pr-8`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowSecrets(prev => ({ ...prev, [`email.${inst.instanceId}.apiKey`]: !prev[`email.${inst.instanceId}.apiKey`] }))}
+                      className="absolute right-2 inset-y-0 flex items-center p-0.5 rounded text-secondary hover:text-primary transition-colors"
+                      title={showSecrets[`email.${inst.instanceId}.apiKey`] ? (i18nService.t('hide') || 'Hide') : (i18nService.t('show') || 'Show')}
+                    >
+                      {showSecrets[`email.${inst.instanceId}.apiKey`]
+                        ? <EyeIcon className="h-4 w-4" />
+                        : <EyeSlashIcon className="h-4 w-4" />}
+                    </button>
+                  </div>
                   <button
                     type="button"
                     onClick={() => void handleEmailGetApiKey()}
