@@ -2304,7 +2304,6 @@ if (!gotTheLock) {
         }
       }
       console.log('[Auth] getUser profile data:', JSON.stringify(profileBody.data));
-      console.log('[Auth] getUser profile data:', JSON.stringify(profileBody.data));
       return { success: true, user: profileBody.data, quota };
     } catch {
       return { success: false };

@@ -422,7 +422,7 @@ interface IElectronAPI {
   };
   appUpdate: {
     getState: () => Promise<AppUpdateRuntimeState>;
-    checkNow: (options?: { manual?: boolean }) => Promise<AppUpdateCheckResult>;
+    checkNow: (options?: { manual?: boolean; userId?: string | null }) => Promise<AppUpdateCheckResult>;
     retryDownload: () => Promise<{ success: boolean; state: AppUpdateRuntimeState }>;
     cancelDownload: () => Promise<{ success: boolean; state: AppUpdateRuntimeState }>;
     installReady: () => Promise<{ success: boolean; state: AppUpdateRuntimeState; error?: string }>;
