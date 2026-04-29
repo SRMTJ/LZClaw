@@ -475,6 +475,11 @@ interface IElectronAPI {
     popoQrLoginStart: () => Promise<{ success: boolean; qrUrl?: string; taskToken?: string; timeoutMs?: number; message?: string }>;
     popoQrLoginPoll: (taskToken: string) => Promise<{ success: boolean; appKey?: string; appSecret?: string; aesKey?: string; message: string }>;
 
+    // POPO Multi-Instance
+    addPopoInstance: (name: string) => Promise<{ success: boolean; instance?: import('./im').PopoInstanceConfig; error?: string }>;
+    deletePopoInstance: (instanceId: string) => Promise<{ success: boolean; error?: string }>;
+    setPopoInstanceConfig: (instanceId: string, config: Record<string, unknown>, options?: { syncGateway?: boolean }) => Promise<{ success: boolean; error?: string }>;
+
     listPairingRequests: (platform: string) => Promise<{
       success: boolean;
       requests: Array<{ id: string; code: string; createdAt: string; lastSeenAt: string; meta?: Record<string, string> }>;
