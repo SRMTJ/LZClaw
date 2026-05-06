@@ -6,7 +6,6 @@
 
 import Database from 'better-sqlite3';
 import { EventEmitter } from 'events';
-import * as path from 'path';
 
 import { classifyErrorKey } from '../../common/coworkErrorClassify';
 import type { CoworkStore } from '../coworkStore';
@@ -36,7 +35,6 @@ import {
   IMGatewayConfig,
   IMGatewayStatus,
   IMMessage,
-  NimInstanceConfig,
   Platform,
 } from './types';
 
@@ -765,8 +763,6 @@ export class IMGatewayManager extends EventEmitter {
 
   // ==================== Gateway Control ====================
   async startGateway(platform: Platform): Promise<void> {
-    const config = this.getConfig();
-
     // Ensure chat handler is ready
     this.updateChatHandler();
 
@@ -1029,7 +1025,7 @@ export class IMGatewayManager extends EventEmitter {
     return false;
   }
 
-  async sendNotification(platform: Platform, text: string): Promise<boolean> {
+  async sendNotification(platform: Platform, _text: string): Promise<boolean> {
     if (!this.isConnected(platform)) {
       console.warn(`[IMGatewayManager] Cannot send notification: ${platform} is not connected`);
       return false;
@@ -1062,7 +1058,7 @@ export class IMGatewayManager extends EventEmitter {
     }
   }
 
-  async sendNotificationWithMedia(platform: Platform, text: string): Promise<boolean> {
+  async sendNotificationWithMedia(platform: Platform, _text: string): Promise<boolean> {
     if (!this.isConnected(platform)) {
       console.warn(`[IMGatewayManager] Cannot send notification: ${platform} is not connected`);
       return false;
