@@ -5,8 +5,6 @@
  * to local Cowork sessions so that conversations are visible in the LobsterAI UI.
  */
 
-import { session } from '@electron/remote';
-
 import { PlatformRegistry } from '../../shared/platform';
 import type { CoworkStore } from '../coworkStore';
 import { t } from '../i18n';
