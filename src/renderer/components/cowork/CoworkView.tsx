@@ -13,7 +13,6 @@ import {
   selectIsStreaming,
 } from '../../store/selectors/coworkSelectors';
 import { addMessage, clearCurrentSession, setCurrentSession, setStreaming, updateSessionStatus } from '../../store/slices/coworkSlice';
-import { setSelectedModel } from '../../store/slices/modelSlice';
 import { clearSelection,selectAction, setActions } from '../../store/slices/quickActionSlice';
 import { clearActiveSkills, setActiveSkillIds } from '../../store/slices/skillSlice';
 import type { CoworkImageAttachment, CoworkSession, OpenClawEngineStatus } from '../../types/cowork';
@@ -27,6 +26,7 @@ import WindowTitleBar from '../window/WindowTitleBar';
 import { useAgentSelectedModel } from './agentModelSelection';
 import CoworkPromptInput, { type CoworkPromptInputRef } from './CoworkPromptInput';
 import CoworkSessionDetail from './CoworkSessionDetail';
+import { usePersistAgentModelSelection } from './usePersistAgentModelSelection';
 
 export interface CoworkViewProps {
   onRequestAppSettings?: (options?: SettingsOpenOptions) => void;
@@ -68,6 +68,13 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
   const agents = useSelector((state: RootState) => state.agent.agents);
   const currentAgent = agents.find((agent) => agent.id === currentAgentId);
   const currentAgentSelectedModel = useAgentSelectedModel(currentAgentId, currentAgent?.model ?? '');
+  const {
+    isPersistingAgentModel,
+    persistAgentModelSelection,
+  } = usePersistAgentModelSelection({
+    agentId: currentAgentId,
+    syncDefaultModel: currentAgentId === 'main' || currentAgent?.isDefault === true,
+  });
 
   const buildApiConfigNotice = (error?: string): { noticeI18nKey: string; noticeExtra?: string } => {
     const key = 'coworkModelSettingsRequired';
@@ -484,10 +491,11 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
           </div>
         )}
         <ModelSelector
+          disabled={isPersistingAgentModel}
           value={currentAgentSelectedModel}
           onChange={async (nextModel) => {
             if (!nextModel) return;
-            dispatch(setSelectedModel({ agentId: currentAgentId, model: nextModel }));
+            await persistAgentModelSelection(nextModel);
           }}
         />
       </div>
