@@ -5,16 +5,17 @@
  *   - hasMoreSessions initial state
  *   - addMessage updates totalMessages
  */
-import { test, expect } from 'vitest';
+import { expect,test } from 'vitest';
+
 import coworkReducer, {
-  setSessions,
-  setHasMoreSessions,
-  appendSessions,
-  setCurrentSession,
   addMessage,
+  appendSessions,
   prependMessages,
+  setCurrentSession,
+  setHasMoreSessions,
+  setSessions,
 } from '../renderer/store/slices/coworkSlice';
-import type { CoworkSessionSummary, CoworkSession, CoworkMessage } from '../renderer/types/cowork';
+import type { CoworkMessage,CoworkSession, CoworkSessionSummary } from '../renderer/types/cowork';
 
 // ---------------------------------------------------------------------------
 // Helpers

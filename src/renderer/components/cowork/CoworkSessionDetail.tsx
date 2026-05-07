@@ -6,7 +6,7 @@ import {
   PhotoIcon,
 } from '@heroicons/react/24/outline';
 import { FolderIcon } from '@heroicons/react/24/solid';
-import React, { useCallback, useEffect, useMemo,useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo,useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
 
@@ -1624,6 +1624,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
   const [isLoadingMoreMessages, setIsLoadingMoreMessages] = useState(false);
   const isLoadingMoreMessagesRef = useRef(false);
+  const prevScrollHeightRef = useRef<number | null>(null);
 
   // Clear lazy-render height cache when session changes
   const sessionId = currentSession?.id;
@@ -2116,16 +2117,9 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       if (sessionId && offset > 0) {
         isLoadingMoreMessagesRef.current = true;
         setIsLoadingMoreMessages(true);
-        const prevScrollHeight = container.scrollHeight;
-        coworkService.loadMoreMessages(sessionId).then(() => {
-          // Restore scroll position after prepending messages
-          requestAnimationFrame(() => {
-            const newScrollHeight = container.scrollHeight;
-            container.scrollTop += newScrollHeight - prevScrollHeight;
-            isLoadingMoreMessagesRef.current = false;
-            setIsLoadingMoreMessages(false);
-          });
-        }).catch(() => {
+        prevScrollHeightRef.current = container.scrollHeight;
+        coworkService.loadMoreMessages(sessionId).catch(() => {
+          prevScrollHeightRef.current = null;
           isLoadingMoreMessagesRef.current = false;
           setIsLoadingMoreMessages(false);
         });
@@ -2194,17 +2188,25 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     if (container.scrollHeight <= container.clientHeight) {
       isLoadingMoreMessagesRef.current = true;
       setIsLoadingMoreMessages(true);
-      coworkService.loadMoreMessages(sessionId).then(() => {
-        requestAnimationFrame(() => {
-          isLoadingMoreMessagesRef.current = false;
-          setIsLoadingMoreMessages(false);
-        });
-      }).catch(() => {
+      prevScrollHeightRef.current = container.scrollHeight;
+      coworkService.loadMoreMessages(sessionId).catch(() => {
+        prevScrollHeightRef.current = null;
         isLoadingMoreMessagesRef.current = false;
         setIsLoadingMoreMessages(false);
       });
     }
   }, [currentSession?.id, currentSession?.messagesOffset, currentSession?.messages.length]);
+
+  // Restore scroll position synchronously before browser paint when messages are prepended
+  useLayoutEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container || prevScrollHeightRef.current === null) return;
+    const newScrollHeight = container.scrollHeight;
+    container.scrollTop += newScrollHeight - prevScrollHeightRef.current;
+    prevScrollHeightRef.current = null;
+    isLoadingMoreMessagesRef.current = false;
+    setIsLoadingMoreMessages(false);
+  }, [currentSession?.messages.length]);
 
   const navigateToRailItem = useCallback((railIndex: number) => {
     if (railIndex < 0 || railIndex >= railItemCountRef.current) return;

@@ -5,9 +5,9 @@
  * the LIMIT/OFFSET SQL patterns introduced in coworkStore.ts behave correctly
  * with realistic seed data.
  */
-import { test, expect, beforeAll, afterAll } from 'vitest';
 import initSqlJs, { Database } from 'sql.js';
 import { v4 as uuidv4 } from 'uuid';
+import { afterAll,beforeAll, expect, test } from 'vitest';
 
 // ---------------------------------------------------------------------------
 // Helpers that mirror coworkStore.ts query logic
