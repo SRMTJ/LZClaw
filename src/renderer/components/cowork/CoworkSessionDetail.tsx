@@ -6,7 +6,7 @@ import {
   PhotoIcon,
 } from '@heroicons/react/24/outline';
 import { FolderIcon } from '@heroicons/react/24/solid';
-import React, { useCallback, useEffect, useMemo,useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo,useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
 
@@ -1689,6 +1689,9 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const promptInputRef = useRef<CoworkPromptInputRef>(null);
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
+  const [isLoadingMoreMessages, setIsLoadingMoreMessages] = useState(false);
+  const isLoadingMoreMessagesRef = useRef(false);
+  const prevScrollHeightRef = useRef<number | null>(null);
 
   // Clear lazy-render height cache when session changes
   const sessionId = currentSession?.id;
@@ -2354,6 +2357,23 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     setIsScrollable((prev) => (prev === scrollable ? prev : scrollable));
     if (!scrollable) return;
 
+    // Load older messages when scrolled near the top
+    if (container.scrollTop <= 80 && !isLoadingMoreMessagesRef.current) {
+      const sessionId = currentSession?.id;
+      const offset = currentSession?.messagesOffset ?? 0;
+      if (sessionId && offset > 0) {
+        isLoadingMoreMessagesRef.current = true;
+        setIsLoadingMoreMessages(true);
+        prevScrollHeightRef.current = container.scrollHeight;
+        coworkService.loadMoreMessages(sessionId).catch(() => {
+          prevScrollHeightRef.current = null;
+          isLoadingMoreMessagesRef.current = false;
+          setIsLoadingMoreMessages(false);
+        });
+      }
+    }
+
+
     // Skip index recalculation during programmatic navigation
     if (isNavigatingRef.current) return;
 
@@ -2403,7 +2423,37 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       currentRailIndexRef.current = railIdx;
       setCurrentRailIndex(railIdx);
     }
-  }, []);
+  }, [currentSession?.id, currentSession?.messagesOffset]);
+
+  // Auto-load older messages if content doesn't fill the container (no scrollbar = onScroll never fires)
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container || isLoadingMoreMessagesRef.current) return;
+    const sessionId = currentSession?.id;
+    const offset = currentSession?.messagesOffset ?? 0;
+    if (!sessionId || offset <= 0) return;
+    if (container.scrollHeight <= container.clientHeight) {
+      isLoadingMoreMessagesRef.current = true;
+      setIsLoadingMoreMessages(true);
+      prevScrollHeightRef.current = container.scrollHeight;
+      coworkService.loadMoreMessages(sessionId).catch(() => {
+        prevScrollHeightRef.current = null;
+        isLoadingMoreMessagesRef.current = false;
+        setIsLoadingMoreMessages(false);
+      });
+    }
+  }, [currentSession?.id, currentSession?.messagesOffset, currentSession?.messages.length]);
+
+  // Restore scroll position synchronously before browser paint when messages are prepended
+  useLayoutEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container || prevScrollHeightRef.current === null) return;
+    const newScrollHeight = container.scrollHeight;
+    container.scrollTop += newScrollHeight - prevScrollHeightRef.current;
+    prevScrollHeightRef.current = null;
+    isLoadingMoreMessagesRef.current = false;
+    setIsLoadingMoreMessages(false);
+  }, [currentSession?.messages.length]);
 
   const navigateToRailItem = useCallback((railIndex: number) => {
     if (railIndex < 0 || railIndex >= railItemCountRef.current) return;
@@ -2891,6 +2941,11 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
           onScroll={handleMessagesScroll}
           className={`h-full min-h-0 overflow-y-auto pt-3 ${turns.length > 1 && isScrollable ? 'pr-8' : 'pr-3'}`}
         >
+          {isLoadingMoreMessages && (
+            <div className="py-2 text-center text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+              {i18nService.t('loading')}
+            </div>
+          )}
           {renderConversationTurns()}
           <div className="h-20" />
         </div>

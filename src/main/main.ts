@@ -9,6 +9,7 @@ import { buildSessionTitleFromInput } from '../common/sessionTitle';
 import { buildScheduledTaskEnginePrompt } from '../scheduledTask/enginePrompt';
 import { migrateScheduledTaskRunsToOpenclaw, migrateScheduledTasksToOpenclaw } from '../scheduledTask/migrate';
 import { AppUpdateIpc } from '../shared/appUpdate/constants';
+import { COWORK_MESSAGE_PAGE_SIZE, COWORK_SESSION_PAGE_SIZE } from '../shared/cowork/constants';
 import { PlatformRegistry } from '../shared/platform';
 import { ProviderName } from '../shared/providers';
 import { AgentManager } from './agentManager';
@@ -3117,14 +3118,34 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('cowork:session:list', async (_event, agentId?: string) => {
+  ipcMain.handle('cowork:session:list', async (_event, options?: { limit?: number; offset?: number; agentId?: string }) => {
     try {
-      const sessions = getCoworkStore().listSessions(agentId);
-      return { success: true, sessions };
+      const limit = options?.limit ?? COWORK_SESSION_PAGE_SIZE;
+      const offset = options?.offset ?? 0;
+      const agentId = options?.agentId;
+      const store = getCoworkStore();
+      const sessions = store.listSessions(limit, offset, agentId);
+      const total = store.countSessions(agentId);
+      return { success: true, sessions, hasMore: offset + sessions.length < total };
     } catch (error) {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to list sessions',
+      };
+    }
+  });
+
+  ipcMain.handle('cowork:session:getMessages', async (_event, options: { sessionId: string; limit?: number; offset?: number }) => {
+    try {
+      const { sessionId, limit = COWORK_MESSAGE_PAGE_SIZE, offset = 0 } = options;
+      const store = getCoworkStore();
+      const total = store.countSessionMessages(sessionId);
+      const messages = store.getPagedSessionMessages(sessionId, limit, offset);
+      return { success: true, messages, offset, total };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to get session messages',
       };
     }
   });
