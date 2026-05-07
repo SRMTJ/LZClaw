@@ -2,7 +2,7 @@ import { ArrowPathIcon,XMarkIcon } from '@heroicons/react/24/outline';
 import React, { useCallback,useEffect, useMemo, useRef, useState } from 'react';
 
 import { i18nService } from '../../services/i18n';
-import type { CoworkMessage,CoworkSession } from '../../types/cowork';
+import type { CoworkSession } from '../../types/cowork';
 import {
   AssistantTurnBlock,
   buildConversationTurns,
@@ -137,8 +137,7 @@ const RunSessionModal: React.FC<RunSessionModalProps> = ({ sessionId, sessionKey
     }
   };
 
-  const messages: CoworkMessage[] = session?.messages ?? [];
-  const displayItems = useMemo(() => buildDisplayItems(messages), [messages]);
+  const displayItems = useMemo(() => buildDisplayItems(session?.messages ?? []), [session?.messages]);
   const turns = useMemo(() => buildConversationTurns(displayItems), [displayItems]);
 
   return (
