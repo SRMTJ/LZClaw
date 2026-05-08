@@ -278,85 +278,85 @@ const createMarkdownComponents = (
   showRevealInFolderAction = false,
   onImageClick?: (src: string) => void,
 ) => ({
-  p: ({ node, className, children, ...props }: any) => (
+  p: ({ node: _node, className: _className, children, ...props }: any) => (
     <p className="my-1 first:mt-0 last:mb-0 leading-6 text-foreground" {...props}>
       {children}
     </p>
   ),
-  strong: ({ node, className, children, ...props }: any) => (
+  strong: ({ node: _node, className: _className, children, ...props }: any) => (
     <strong className="font-semibold text-foreground" {...props}>
       {children}
     </strong>
   ),
-  h1: ({ node, className, children, ...props }: any) => (
+  h1: ({ node: _node, className: _className, children, ...props }: any) => (
     <h1 className="text-2xl font-semibold mt-6 mb-3 text-foreground" {...props}>
       {children}
     </h1>
   ),
-  h2: ({ node, className, children, ...props }: any) => (
+  h2: ({ node: _node, className: _className, children, ...props }: any) => (
     <h2 className="text-xl font-semibold mt-5 mb-2 text-foreground" {...props}>
       {children}
     </h2>
   ),
-  h3: ({ node, className, children, ...props }: any) => (
+  h3: ({ node: _node, className: _className, children, ...props }: any) => (
     <h3 className="text-lg font-semibold mt-4 mb-2 text-foreground" {...props}>
       {children}
     </h3>
   ),
-  ul: ({ node, className, children, ...props }: any) => (
+  ul: ({ node: _node, className: _className, children, ...props }: any) => (
     <ul className="list-disc pl-5 my-1.5 text-foreground" {...props}>
       {children}
     </ul>
   ),
-  ol: ({ node, className, children, ...props }: any) => (
+  ol: ({ node: _node, className: _className, children, ...props }: any) => (
     <ol className="list-decimal pl-6 my-1.5 text-foreground" {...props}>
       {children}
     </ol>
   ),
-  li: ({ node, className, children, ...props }: any) => (
+  li: ({ node: _node, className: _className, children, ...props }: any) => (
     <li className="my-0.5 leading-6 text-foreground" {...props}>
       {children}
     </li>
   ),
-  blockquote: ({ node, className, children, ...props }: any) => (
+  blockquote: ({ node: _node, className: _className, children, ...props }: any) => (
     <blockquote className="border-l-4 border-primary pl-4 py-1 my-2 bg-surface-raised/30 rounded-r-lg text-foreground" {...props}>
       {children}
     </blockquote>
   ),
   code: CodeBlock,
-  table: ({ node, className, children, ...props }: any) => (
+  table: ({ node: _node, className: _className, children, ...props }: any) => (
     <div className="my-4 overflow-x-auto rounded-xl border border-border">
       <table className="border-collapse w-full" {...props}>
         {children}
       </table>
     </div>
   ),
-  thead: ({ node, className, children, ...props }: any) => (
+  thead: ({ node: _node, className: _className, children, ...props }: any) => (
     <thead className="bg-surface-raised" {...props}>
       {children}
     </thead>
   ),
-  tbody: ({ node, className, children, ...props }: any) => (
+  tbody: ({ node: _node, className: _className, children, ...props }: any) => (
     <tbody className="divide-y divide-border" {...props}>
       {children}
     </tbody>
   ),
-  tr: ({ node, className, children, ...props }: any) => (
+  tr: ({ node: _node, className: _className, children, ...props }: any) => (
     <tr className="divide-x divide-border" {...props}>
       {children}
     </tr>
   ),
-  th: ({ node, className, children, ...props }: any) => (
+  th: ({ node: _node, className: _className, children, ...props }: any) => (
     <th className="px-4 py-2 text-left font-semibold text-foreground" {...props}>
       {children}
     </th>
   ),
-  td: ({ node, className, children, ...props }: any) => (
+  td: ({ node: _node, className: _className, children, ...props }: any) => (
     <td className="px-4 py-2 text-foreground" {...props}>
       {children}
     </td>
   ),
-  img: ({ node, className, src, alt, ...props }: any) => {
+  img: ({ node: _node, className: _className, src, alt, ...props }: any) => {
     let resolvedSrc = src;
     if (typeof src === 'string') {
       if (src.startsWith('file://')) {
@@ -375,10 +375,10 @@ const createMarkdownComponents = (
       />
     );
   },
-  hr: ({ node, ...props }: any) => (
+  hr: ({ node: _node, ...props }: any) => (
     <hr className="my-5 border-border" {...props} />
   ),
-  a: ({ node, href, className, children, ...props }: any) => {
+  a: ({ node: _node, href, className: _className, children, ...props }: any) => {
     if (typeof href === 'string' && href.startsWith('#artifact-')) {
       return null;
     }

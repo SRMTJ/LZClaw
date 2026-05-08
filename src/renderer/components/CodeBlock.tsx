@@ -1106,6 +1106,7 @@ function useCodeMirrorView({
       view.destroy();
       viewRef.current = null;
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [container]); // only re-create when the DOM container changes
 
   // Reconfigure theme compartment when isDark changes
@@ -1185,6 +1186,7 @@ const CodeMirrorEditor: React.FC<CodeMirrorEditorProps> = ({
   // Notify parent when view changes
   useEffect(() => {
     onViewReady(view);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view]);
 
   return (
