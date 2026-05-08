@@ -2317,6 +2317,8 @@ export class OpenClawConfigSync {
         icon: '',
         skillIds: [],
         enabled: true,
+        pinned: false,
+        pinOrder: null,
         isDefault: true,
         source: 'custom',
         presetId: '',

@@ -156,7 +156,7 @@ const ScheduledTasksView: React.FC<ScheduledTasksViewProps> = ({
             <button
               type="button"
               onClick={() => handleTabChange('tasks')}
-              className={`px-4 py-2.5 text-sm font-medium transition-colors relative ${
+              className={`px-4 py-2.5 text-[14px] font-normal leading-5 transition-colors relative ${
                 activeTab === 'tasks' ? 'text-foreground' : 'text-secondary hover:text-foreground'
               }`}
             >
@@ -168,7 +168,7 @@ const ScheduledTasksView: React.FC<ScheduledTasksViewProps> = ({
             <button
               type="button"
               onClick={() => handleTabChange('history')}
-              className={`px-4 py-2.5 text-sm font-medium transition-colors relative ${
+              className={`px-4 py-2.5 text-[14px] font-normal leading-5 transition-colors relative ${
                 activeTab === 'history' ? 'text-foreground' : 'text-secondary hover:text-foreground'
               }`}
             >
@@ -182,7 +182,7 @@ const ScheduledTasksView: React.FC<ScheduledTasksViewProps> = ({
             <button
               type="button"
               onClick={() => dispatch(setViewMode('create'))}
-              className="px-3 py-1 text-sm font-medium bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors"
+              className="px-3 py-1 text-[14px] font-normal leading-5 bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors"
             >
               {i18nService.t('scheduledTasksNewTask')}
             </button>

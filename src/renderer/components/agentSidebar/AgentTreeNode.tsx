@@ -8,6 +8,7 @@ import { AgentConfirmDialogVariant } from '../agent/constants';
 import ComposeIcon from '../icons/ComposeIcon';
 import DefaultAgentIcon from '../icons/DefaultAgentIcon';
 import EllipsisHorizontalIcon from '../icons/EllipsisHorizontalIcon';
+import PushPinIcon from '../icons/PushPinIcon';
 import TrashIcon from '../icons/TrashIcon';
 import AgentTaskRow from './AgentTaskRow';
 import ExpandAgentTasksRow from './ExpandAgentTasksRow';
@@ -22,6 +23,7 @@ interface AgentTreeNodeProps {
   onEditAgent: (agent: AgentSidebarAgentNode) => void;
   onCreateTask: (agent: AgentSidebarAgentNode) => void;
   onDeleteAgent: (agent: AgentSidebarAgentNode) => Promise<void>;
+  onToggleAgentPin: (agent: AgentSidebarAgentNode, pinned: boolean) => Promise<void>;
   onRetryLoadTasks: (agentId: string) => void;
   onLoadMoreTasks: (agentId: string) => void;
   onCollapseTasks: (agentId: string) => void;
@@ -58,6 +60,7 @@ const AgentTreeNode: React.FC<AgentTreeNodeProps> = ({
   onEditAgent,
   onCreateTask,
   onDeleteAgent,
+  onToggleAgentPin,
   onRetryLoadTasks,
   onLoadMoreTasks,
   onCollapseTasks,
@@ -75,11 +78,11 @@ const AgentTreeNode: React.FC<AgentTreeNodeProps> = ({
   const isMainAgent = isDefaultAgentId(agent.id);
   const agentName = getAgentDisplayName(agent);
   const menuItemClassName =
-    'flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[13px] text-foreground transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04]';
+    'flex w-full items-center gap-2 whitespace-nowrap px-2.5 py-1.5 text-left text-[13px] text-foreground transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04]';
   const dangerMenuItemClassName =
-    'flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[13px] text-red-500 transition-colors hover:bg-red-500/10';
+    'flex w-full items-center gap-2 whitespace-nowrap px-2.5 py-1.5 text-left text-[13px] text-red-500 transition-colors hover:bg-red-500/10';
   const disabledMenuItemClassName =
-    'flex w-full cursor-not-allowed items-center gap-2 px-2.5 py-1.5 text-left text-[13px] text-secondary/40';
+    'flex w-full cursor-not-allowed items-center gap-2 whitespace-nowrap px-2.5 py-1.5 text-left text-[13px] text-secondary/40';
   const rowActionButtonClassName =
     'inline-flex h-5 w-5 items-center justify-center rounded text-foreground opacity-[0.3] transition-opacity hover:opacity-[0.46]';
   const rowEditActionButtonClassName =
@@ -126,9 +129,15 @@ const AgentTreeNode: React.FC<AgentTreeNodeProps> = ({
     setShowConfirmDelete(true);
   };
 
+  const handleToggleAgentPin = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    setIsMenuOpen(false);
+    void onToggleAgentPin(agent, !agent.pinned);
+  };
+
   return (
     <div className="space-y-0.5">
-      <div className={`group sticky top-0 ${isMenuOpen ? 'z-50' : 'z-20'} -ml-[6px] h-[34px] w-[calc(100%+12px)] bg-surface-raised`}>
+      <div className={`group sticky top-10 ${isMenuOpen ? 'z-50' : 'z-20'} -ml-[6px] h-7 w-[calc(100%+12px)] bg-surface-raised`}>
         <button
           type="button"
           onClick={() => onToggleExpanded(agent.id)}
@@ -175,7 +184,7 @@ const AgentTreeNode: React.FC<AgentTreeNodeProps> = ({
         {isMenuOpen && (
           <div
             ref={menuRef}
-            className="absolute right-1 top-8 z-40 min-w-[132px] overflow-hidden rounded-lg border border-border bg-surface shadow-lg"
+            className="absolute right-1 top-8 z-40 w-max min-w-[104px] overflow-hidden rounded-lg border border-border bg-surface shadow-lg"
             role="menu"
           >
             <button
@@ -186,6 +195,15 @@ const AgentTreeNode: React.FC<AgentTreeNodeProps> = ({
             >
               <ComposeIcon className={menuIconClassName} />
               {i18nService.t('edit')}
+            </button>
+            <button
+              type="button"
+              onClick={handleToggleAgentPin}
+              className={menuItemClassName}
+              role="menuitem"
+            >
+              <PushPinIcon slashed={agent.pinned} className={menuIconClassName} />
+              {agent.pinned ? i18nService.t('agentUnpin') : i18nService.t('agentPin')}
             </button>
             {isMainAgent ? (
               <button

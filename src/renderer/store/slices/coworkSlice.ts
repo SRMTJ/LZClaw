@@ -248,6 +248,7 @@ const coworkSlice = createSlice({
 
     updateMessageContent(state, action: PayloadAction<{ sessionId: string; messageId: string; content: string; metadata?: Record<string, unknown> }>) {
       const { sessionId, messageId, content, metadata } = action.payload;
+      const updatedAt = Date.now();
 
       if (state.currentSession?.id === sessionId) {
         const messageIndex = state.currentSession.messages.findIndex(m => m.id === messageId);
@@ -259,7 +260,13 @@ const coworkSlice = createSlice({
               ...metadata,
             };
           }
+          state.currentSession.updatedAt = updatedAt;
         }
+      }
+
+      const sessionIndex = state.sessions.findIndex(s => s.id === sessionId);
+      if (sessionIndex !== -1) {
+        state.sessions[sessionIndex].updatedAt = updatedAt;
       }
 
       markSessionUnread(state, sessionId);

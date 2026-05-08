@@ -46,6 +46,7 @@ import EllipsisHorizontalIcon from '../icons/EllipsisHorizontalIcon';
 import ExclamationTriangleIcon from '../icons/ExclamationTriangleIcon';
 import InformationCircleIcon from '../icons/InformationCircleIcon';
 import PencilSquareIcon from '../icons/PencilSquareIcon';
+import PushPinIcon from '../icons/PushPinIcon';
 import PuzzleIcon from '../icons/PuzzleIcon';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import TrashIcon from '../icons/TrashIcon';
@@ -285,28 +286,6 @@ const composeExportCanvas = async (
 
   return final;
 };
-
-// PushPinIcon component for pin/unpin functionality
-const PushPinIcon: React.FC<React.SVGProps<SVGSVGElement> & { slashed?: boolean }> = ({
-  slashed,
-  ...props
-}) => (
-  <svg
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={1.5}
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    {...props}
-  >
-    <g transform="rotate(45 12 12)">
-      <path d="M9 3h6l-1 5 2 2v2H8v-2l2-2-1-5z" />
-      <path d="M12 12v9" />
-    </g>
-    {slashed && <path d="M5 5L19 19" />}
-  </svg>
-);
 
 const ArtifactPanelIcon: React.FC<React.SVGProps<SVGSVGElement> & { open?: boolean }> = ({ open, ...props }) => {
   const dividerX = open ? 10.5 : 12.5;

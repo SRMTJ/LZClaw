@@ -107,11 +107,11 @@ const AgentTaskRow: React.FC<AgentTaskRowProps> = ({
     ? i18nService.t('myAgentSidebarRunning')
     : i18nService.t('myAgentSidebarUnreadResult');
   const menuItemClassName =
-    'flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[13px] text-foreground transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04]';
+    'flex w-full items-center gap-2 whitespace-nowrap px-2.5 py-1.5 text-left text-[13px] text-foreground transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04]';
   const dangerMenuItemClassName =
-    'flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[13px] text-red-500 transition-colors hover:bg-red-500/10';
+    'flex w-full items-center gap-2 whitespace-nowrap px-2.5 py-1.5 text-left text-[13px] text-red-500 transition-colors hover:bg-red-500/10';
   const menuIconClassName = 'h-3.5 w-3.5';
-  const relativeTime = formatAgentTaskRelativeTime(task.updatedAt);
+  const relativeTime = formatAgentTaskRelativeTime(task.updatedAt || task.createdAt);
   const showRelativeTime = task.indicator === AgentSidebarIndicator.None;
   const pinLabel = task.pinned ? i18nService.t('coworkUnpinSession') : i18nService.t('coworkPinSession');
 
@@ -254,7 +254,7 @@ const AgentTaskRow: React.FC<AgentTaskRowProps> = ({
       {isMenuOpen && (
         <div
           ref={menuRef}
-          className="absolute right-0 top-7 z-40 min-w-[152px] overflow-hidden rounded-lg border border-border bg-surface shadow-lg"
+          className="absolute right-0 top-7 z-40 w-max min-w-[124px] overflow-hidden rounded-lg border border-border bg-surface shadow-lg"
           role="menu"
         >
           {showBatchOption && (

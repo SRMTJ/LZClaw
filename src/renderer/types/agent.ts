@@ -11,6 +11,8 @@ export interface Agent {
   icon: string;
   skillIds: string[];
   enabled: boolean;
+  pinned: boolean;
+  pinOrder?: number | null;
   isDefault: boolean;
   source: AgentSource;
   presetId: string;
@@ -55,4 +57,5 @@ export interface UpdateAgentRequest {
   icon?: string;
   skillIds?: string[];
   enabled?: boolean;
+  pinned?: boolean;
 }

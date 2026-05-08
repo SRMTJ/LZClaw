@@ -28,6 +28,8 @@ class AgentService {
           model: a.model ?? '',
           workingDirectory: a.workingDirectory ?? '',
           enabled: a.enabled,
+          pinned: a.pinned ?? false,
+          pinOrder: a.pinOrder ?? null,
           isDefault: a.isDefault,
           source: a.source,
           skillIds: a.skillIds ?? [],
@@ -62,6 +64,8 @@ class AgentService {
           model: agent.model ?? '',
           workingDirectory: agent.workingDirectory ?? '',
           enabled: agent.enabled,
+          pinned: agent.pinned ?? false,
+          pinOrder: agent.pinOrder ?? null,
           isDefault: agent.isDefault,
           source: agent.source,
           skillIds: agent.skillIds ?? [],
@@ -85,6 +89,7 @@ class AgentService {
     icon?: string;
     skillIds?: string[];
     enabled?: boolean;
+    pinned?: boolean;
   }): Promise<Agent | null> {
     try {
       const agent = await window.electron?.agents?.update(id, updates);
@@ -98,6 +103,8 @@ class AgentService {
             model: agent.model ?? '',
             workingDirectory: agent.workingDirectory ?? '',
             enabled: agent.enabled,
+            pinned: agent.pinned ?? false,
+            pinOrder: agent.pinOrder ?? null,
             skillIds: agent.skillIds ?? [],
           },
         }));
@@ -163,6 +170,8 @@ class AgentService {
           model: agent.model ?? '',
           workingDirectory: agent.workingDirectory ?? '',
           enabled: agent.enabled,
+          pinned: agent.pinned ?? false,
+          pinOrder: agent.pinOrder ?? null,
           isDefault: agent.isDefault,
           source: agent.source,
           skillIds: agent.skillIds ?? [],

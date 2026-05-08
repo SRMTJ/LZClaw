@@ -460,7 +460,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved, onDi
     'w-full rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50';
   const textareaInputClass =
     'w-full rounded-t-lg px-3 py-2 text-sm text-foreground focus:outline-none resize-none bg-transparent';
-  const labelClass = 'block text-sm font-medium text-foreground mb-1';
+  const labelClass = 'block text-[14px] font-normal leading-5 text-foreground/85 mb-1';
   const errorClass = 'text-xs text-red-500 mt-1';
   const hintClass = 'text-xs text-secondary mt-0.5';
 
@@ -1221,7 +1221,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved, onDi
     <div className="flex flex-col min-h-0 h-full">
       {/* Scrollable form body */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4 min-h-0">
-        <h2 className="text-sm font-semibold text-foreground">
+        <h2 className="text-[14px] font-normal leading-5 text-foreground/85">
           {mode === 'create'
             ? i18nService.t('scheduledTasksFormCreate')
             : i18nService.t('scheduledTasksFormUpdate')}
@@ -1352,7 +1352,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved, onDi
           type="button"
           onClick={() => void handleSubmit()}
           disabled={submitting}
-          className="px-4 py-1.5 text-sm font-medium bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors disabled:opacity-50"
+          className="px-4 py-1.5 text-[14px] font-normal leading-5 bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors disabled:opacity-50"
         >
           {submitting
             ? i18nService.t('saving')

@@ -3242,9 +3242,12 @@ if (!gotTheLock) {
   ipcMain.handle(AgentIpcChannel.Update, async (_event, id: string, updates: import('./coworkStore').UpdateAgentRequest) => {
     try {
       const agent = getAgentManager().updateAgent(id, updates);
-      syncOpenClawConfig({ reason: 'agent-updated' }).catch((err) => {
-        console.error('[OpenClaw] config sync after agent-updated failed:', err);
-      });
+      const shouldSyncOpenClawConfig = Object.keys(updates).some((key) => key !== 'pinned');
+      if (shouldSyncOpenClawConfig) {
+        syncOpenClawConfig({ reason: 'agent-updated' }).catch((err) => {
+          console.error('[OpenClaw] config sync after agent-updated failed:', err);
+        });
+      }
       return { success: true, agent };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to update agent' };

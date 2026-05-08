@@ -172,6 +172,8 @@ export class SqliteStore {
         icon TEXT NOT NULL DEFAULT '',
         skill_ids TEXT NOT NULL DEFAULT '[]',
         enabled INTEGER NOT NULL DEFAULT 1,
+        pinned INTEGER NOT NULL DEFAULT 0,
+        pin_order INTEGER,
         is_default INTEGER NOT NULL DEFAULT 0,
         source TEXT NOT NULL DEFAULT 'custom',
         preset_id TEXT NOT NULL DEFAULT '',
@@ -287,8 +289,31 @@ export class SqliteStore {
         this.db.exec("ALTER TABLE agents ADD COLUMN working_directory TEXT NOT NULL DEFAULT '';");
         this.didRunMigration = true;
       }
+      if (!agentColNames.includes('pinned')) {
+        this.db.exec('ALTER TABLE agents ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;');
+        this.didRunMigration = true;
+      }
+      if (!agentColNames.includes('pin_order')) {
+        this.db.exec('ALTER TABLE agents ADD COLUMN pin_order INTEGER;');
+        this.didRunMigration = true;
+      }
     } catch {
       // Column already exists or migration not needed.
+    }
+
+    try {
+      const pinnedAgentResult = this.db.prepare('UPDATE agents SET pinned = 0 WHERE pinned IS NULL;').run();
+      const pinOrderAgentResult = this.db
+        .prepare('UPDATE agents SET pin_order = updated_at WHERE pinned = 1 AND pin_order IS NULL;')
+        .run();
+      const unpinnedAgentResult = this.db
+        .prepare('UPDATE agents SET pin_order = NULL WHERE pinned = 0 AND pin_order IS NOT NULL;')
+        .run();
+      if (pinnedAgentResult.changes > 0 || pinOrderAgentResult.changes > 0 || unpinnedAgentResult.changes > 0) {
+        this.didRunMigration = true;
+      }
+    } catch {
+      // Columns might not exist yet.
     }
 
     // Migration: Ensure default agent exists and legacy display values are upgraded.

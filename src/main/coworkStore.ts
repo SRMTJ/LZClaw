@@ -321,6 +321,8 @@ export interface Agent {
   icon: string;
   skillIds: string[];
   enabled: boolean;
+  pinned: boolean;
+  pinOrder?: number | null;
   isDefault: boolean;
   source: AgentSource;
   presetId: string;
@@ -352,6 +354,7 @@ export interface UpdateAgentRequest {
   icon?: string;
   skillIds?: string[];
   enabled?: boolean;
+  pinned?: boolean;
 }
 
 
@@ -1145,8 +1148,9 @@ export class CoworkStore {
     messageId: string,
     updates: { content?: string; metadata?: CoworkMessageMetadata },
   ): void {
+    const now = Date.now();
     const setClauses: string[] = [];
-    const values: (string | null)[] = [];
+    const values: (string | number | null)[] = [];
 
     if (updates.content !== undefined) {
       setClauses.push('content = ?');
@@ -1161,7 +1165,7 @@ export class CoworkStore {
 
     values.push(messageId);
     values.push(sessionId);
-    this.db
+    const result = this.db
       .prepare(
         `
       UPDATE cowork_messages
@@ -1170,6 +1174,9 @@ export class CoworkStore {
     `,
       )
       .run(...values);
+    if (result.changes > 0) {
+      this.db.prepare('UPDATE cowork_sessions SET updated_at = ? WHERE id = ?').run(now, sessionId);
+    }
   }
 
   // Config operations
@@ -1861,6 +1868,8 @@ export class CoworkStore {
       icon: string;
       skill_ids: string;
       enabled: number;
+      pinned?: number | null;
+      pin_order?: number | null;
       is_default: number;
       source: string;
       preset_id: string;
@@ -1887,6 +1896,8 @@ export class CoworkStore {
       icon: string;
       skill_ids: string;
       enabled: number;
+      pinned?: number | null;
+      pin_order?: number | null;
       is_default: number;
       source: string;
       preset_id: string;
@@ -1997,6 +2008,18 @@ export class CoworkStore {
       setClauses.push('enabled = ?');
       values.push(updates.enabled ? 1 : 0);
     }
+    if (updates.pinned !== undefined) {
+      setClauses.push('pinned = ?');
+      values.push(updates.pinned ? 1 : 0);
+      if (updates.pinned) {
+        const currentPinOrder = existing.pinOrder ?? null;
+        const nextPinOrder = currentPinOrder ?? this.getNextAgentPinOrder();
+        setClauses.push('pin_order = ?');
+        values.push(nextPinOrder);
+      } else {
+        setClauses.push('pin_order = NULL');
+      }
+    }
 
     values.push(id);
     this.db.prepare(`UPDATE agents SET ${setClauses.join(', ')} WHERE id = ?`).run(...values);
@@ -2020,6 +2043,8 @@ export class CoworkStore {
     icon: string;
     skill_ids: string;
     enabled: number;
+    pinned?: number | null;
+    pin_order?: number | null;
     is_default: number;
     source: string;
     preset_id: string;
@@ -2043,11 +2068,20 @@ export class CoworkStore {
       icon: row.icon,
       skillIds,
       enabled: Boolean(row.enabled),
+      pinned: Boolean(row.pinned),
+      pinOrder: row.pinned ? (row.pin_order ?? null) : null,
       isDefault: Boolean(row.is_default),
       source: row.source as AgentSource,
       presetId: row.preset_id,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
+  }
+
+  private getNextAgentPinOrder(): number {
+    const row = this.getOne<{ max_order: number | null }>(
+      'SELECT MAX(pin_order) as max_order FROM agents WHERE pinned = 1',
+    );
+    return (row?.max_order ?? 0) + 1;
   }
 }

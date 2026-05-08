@@ -80,7 +80,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(session.title);
-  const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
+  const [menuPosition, setMenuPosition] = useState<{ right: number; y: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const actionButtonRef = useRef<HTMLButtonElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
@@ -96,14 +96,10 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
   const calculateMenuPosition = (height: number) => {
     const rect = actionButtonRef.current?.getBoundingClientRect();
     if (!rect) return null;
-    const menuWidth = 180;
     const padding = 8;
-    const x = Math.min(
-      Math.max(padding, rect.right - menuWidth),
-      window.innerWidth - menuWidth - padding
-    );
+    const right = Math.max(padding, window.innerWidth - rect.right);
     const y = Math.min(rect.bottom + 8, window.innerHeight - height - padding);
-    return { x, y };
+    return { right, y };
   };
 
   const openMenu = (e: React.MouseEvent) => {
@@ -218,7 +214,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
     if (!menuPosition) return;
     const menuHeight = showConfirmDelete ? 112 : (showBatchOption ? 156 : 120);
     const position = calculateMenuPosition(menuHeight);
-    if (position && (position.x !== menuPosition.x || position.y !== menuPosition.y)) {
+    if (position && (position.right !== menuPosition.right || position.y !== menuPosition.y)) {
       setMenuPosition(position);
     }
   }, [menuPosition, showConfirmDelete]);
@@ -375,8 +371,8 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
       {menuPosition && (
         <div
           ref={menuRef}
-          className="fixed z-50 min-w-[180px] rounded-xl border border-border bg-surface shadow-lg overflow-hidden"
-          style={{ top: menuPosition.y, left: menuPosition.x }}
+          className="fixed z-50 w-max min-w-[124px] max-w-[calc(100vw-16px)] rounded-xl border border-border bg-surface shadow-lg overflow-hidden"
+          style={{ top: menuPosition.y, right: menuPosition.right }}
           role="menu"
         >
           {menuItems.map((item) => (
@@ -384,7 +380,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
               key={item.key}
               type="button"
               onClick={item.onClick}
-              className={`w-full flex items-center gap-2 px-3 py-2 text-left text-sm transition-colors ${
+              className={`w-full flex items-center gap-2 whitespace-nowrap px-3 py-2 text-left text-sm transition-colors ${
                 item.tone === 'danger'
                   ? 'text-red-500 hover:bg-red-500/10'
                   : 'text-foreground hover:bg-surface-raised'

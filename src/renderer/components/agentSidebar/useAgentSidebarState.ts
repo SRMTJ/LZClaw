@@ -18,6 +18,7 @@ import {
 } from './constants';
 import type {
   AgentSidebarAgentNode,
+  AgentSidebarAgentSummary,
   AgentSidebarPreferenceState,
   AgentSidebarTaskNode,
 } from './types';
@@ -73,8 +74,24 @@ export const sortAgentSidebarTasks = (
       const bPinOrder = b.pinOrder ?? b.updatedAt ?? b.createdAt;
       if (aPinOrder !== bPinOrder) return aPinOrder - bPinOrder;
     }
-    if (b.createdAt !== a.createdAt) return b.createdAt - a.createdAt;
-    return b.updatedAt - a.updatedAt;
+    const aUpdatedAt = a.updatedAt || a.createdAt;
+    const bUpdatedAt = b.updatedAt || b.createdAt;
+    if (bUpdatedAt !== aUpdatedAt) return bUpdatedAt - aUpdatedAt;
+    return b.createdAt - a.createdAt;
+  });
+};
+
+export const sortAgentSidebarAgents = (
+  agents: AgentSidebarAgentSummary[],
+): AgentSidebarAgentSummary[] => {
+  return [...agents].sort((a, b) => {
+    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+    if (a.pinned && b.pinned) {
+      const aPinOrder = a.pinOrder ?? Number.MAX_SAFE_INTEGER;
+      const bPinOrder = b.pinOrder ?? Number.MAX_SAFE_INTEGER;
+      if (aPinOrder !== bPinOrder) return aPinOrder - bPinOrder;
+    }
+    return 0;
   });
 };
 
@@ -133,8 +150,14 @@ export const useAgentSidebarState = () => {
         name: agent.name,
         icon: agent.icon,
         enabled: agent.enabled,
+        pinned: agent.pinned ?? false,
+        pinOrder: agent.pinOrder ?? null,
       }));
   }, [agents]);
+
+  const sortedEnabledAgents = useMemo(() => {
+    return sortAgentSidebarAgents(enabledAgents);
+  }, [enabledAgents]);
 
   const unreadSessionIdSet = useMemo(() => new Set(unreadSessionIds), [unreadSessionIds]);
   const expandedAgentIdSet = useMemo(() => new Set(expandedAgentIds), [expandedAgentIds]);
@@ -182,14 +205,14 @@ export const useAgentSidebarState = () => {
 
   useEffect(() => {
     if (!preferenceLoaded || initializedDefaultExpansionRef.current) return;
-    if (enabledAgents.length === 0) return;
+    if (sortedEnabledAgents.length === 0) return;
     initializedDefaultExpansionRef.current = true;
     setExpandedAgentIds((previous) => {
       if (previous.length > 0) return previous;
-      const currentAgentExists = enabledAgents.some((agent) => agent.id === currentAgentId);
-      return [currentAgentExists ? currentAgentId : enabledAgents[0].id];
+      const currentAgentExists = sortedEnabledAgents.some((agent) => agent.id === currentAgentId);
+      return [currentAgentExists ? currentAgentId : sortedEnabledAgents[0].id];
     });
-  }, [currentAgentId, enabledAgents, preferenceLoaded]);
+  }, [currentAgentId, preferenceLoaded, sortedEnabledAgents]);
 
   const setAgentLoading = useCallback((agentId: string, isLoading: boolean) => {
     setLoadingAgentIds((previous) => {
@@ -249,11 +272,11 @@ export const useAgentSidebarState = () => {
   }, [setAgentFailed, setAgentLoading]);
 
   useEffect(() => {
-    enabledAgents.forEach((agent) => {
+    sortedEnabledAgents.forEach((agent) => {
       if (loadedAgentIdsRef.current.has(agent.id)) return;
       void loadAgentTasks(agent.id, { replace: true });
     });
-  }, [enabledAgents, loadAgentTasks]);
+  }, [loadAgentTasks, sortedEnabledAgents]);
 
   useEffect(() => {
     if (sessions.length === 0) return;
@@ -406,7 +429,7 @@ export const useAgentSidebarState = () => {
   }, []);
 
   const agentNodes = useMemo<AgentSidebarAgentNode[]>(() => {
-    return enabledAgents.map((agent) => {
+    return sortedEnabledAgents.map((agent) => {
       const taskPreviews = taskPreviewsByAgentId[agent.id] ?? [];
       const sortedTaskPreviews = sortAgentSidebarTasks(taskPreviews);
       const isTaskListExpanded = expandedTaskListAgentIdSet.has(agent.id);
@@ -435,12 +458,12 @@ export const useAgentSidebarState = () => {
     });
   }, [
     currentSessionId,
-    enabledAgents,
     expandedAgentIdSet,
     expandedTaskListAgentIdSet,
     failedAgentIdSet,
     hasMoreTasksByAgentId,
     loadingAgentIdSet,
+    sortedEnabledAgents,
     taskPreviewsByAgentId,
     unreadSessionIdSet,
   ]);

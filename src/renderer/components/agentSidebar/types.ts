@@ -6,6 +6,8 @@ export interface AgentSidebarAgentSummary {
   name: string;
   icon: string;
   enabled: boolean;
+  pinned: boolean;
+  pinOrder?: number | null;
 }
 
 export interface AgentSidebarTaskNode {

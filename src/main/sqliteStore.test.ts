@@ -127,3 +127,25 @@ test('upgrades legacy default agent name during migration', async () => {
 
   store.close();
 });
+
+test('adds agent pin columns during migration', async () => {
+  const userDataPath = createTempUserDataPath();
+  createLegacyDatabase(userDataPath);
+
+  const store = await SqliteStore.create(userDataPath);
+  const columns = store.getDatabase()
+    .pragma('table_info(agents)') as Array<{ name: string }>;
+  const columnNames = columns.map((column) => column.name);
+  const rows = store.getDatabase()
+    .prepare('SELECT id, pinned, pin_order FROM agents ORDER BY id')
+    .all() as Array<{ id: string; pinned: number; pin_order: number | null }>;
+
+  expect(columnNames).toContain('pinned');
+  expect(columnNames).toContain('pin_order');
+  expect(rows).toEqual([
+    { id: 'docs', pinned: 0, pin_order: null },
+    { id: 'main', pinned: 0, pin_order: null },
+  ]);
+
+  store.close();
+});

@@ -108,8 +108,54 @@ const MyAgentSidebarTree: React.FC<MyAgentSidebarTreeProps> = ({
     }
   };
 
+  const handleToggleAgentPin = async (agent: AgentSidebarAgentNode, pinned: boolean) => {
+    const updated = await agentService.updateAgent(agent.id, { pinned });
+    if (!updated) {
+      window.dispatchEvent(new CustomEvent('app:showToast', { detail: i18nService.t('agentPinFailed') }));
+    }
+  };
+
+  const renderAgentNode = (agent: AgentSidebarAgentNode) => (
+    <AgentTreeNode
+      key={agent.id}
+      agent={agent}
+      isBatchMode={isBatchMode}
+      selectedIds={selectedIds}
+      showBatchOption
+      onToggleExpanded={toggleAgentExpanded}
+      onEditAgent={(agent) => setSettingsAgentId(agent.id)}
+      onCreateTask={(agent) => void handleCreateTask(agent)}
+      onDeleteAgent={handleDeleteAgent}
+      onToggleAgentPin={handleToggleAgentPin}
+      onRetryLoadTasks={(agentId) => void retryLoadTasks(agentId)}
+      onLoadMoreTasks={(agentId) => void loadMoreTasks(agentId)}
+      onCollapseTasks={collapseTasks}
+      onSelectTask={(task) => void handleSelectTask(task)}
+      onDeleteTask={handleDeleteTask}
+      onToggleTaskPin={handleToggleTaskPin}
+      onRenameTask={handleRenameTask}
+      onToggleSelection={onToggleSelection}
+      onEnterBatchMode={handleEnterBatchMode}
+    />
+  );
+
+  const pinnedAgentNodes = agentNodes.filter((agent) => agent.pinned);
+  const projectAgentNodes = agentNodes.filter((agent) => !agent.pinned);
+  const hasPinnedAgents = pinnedAgentNodes.length > 0;
+
   return (
     <div className="pb-3" role="tree" aria-label={i18nService.t('myAgents')}>
+      {hasPinnedAgents && (
+        <div className="space-y-0.5">
+          <div className="sticky top-0 z-30 flex h-10 items-center bg-surface-raised px-1.5">
+            <h2 className="min-w-0 truncate text-[14px] font-normal text-foreground opacity-[0.28]">
+              {i18nService.t('myAgentSidebarPinned')}
+            </h2>
+          </div>
+          {pinnedAgentNodes.map(renderAgentNode)}
+        </div>
+      )}
+
       <MyAgentSidebarHeader
         onCreateAgent={() => setIsCreateOpen(true)}
       />
@@ -127,32 +173,11 @@ const MyAgentSidebarTree: React.FC<MyAgentSidebarTreeProps> = ({
             {i18nService.t('createNewAgent')}
           </button>
         </div>
-      ) : (
-        <div className="space-y-1 px-0">
-          {agentNodes.map((agent) => (
-            <AgentTreeNode
-              key={agent.id}
-              agent={agent}
-              isBatchMode={isBatchMode}
-              selectedIds={selectedIds}
-              showBatchOption
-              onToggleExpanded={toggleAgentExpanded}
-              onEditAgent={(agent) => setSettingsAgentId(agent.id)}
-              onCreateTask={(agent) => void handleCreateTask(agent)}
-              onDeleteAgent={handleDeleteAgent}
-              onRetryLoadTasks={(agentId) => void retryLoadTasks(agentId)}
-              onLoadMoreTasks={(agentId) => void loadMoreTasks(agentId)}
-              onCollapseTasks={collapseTasks}
-              onSelectTask={(task) => void handleSelectTask(task)}
-              onDeleteTask={handleDeleteTask}
-              onToggleTaskPin={handleToggleTaskPin}
-              onRenameTask={handleRenameTask}
-              onToggleSelection={onToggleSelection}
-              onEnterBatchMode={handleEnterBatchMode}
-            />
-          ))}
+      ) : projectAgentNodes.length > 0 ? (
+        <div className="space-y-0.5 px-0">
+          {projectAgentNodes.map(renderAgentNode)}
         </div>
-      )}
+      ) : null}
 
       <AgentCreateModal isOpen={isCreateOpen} onClose={() => setIsCreateOpen(false)} />
       <AgentSettingsPanel

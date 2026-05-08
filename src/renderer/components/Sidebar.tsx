@@ -1,4 +1,4 @@
-import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import { Cog6ToothIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { AgentId } from '@shared/agent';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
@@ -43,7 +43,7 @@ const DEFAULT_SIDEBAR_WIDTH = 244;
 const MIN_SIDEBAR_WIDTH = 220;
 const MAX_SIDEBAR_WIDTH = 420;
 const sidebarNavItemClassName =
-  'w-full inline-flex h-[34px] items-center gap-2 rounded-md px-1.5 text-left text-[14px] font-normal text-foreground/80 transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04]';
+  'w-full inline-flex h-7 items-center gap-2 rounded-md px-1.5 text-left text-[14px] font-normal text-foreground/80 transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04]';
 const activeSidebarNavItemClassName =
   `${sidebarNavItemClassName} bg-black/[0.06] hover:bg-black/[0.06] dark:bg-white/[0.07] dark:hover:bg-white/[0.07]`;
 const sidebarCreateIconClassName = 'h-4 w-4 shrink-0 text-secondary/40 dark:text-secondary/45';
@@ -204,7 +204,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             <SidebarToggleIcon className="h-4 w-4" isCollapsed={isCollapsed} />
           </button>
         </div>
-        <div className="mt-3 space-y-0.5 px-3">
+        <div className="mt-[5px] space-y-0.5 px-3">
           <button
             type="button"
             onClick={onNewChat}
@@ -319,7 +319,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           </div>
         </div>
       ) : (
-        <div className="px-3 pb-3 pt-1 flex items-center gap-1">
+        <div className="px-3 pb-1 pt-1 flex items-center gap-1">
           {!hideLogin && (
             <div className="flex-1 min-w-0">
               <LoginButton />
@@ -328,26 +328,10 @@ const Sidebar: React.FC<SidebarProps> = ({
           <button
             type="button"
             onClick={() => onShowSettings()}
-            className={`inline-flex items-center justify-start gap-2 rounded-lg px-2.5 py-2 text-sm font-medium text-secondary hover:text-foreground hover:bg-surface-raised transition-colors ${hideLogin ? 'w-full' : 'shrink-0'}`}
+            className={`inline-flex h-7 items-center justify-start gap-2 rounded-md px-1.5 text-[14px] font-normal text-foreground/80 transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04] ${hideLogin ? 'w-full' : 'shrink-0'}`}
             aria-label={i18nService.t('settings')}
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="h-4 w-4"
-            >
-              <path d="M14 17H5" />
-              <path d="M19 7h-9" />
-              <circle cx="17" cy="17" r="3" />
-              <circle cx="7" cy="7" r="3" />
-            </svg>
+            <Cog6ToothIcon className="h-4 w-4 shrink-0" />
             {i18nService.t('settings')}
           </button>
         </div>
