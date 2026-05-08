@@ -433,6 +433,33 @@ function createReconcileStore(messages: Array<Record<string, unknown>>) {
   };
 }
 
+function createActiveTurn(sessionId: string, sessionKey: string, runId: string) {
+  return {
+    sessionId,
+    sessionKey,
+    runId,
+    turnToken: 1,
+    startedAtMs: 1,
+    knownRunIds: new Set([runId]),
+    assistantMessageId: undefined,
+    committedAssistantText: '',
+    currentAssistantSegmentText: '',
+    currentText: '',
+    agentAssistantTextLength: 0,
+    currentContentText: '',
+    currentContentBlocks: [],
+    sawNonTextContentBlocks: false,
+    textStreamMode: 'snapshot',
+    toolUseMessageIdByToolCallId: new Map(),
+    toolResultMessageIdByToolCallId: new Map(),
+    toolResultTextByToolCallId: new Map(),
+    stopRequested: false,
+    pendingUserSync: false,
+    bufferedChatPayloads: [],
+    bufferedAgentPayloads: [],
+  };
+}
+
 test('reconcileWithHistory: already in sync — skips replace', async () => {
   const { session, store, getReplaceCallCount } = createReconcileStore([
     { id: 'msg-1', type: 'user', content: 'Hello', timestamp: 1, metadata: {} },
@@ -697,6 +724,79 @@ test('late event for a closed run does not recreate a managed session turn', () 
   expect(session.status).toBe('completed');
   expect(adapter.activeTurns.has(session.id)).toBe(false);
   expect(adapter.sessionIdByRunId.has('closed-run')).toBe(false);
+});
+
+test('lifecycle error fallback waits before aborting a gateway run', async () => {
+  vi.useFakeTimers();
+  try {
+    const { session, store } = createReconcileStore([
+      { id: 'msg-1', type: 'user', content: 'hello', timestamp: 1, metadata: {} },
+    ]);
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const sessionKey = `agent:main:lobsterai:${session.id}`;
+    const turn = createActiveTurn(session.id, sessionKey, 'run-error');
+
+    adapter.on('error', () => {});
+    adapter.gatewayClient = {
+      start: () => {},
+      stop: () => {},
+      request: async (method: string, params?: unknown) => {
+        requests.push({ method, params: params as Record<string, unknown> });
+        return {};
+      },
+    };
+    adapter.activeTurns.set(session.id, turn);
+
+    adapter.handleAgentLifecycleEvent(session.id, { phase: 'error', error: 'context exceeded' }, 'run-error');
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(requests.some((request) => request.method === 'chat.abort')).toBe(false);
+    expect(session.status).toBe('completed');
+
+    await vi.advanceTimersByTimeAsync(18_000);
+
+    expect(requests.find((request) => request.method === 'chat.abort')?.params).toMatchObject({
+      sessionKey,
+      runId: 'run-error',
+    });
+    expect(session.status).toBe('error');
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test('lifecycle error fallback ignores a later run for the same session', async () => {
+  vi.useFakeTimers();
+  try {
+    const { session, store } = createReconcileStore([
+      { id: 'msg-1', type: 'user', content: 'hello', timestamp: 1, metadata: {} },
+    ]);
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const sessionKey = `agent:main:lobsterai:${session.id}`;
+
+    adapter.gatewayClient = {
+      start: () => {},
+      stop: () => {},
+      request: async (method: string, params?: unknown) => {
+        requests.push({ method, params: params as Record<string, unknown> });
+        return {};
+      },
+    };
+    adapter.activeTurns.set(session.id, createActiveTurn(session.id, sessionKey, 'old-run'));
+
+    adapter.handleAgentLifecycleEvent(session.id, { phase: 'error', error: 'old run failed' }, 'old-run');
+    adapter.activeTurns.set(session.id, createActiveTurn(session.id, sessionKey, 'new-run'));
+
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    expect(requests.some((request) => request.method === 'chat.abort')).toBe(false);
+    expect(session.status).toBe('completed');
+    expect(adapter.activeTurns.get(session.id)?.runId).toBe('new-run');
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test('reconcileWithHistory: preserves tool messages', async () => {

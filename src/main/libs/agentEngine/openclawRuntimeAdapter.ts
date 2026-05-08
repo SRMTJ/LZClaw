@@ -816,6 +816,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private static readonly STOP_COOLDOWN_MS = 10_000; // 10 seconds
   private static readonly RECENTLY_CLOSED_RUN_ID_TTL_MS = 120_000;
   private static readonly RECENTLY_CLOSED_RUN_ID_LIMIT = 1000;
+  private static readonly LIFECYCLE_ERROR_FALLBACK_DELAY_MS = 20_000;
 
   private gatewayClient: GatewayClientLike | null = null;
   private gatewayClientVersion: string | null = null;
@@ -1417,6 +1418,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       this.manuallyStoppedSessions.add(sessionId);
       const client = this.gatewayClient;
       if (client) {
+        console.log(`[OpenClawRuntime] user requested stop, aborting gateway run ${turn.runId}.`);
         void client.request('chat.abort', {
           sessionKey: turn.sessionKey,
           runId: turn.runId,
@@ -2589,7 +2591,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       if (getAgentLifecyclePhase(lifecycleData) === AgentLifecyclePhase.Error && lifecycleRunId) {
         this.terminatedRunIds.add(lifecycleRunId);
       }
-      this.handleAgentLifecycleEvent(sessionId, agentPayload.data);
+      this.handleAgentLifecycleEvent(sessionId, agentPayload.data, lifecycleRunId || undefined);
     }
   }
 
@@ -2721,7 +2723,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     return null;
   }
 
-  private handleAgentLifecycleEvent(sessionId: string, data: unknown): void {
+  private handleAgentLifecycleEvent(sessionId: string, data: unknown, eventRunId?: string): void {
     if (!isRecord(data)) return;
     const phase = getAgentLifecyclePhase(data);
     if (phase === AgentLifecyclePhase.Fallback) {
@@ -2760,19 +2762,24 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       // Deferred error fallback: the gateway should also send a `chat state=error`
       // event that triggers handleChatError().  But after the OpenClaw upgrade, this
       // event may not arrive reliably — similar to the phase=end / chat final gap.
-      // Wait a short window for handleChatError() to run first; if the turn is still
-      // active after that, surface the error ourselves.
+      // Wait for the gateway chat error or retry/compaction path to settle first;
+      // if the turn is still active after that, surface the error ourselves.
       const errorMessage = typeof data.error === 'string' ? data.error.trim() : 'OpenClaw run failed';
-      const ERROR_FALLBACK_DELAY_MS = 2000;
+      const errorTurn = this.activeTurns.get(sessionId);
+      const errorRunId = eventRunId
+        ?? errorTurn?.runId
+        ?? (typeof data.runId === 'string' ? data.runId : null);
       setTimeout(() => {
         const turn = this.activeTurns.get(sessionId);
         if (!turn) return; // Already handled by handleChatError
-        console.log('[OpenClawRuntime] agent lifecycle error fallback: surfacing error that missed chat error event, sessionId:', sessionId, 'error:', errorMessage);
+        // If a different run started while the fallback was pending, leave it alone.
+        if (errorRunId && !turn.knownRunIds.has(errorRunId)) return;
+        console.log(`[OpenClawRuntime] lifecycle error fallback surfaced an error after waiting for the gateway chat error event in session ${sessionId}: ${errorMessage}`);
         // Abort the retrying run on the gateway so the session is freed for new messages.
         // Without this, the gateway continues retrying indefinitely and rejects subsequent chat.send requests.
         const client = this.gatewayClient;
         if (client) {
-          console.log('[OpenClawRuntime] lifecycle error fallback: sending chat.abort to gateway, sessionKey:', turn.sessionKey, 'runId:', turn.runId);
+          console.log(`[OpenClawRuntime] lifecycle error fallback is aborting gateway run ${turn.runId} after the retry grace window for ${turn.sessionKey}.`);
           void client.request('chat.abort', {
             sessionKey: turn.sessionKey,
             runId: turn.runId,
@@ -2792,7 +2799,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         this.cleanupSessionTurn(sessionId);
         this.rejectTurn(sessionId, new Error(errorMessage));
         void this.reconcileWithHistory(sessionId, erroredSessionKey);
-      }, ERROR_FALLBACK_DELAY_MS);
+      }, OpenClawRuntimeAdapter.LIFECYCLE_ERROR_FALLBACK_DELAY_MS);
     }
   }
 
@@ -3655,7 +3662,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         ?? (typeof usage.inputTokens === 'number' ? usage.inputTokens : undefined);
       const outputTokens = (typeof usage.output === 'number' ? usage.output : undefined)
         ?? (typeof usage.outputTokens === 'number' ? usage.outputTokens : undefined);
-      const totalTokens = typeof usage.totalTokens === 'number' ? usage.totalTokens : undefined;
       const cacheReadTokens = (typeof usage.cacheRead === 'number' ? usage.cacheRead : undefined)
         ?? (typeof usage.cacheReadTokens === 'number' ? usage.cacheReadTokens : undefined)
         ?? (typeof (usage as any).cache_read_input_tokens === 'number' ? (usage as any).cache_read_input_tokens : undefined);
