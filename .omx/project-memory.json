@@ -1,0 +1,10 @@
+{
+  "directives": [
+    {
+      "directive": "Future modifications under LZClaw/src should use the LZClaw customization-layer pattern: centralized config for declarative defaults and feature flags, policies for business decisions, adapters/services for logic integration, and component/page overrides for UI differences. Avoid scattering fork-specific conditionals across upstream-shaped code and avoid putting all behavior into one giant config object.",
+      "priority": "high",
+      "context": "LZClaw src customization strategy",
+      "timestamp": "2026-05-11T08:58:51.510Z"
+    }
+  ]
+}

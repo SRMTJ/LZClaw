@@ -157,7 +157,8 @@ const composeExportCanvas = async (
   const headerHeight = 80;       // header area inside card
   const footerHeight = 80;       // footer area inside card
   const dividerThick = 1;
-  const logoCssSize = 34;
+  const logoBoxW = 116;
+  const logoBoxH = 34;
 
   // ── Colors ──
   const outerBg = isDark ? '#111111' : '#f0f0f0';
@@ -257,12 +258,20 @@ const composeExportCanvas = async (
 
   // Logo with rounded clipping
   const logoX = cx + cardInnerPadX;
-  const logoY = footerCenterY - logoCssSize / 2;
+  const logoY = footerCenterY - logoBoxH / 2;
   const logoRadius = 8;
+  const logoAspect = logoImg.naturalWidth > 0 && logoImg.naturalHeight > 0
+    ? logoImg.naturalWidth / logoImg.naturalHeight
+    : 1;
+  const boxAspect = logoBoxW / logoBoxH;
+  const drawW = logoAspect > boxAspect ? logoBoxW : logoBoxH * logoAspect;
+  const drawH = logoAspect > boxAspect ? logoBoxW / logoAspect : logoBoxH;
+  const drawX = logoX + (logoBoxW - drawW) / 2;
+  const drawY = logoY + (logoBoxH - drawH) / 2;
   ctx.save();
-  roundRectPath(ctx, logoX, logoY, logoCssSize, logoCssSize, logoRadius);
+  roundRectPath(ctx, logoX, logoY, logoBoxW, logoBoxH, logoRadius);
   ctx.clip();
-  ctx.drawImage(logoImg, logoX, logoY, logoCssSize, logoCssSize);
+  ctx.drawImage(logoImg, drawX, drawY, drawW, drawH);
   ctx.restore();
 
   // Re-clip to card (previous clip was consumed by logo)
@@ -271,7 +280,7 @@ const composeExportCanvas = async (
   ctx.clip();
 
   // Brand text
-  const textX = logoX + logoCssSize + 12;
+  const textX = logoX + logoBoxW + 12;
   const brandFontSize = 13;
   const taglineFontSize = 11;
 

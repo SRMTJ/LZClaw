@@ -1,5 +1,11 @@
 import { app } from 'electron';
 
+import {
+  buildLzServiceEndpoints,
+  LZ_SERVICE_DEFAULT_BASE_URL,
+  LZ_SERVICE_ENVIRONMENTS,
+  normalizeLzServiceBaseUrl,
+} from '../../shared/lzServiceConfig';
 import type { SqliteStore } from '../sqliteStore';
 
 let cachedTestMode: boolean | null = null;
@@ -21,26 +27,32 @@ const isTestMode = (): boolean => {
   return cachedTestMode ?? !app.isPackaged;
 };
 
+const getLzServiceBaseUrl = (): string => (
+  normalizeLzServiceBaseUrl(process.env.LZ_SERVICE_BASE_URL || LZ_SERVICE_DEFAULT_BASE_URL)
+);
+
+const getLzServiceEnvironment = () => (
+  isTestMode() ? LZ_SERVICE_ENVIRONMENTS.Test : LZ_SERVICE_ENVIRONMENTS.Prod
+);
+
+const getLzServiceEndpoints = () => (
+  buildLzServiceEndpoints(getLzServiceBaseUrl(), getLzServiceEnvironment())
+);
+
 /**
  * Server API base URL — switches based on testMode.
  * Used for auth exchange/refresh, models, proxy, etc.
  */
 export const getServerApiBaseUrl = (): string => {
-  return isTestMode()
-    ? 'https://lobsterai-server.inner.youdao.com'
-    : 'https://lobsterai-server.youdao.com';
+  return getLzServiceEndpoints().serverApiBaseUrl;
 };
 
 export const getUpdateCheckUrl = (): string => (
-  isTestMode()
-    ? 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/test/update'
-    : 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/prod/update'
+  getLzServiceEndpoints().updateUrl
 );
 
 export const getManualUpdateCheckUrl = (): string => (
-  isTestMode()
-    ? 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/test/update-manual'
-    : 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/prod/update-manual'
+  getLzServiceEndpoints().manualUpdateUrl
 );
 
 export const getFallbackDownloadUrl = (): string => (
@@ -53,4 +65,8 @@ export const getSkillStoreUrl = (): string => (
   isTestMode()
     ? 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/test/skill-store'
     : 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/prod/skill-store'
+);
+
+export const getLoginUrlEndpoint = (): string => (
+  getLzServiceEndpoints().loginUrl
 );

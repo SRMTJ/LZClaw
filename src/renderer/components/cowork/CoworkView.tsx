@@ -565,7 +565,11 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
         <div className="relative max-w-5xl w-full min-w-[320px] mx-auto px-4 pt-[15vh] pb-8 space-y-10">
           {/* Welcome Section - staggered entrance animation */}
           <div className="text-center space-y-5">
-            <img src="logo.png" alt="logo" className="w-16 h-16 mx-auto animate-fade-in-up" />
+            <img
+              src="logo.png"
+              alt="logo"
+              className="h-16 w-auto max-w-[240px] object-contain mx-auto animate-fade-in-up"
+            />
             <h2
               className="text-3xl font-bold tracking-tight text-foreground animate-fade-in-up"
               style={{ animationDelay: '60ms', animationFillMode: 'both' }}

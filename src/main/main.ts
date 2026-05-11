@@ -52,7 +52,7 @@ import { saveCoworkApiConfig } from './libs/coworkConfigStore';
 import { getCoworkLogPath } from './libs/coworkLogger';
 import { registerProxyTokenRefresher, startCoworkOpenAICompatProxy, stopCoworkOpenAICompatProxy } from './libs/coworkOpenAICompatProxy';
 import { generateSessionTitle, probeCoworkModelReadiness } from './libs/coworkUtil';
-import { getServerApiBaseUrl, getSkillStoreUrl, refreshEndpointsTestMode } from './libs/endpoints';
+import { getLoginUrlEndpoint, getServerApiBaseUrl, getSkillStoreUrl, refreshEndpointsTestMode } from './libs/endpoints';
 import { mergeEnterpriseOpenclawConfig, resolveEnterpriseConfigPath, syncEnterpriseConfig } from './libs/enterpriseConfigSync';
 import { exportLogsZip } from './libs/logExport';
 import { McpBridgeServer } from './libs/mcpBridgeServer';
@@ -2021,6 +2021,18 @@ const scheduleReload = (reason: string, webContents?: WebContents) => {
   target.reloadIgnoringCache();
 };
 
+const registerAuthProtocol = () => {
+  if (process.defaultApp) {
+    const appEntry = process.argv[1] ? path.resolve(process.argv[1]) : process.cwd();
+    const registered = app.setAsDefaultProtocolClient('lobsterai', process.execPath, [appEntry]);
+    console.log(`[Main] registered lobsterai:// protocol for development: ${registered}, appEntry=${appEntry}`);
+    return;
+  }
+
+  const registered = app.setAsDefaultProtocolClient('lobsterai');
+  console.log(`[Main] registered lobsterai:// protocol: ${registered}`);
+};
+
 
 // 确保应用程序只有一个实例
 const gotTheLock = app.requestSingleInstanceLock();
@@ -2029,7 +2041,7 @@ if (!gotTheLock) {
   app.quit();
 } else {
   // Register custom protocol for OAuth callback
-  app.setAsDefaultProtocolClient('lobsterai');
+  registerAuthProtocol();
 
   // Buffer for deep link auth code received before renderer is ready
   let pendingAuthCode: string | null = null;
@@ -2368,10 +2380,36 @@ if (!gotTheLock) {
     };
   };
 
+  const appendLoginSource = (loginUrl: string): string => {
+    try {
+      const parsed = new URL(loginUrl);
+      parsed.searchParams.set('source', 'electron');
+      return parsed.toString();
+    } catch {
+      return loginUrl;
+    }
+  };
+
+  const fetchLoginUrl = async (): Promise<string> => {
+    const resp = await net.fetch(getLoginUrlEndpoint(), {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+    });
+    if (!resp.ok) {
+      throw new Error(`Login URL request failed: ${resp.status}`);
+    }
+    const body = await resp.json() as { code?: number; message?: string; data?: { value?: string } };
+    const value = body.data?.value?.trim();
+    if (body.code !== 0 || !value) {
+      throw new Error(body.message || 'Login URL response is missing data.value');
+    }
+    return value;
+  };
+
   ipcMain.handle('auth:login', async (_event, { loginUrl }: { loginUrl?: string } = {}) => {
     try {
-      const baseUrl = loginUrl || `${getServerApiBaseUrl()}/login`;
-      const finalUrl = `${baseUrl}?source=electron`;
+      const baseUrl = loginUrl?.trim() || await fetchLoginUrl();
+      const finalUrl = appendLoginSource(baseUrl);
       await shell.openExternal(finalUrl);
       return { success: true };
     } catch (error) {

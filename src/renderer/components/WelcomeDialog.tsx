@@ -1,4 +1,5 @@
 import React from 'react';
+
 import { i18nService } from '@/services/i18n';
 
 interface WelcomeDialogProps {
@@ -33,9 +34,7 @@ const WelcomeDialog: React.FC<WelcomeDialogProps> = ({ onLogin, onCustomModel, o
         <img
           src="logo.png"
           alt="LobsterAI"
-          width={72}
-          height={72}
-          className="rounded-2xl mb-5 select-none"
+          className="h-[60px] w-auto max-w-[240px] object-contain mb-5 select-none"
           draggable={false}
         />
 
