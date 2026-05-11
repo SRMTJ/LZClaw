@@ -2186,7 +2186,7 @@ if (!gotTheLock) {
           ...manager.getRecentGatewayLogEntries(),
           ...getRecentOpenClawDailyLogEntries(manager.getOpenClawDailyLogDir()),
           ...(process.platform === 'win32'
-            ? [{ archiveName: 'install-timing.log', filePath: path.join(app.getPath('appData'), 'LobsterAI', 'install-timing.log') }]
+            ? [{ archiveName: 'install-timing.log', filePath: path.join(app.getPath('appData'), APP_NAME, 'install-timing.log') }]
             : []),
         ],
       });

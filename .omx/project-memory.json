@@ -5,6 +5,11 @@
       "priority": "high",
       "context": "LZClaw src customization strategy",
       "timestamp": "2026-05-11T08:58:51.510Z"
+    },
+    {
+      "directive": "每次修改 LZClaw 定制内容后，都要同步更新 docs/lzclaw-customization-notes.md，记录修改目的、涉及文件、验证情况和后续合并注意点。",
+      "priority": "high",
+      "timestamp": "2026-05-11T09:45:07.552Z"
     }
   ]
 }
