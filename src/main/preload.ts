@@ -305,6 +305,8 @@ contextBridge.exposeInMainWorld('electron', {
     deleteMemoryEntry: (input: { id: string }) =>
       ipcRenderer.invoke('cowork:memory:deleteEntry', input),
     getMemoryStats: () => ipcRenderer.invoke('cowork:memory:getStats'),
+    getDreamingStatus: () => ipcRenderer.invoke('cowork:dreaming:status'),
+    getDreamDiary: () => ipcRenderer.invoke('cowork:dreaming:diary'),
     readBootstrapFile: (filename: string) => ipcRenderer.invoke('cowork:bootstrap:read', filename),
     writeBootstrapFile: (filename: string, content: string) =>
       ipcRenderer.invoke('cowork:bootstrap:write', filename, content),
@@ -377,6 +379,22 @@ contextBridge.exposeInMainWorld('electron', {
     openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
     openHtmlInBrowser: (htmlContent: string) => ipcRenderer.invoke('shell:openHtmlInBrowser', htmlContent),
   },
+  clipboard: {
+    writeImageFromFile: (filePath: string) =>
+      ipcRenderer.invoke('clipboard:writeImageFromFile', filePath),
+  },
+  voice: {
+    triggerDictation: () => ipcRenderer.invoke('voice:triggerDictation'),
+  },
+  artifact: {
+    watchFile: (filePath: string) => ipcRenderer.invoke('artifact:watchFile', filePath),
+    unwatchFile: (filePath: string) => ipcRenderer.invoke('artifact:unwatchFile', filePath),
+    onFileChanged: (callback: (data: { filePath: string }) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: { filePath: string }) => callback(data);
+      ipcRenderer.on('artifact:file:changed', handler);
+      return () => { ipcRenderer.removeListener('artifact:file:changed', handler); };
+    },
+  },
   autoLaunch: {
     get: () => ipcRenderer.invoke('app:getAutoLaunch'),
     set: (enabled: boolean) => ipcRenderer.invoke('app:setAutoLaunch', enabled),
@@ -430,8 +448,8 @@ contextBridge.exposeInMainWorld('electron', {
 
     // Weixin QR login
     weixinQrLoginStart: () => ipcRenderer.invoke('im:weixin:qr-login-start'),
-    weixinQrLoginWait: (accountId?: string) =>
-      ipcRenderer.invoke('im:weixin:qr-login-wait', accountId),
+    weixinQrLoginWait: (sessionKey?: string) =>
+      ipcRenderer.invoke('im:weixin:qr-login-wait', sessionKey),
 
     // POPO QR login
     popoQrLoginStart: () => ipcRenderer.invoke('im:popo:qr-login-start'),

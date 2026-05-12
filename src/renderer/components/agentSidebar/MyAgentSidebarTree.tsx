@@ -16,18 +16,24 @@ import { useAgentSidebarState } from './useAgentSidebarState';
 
 interface MyAgentSidebarTreeProps {
   isBatchMode: boolean;
+  batchAgentId: string | null;
+  deletedSessionIds: string[];
   selectedIds: Set<string>;
   onShowCowork: () => void;
-  onToggleSelection: (sessionId: string) => void;
-  onEnterBatchMode: (sessionId: string) => void;
+  onToggleSelection: (sessionId: string, agentId: string) => void;
+  onEnterBatchMode: (sessionId: string, agentId: string) => void;
+  onBatchSelectableIdsChange: (sessionIds: string[]) => void;
 }
 
 const MyAgentSidebarTree: React.FC<MyAgentSidebarTreeProps> = ({
   isBatchMode,
+  batchAgentId,
+  deletedSessionIds,
   selectedIds,
   onShowCowork,
   onToggleSelection,
   onEnterBatchMode,
+  onBatchSelectableIdsChange,
 }) => {
   const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -36,6 +42,8 @@ const MyAgentSidebarTree: React.FC<MyAgentSidebarTreeProps> = ({
     agentNodes,
     patchTaskPreview,
     removeTaskPreview,
+    removeTaskPreviews,
+    removeAgentTaskPreviews,
     retryLoadTasks,
     loadMoreTasks,
     collapseTasks,
@@ -93,7 +101,7 @@ const MyAgentSidebarTree: React.FC<MyAgentSidebarTreeProps> = ({
       agentService.switchAgent(task.agentId);
       void coworkService.loadSessions(task.agentId);
     }
-    onEnterBatchMode(task.id);
+    onEnterBatchMode(task.id, task.agentId);
   };
 
   const handleCreateTask = async (agent: AgentSidebarAgentNode) => {
@@ -101,7 +109,7 @@ const MyAgentSidebarTree: React.FC<MyAgentSidebarTreeProps> = ({
       agentService.switchAgent(agent.id);
       await coworkService.loadSessions(agent.id);
     }
-    coworkService.clearSession();
+    coworkService.clearSession({ restoreAgentSkills: true });
     onShowCowork();
     window.setTimeout(() => {
       window.dispatchEvent(new CustomEvent('cowork:focus-input', {
@@ -113,6 +121,9 @@ const MyAgentSidebarTree: React.FC<MyAgentSidebarTreeProps> = ({
   const handleDeleteAgent = async (agent: AgentSidebarAgentNode) => {
     if (isDefaultAgentId(agent.id)) return;
     const deleted = await agentService.deleteAgent(agent.id);
+    if (deleted) {
+      removeAgentTaskPreviews(agent.id);
+    }
     if (deleted && settingsAgentId === agent.id) {
       setSettingsAgentId(null);
     }
@@ -133,6 +144,7 @@ const MyAgentSidebarTree: React.FC<MyAgentSidebarTreeProps> = ({
       key={agent.id}
       agent={agent}
       isBatchMode={isBatchMode}
+      batchAgentId={batchAgentId}
       selectedIds={selectedIds}
       showBatchOption
       onToggleExpanded={toggleAgentExpanded}
@@ -156,6 +168,21 @@ const MyAgentSidebarTree: React.FC<MyAgentSidebarTreeProps> = ({
   const pinnedAgentNodes = agentNodes.filter((agent) => agent.pinned);
   const projectAgentNodes = agentNodes.filter((agent) => !agent.pinned);
   const hasPinnedAgents = pinnedAgentNodes.length > 0;
+
+  useEffect(() => {
+    if (deletedSessionIds.length === 0) return;
+    removeTaskPreviews(deletedSessionIds);
+  }, [deletedSessionIds, removeTaskPreviews]);
+
+  useEffect(() => {
+    if (!batchAgentId) {
+      onBatchSelectableIdsChange([]);
+      return;
+    }
+
+    const batchAgent = agentNodes.find((agent) => agent.id === batchAgentId);
+    onBatchSelectableIdsChange(batchAgent?.tasks.map((task) => task.id) ?? []);
+  }, [agentNodes, batchAgentId, onBatchSelectableIdsChange]);
 
   return (
     <div className="pb-3" role="tree" aria-label={i18nService.t('myAgents')}>
