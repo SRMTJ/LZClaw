@@ -1024,6 +1024,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   private emitContextMaintenance(sessionId: string, active: boolean): void {
+    console.log(`[OpenClawRuntime] context maintenance ${active ? 'started' : 'ended'} for session ${sessionId}.`);
     this.emit('contextMaintenance', sessionId, active);
   }
 
@@ -1044,12 +1045,24 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     return 'normal';
   }
 
-  private async listGatewaySessionsForUsage(): Promise<Record<string, unknown>[]> {
+  private async listGatewaySessionsForUsage(options: {
+    activeMinutes?: number;
+    limit?: number;
+    search?: string;
+  } = {}): Promise<Record<string, unknown>[]> {
     const client = this.gatewayClient;
     if (!client) return [];
+    const params: Record<string, unknown> = {
+      limit: options.limit ?? OpenClawRuntimeAdapter.CONTEXT_USAGE_LIST_LIMIT,
+    };
+    if (typeof options.activeMinutes === 'number') {
+      params.activeMinutes = options.activeMinutes;
+    }
+    if (options.search?.trim()) {
+      params.search = options.search.trim();
+    }
     const result = await client.request<{ sessions?: unknown[] }>('sessions.list', {
-      activeMinutes: 120,
-      limit: OpenClawRuntimeAdapter.CONTEXT_USAGE_LIST_LIMIT,
+      ...params,
     }, { timeoutMs: 5_000 });
     const sessions = result?.sessions;
     return Array.isArray(sessions)
@@ -1098,17 +1111,32 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   async getContextUsage(sessionId: string): Promise<CoworkContextUsage | null> {
     const keys = this.getSessionKeysForSession(sessionId);
     if (keys.length === 0) return null;
+    const startedAt = Date.now();
+
+    for (const key of keys) {
+      try {
+        const rows = await this.listGatewaySessionsForUsage({ search: key, limit: 5 });
+        const row = rows.find(item => item.key === key);
+        if (row) {
+          console.log(`[OpenClawRuntime] context usage was resolved by targeted lookup for session ${sessionId} in ${Date.now() - startedAt}ms.`);
+          return this.buildContextUsageFromSessionRow(sessionId, row);
+        }
+      } catch (error) {
+        console.warn(`[OpenClawRuntime] targeted context usage refresh failed for session ${sessionId}:`, error);
+      }
+    }
 
     try {
-      const rows = await this.listGatewaySessionsForUsage();
+      const rows = await this.listGatewaySessionsForUsage({ activeMinutes: 120 });
       for (const key of keys) {
         const row = rows.find(item => item.key === key);
         if (row) {
+          console.log(`[OpenClawRuntime] context usage was resolved by recent session lookup for session ${sessionId} in ${Date.now() - startedAt}ms.`);
           return this.buildContextUsageFromSessionRow(sessionId, row);
         }
       }
     } catch (error) {
-      console.warn('[OpenClawRuntime] context usage refresh failed:', error);
+      console.warn(`[OpenClawRuntime] recent context usage refresh failed for session ${sessionId}:`, error);
     }
 
     const session = this.store.getSession(sessionId);
@@ -1116,6 +1144,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const model = session?.modelOverride || this.store.getAgent(session?.agentId || 'main')?.model || '';
     const contextTokens = this.sessionContextTokensCache.get(sessionKey)
       ?? this.getContextWindowForModel(model);
+    console.log(`[OpenClawRuntime] context usage fell back to an unknown token count for session ${sessionId} after ${Date.now() - startedAt}ms.`);
     return {
       sessionId,
       sessionKey,
@@ -1133,14 +1162,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       throw new Error(`Session ${sessionId} has no OpenClaw session key.`);
     }
 
-    console.log('[OpenClawRuntime] starting manual context compaction for session.');
+    console.log(`[OpenClawRuntime] starting manual context compaction for session ${sessionId}.`);
     const result = await client.request<Record<string, unknown>>('sessions.compact', {
       key: sessionKey,
     }, { timeoutMs: 120_000 });
     const compacted = result?.compacted === true;
     const reason = typeof result?.reason === 'string' ? result.reason : undefined;
     const usage = await this.getContextUsage(sessionId);
-    console.log('[OpenClawRuntime] manual context compaction finished.');
+    console.log(`[OpenClawRuntime] manual context compaction finished for session ${sessionId}, compacted=${compacted}, reason=${reason ?? 'none'}.`);
     return { compacted, ...(reason ? { reason } : {}), usage };
   }
 
@@ -2874,6 +2903,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       return;
     }
     if (stream === 'compaction') {
+      const compactionData = isRecord(agentPayload.data) ? agentPayload.data : {};
+      const phase = typeof compactionData.phase === 'string' && compactionData.phase.trim()
+        ? compactionData.phase.trim()
+        : 'unknown';
+      const runId = typeof agentPayload.runId === 'string' && agentPayload.runId.trim()
+        ? agentPayload.runId.trim()
+        : 'unknown';
+      console.log(`[OpenClawRuntime] received a compaction stream event for session ${sessionId}, run ${runId}, phase ${phase}.`);
       this.handleAgentCompactionEvent(sessionId, agentPayload.data);
     }
   }
@@ -3118,7 +3155,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   private handleAgentCompactionEvent(sessionId: string, data: unknown): void {
-    if (!isRecord(data)) return;
+    if (!isRecord(data)) {
+      console.warn(`[OpenClawRuntime] ignored a context compaction event for session ${sessionId} because the payload was invalid.`);
+      return;
+    }
     const phase = typeof data.phase === 'string' ? data.phase.trim() : '';
     const turn = this.activeTurns.get(sessionId);
     if (phase === 'start') {
@@ -3131,7 +3171,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       console.log(`[OpenClawRuntime] context compaction started for session ${sessionId}.`);
       return;
     }
-    if (phase !== 'end') return;
+    if (phase !== 'end') {
+      console.debug(`[OpenClawRuntime] ignored a context compaction event for session ${sessionId} because phase ${phase || 'unknown'} is unsupported.`);
+      return;
+    }
 
     if (turn) {
       turn.hasContextCompactionEvent = false;

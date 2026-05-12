@@ -500,6 +500,9 @@ contextUsageBySessionId: Record<string, ContextUsageState>;
 - 该入口带 `SESSION_ENTRY_CONTEXT_USAGE_REFRESH_COOLDOWN_MS = 1500` 的 per-session cooldown，避免快速来回切换时重复请求 OpenClaw。
 - `refreshContextUsage()` 对 IPC 不存在、OpenClaw 返回失败、usage 为空和 IPC throw 都返回 `null`，不会展示不可用 tooltip，也不会产生未处理 promise rejection。
 - usage 只写入 renderer Redux `contextUsageBySessionId` 运行期缓存；当前不新增数据库 schema，不持久化 usage 快照。
+- runtime `getContextUsage(sessionId)` 优先按当前 OpenClaw session key 调用 `sessions.list({ search: key, limit: 5 })` 做 targeted lookup；命中后直接返回，减少历史会话首次进入时“先查近期活跃列表、再查历史”的额外延迟。
+- targeted lookup 失败或未命中时，再回退到 `sessions.list({ activeMinutes: 120, limit: 120 })` 查近期活跃会话，最后才使用模型 context window cache 返回 unknown usage。
+- usage lookup 日志记录解析路径和耗时，便于排查历史会话圆环延迟；日志只包含 session id、路径和耗时，不记录 prompt 或模型回复内容。
 
 ### 4.4 Renderer UI
 
@@ -551,6 +554,7 @@ metadata: {
 - 只对当前 LobsterAI session 插入。
 - 同一个 checkpoint count 去重。
 - 如果压缩发生时用户正在等待回复，提示应出现在对应 turn 的消息流中，但不打断 assistant streaming。
+- 压缩提示属于 `context_compaction` system message，渲染时应拆成独立后续 turn，避免插入到 assistant 正文与文件/链接卡片之间。
 - `Pre-compaction memory flush`、memory daily file read/write、纯 `NO_REPLY/no_reply` 不插入 `system` 或 assistant 消息。
 
 ### 4.6 手动压缩调用
@@ -597,17 +601,25 @@ client.request('sessions.compact', {
 手动压缩流程：
 
 1. 用户点击 `ContextUsageIndicator`。
-2. renderer 弹出确认文案 `coworkContextCompactConfirm`。
-3. `coworkService.compactContext(sessionId)` 设置 `compactingSessionIds`。
-4. preload 调用 `cowork:session:compactContext`。
-5. main 调用 `CoworkEngineRouter.compactContext(sessionId)`。
-6. OpenClaw runtime adapter 解析 LobsterAI session 对应的 OpenClaw `sessionKey`。
-7. 调用 OpenClaw `sessions.compact`。
-8. 成功后刷新 `getContextUsage(sessionId)`。
-9. renderer 插入 `system` 消息：
+2. 如果当前会话仍在 `running`、streaming 或 context maintenance 中，不发起压缩，toast 提示 `coworkContextCompactBlockedRunning`。
+3. renderer 使用应用内 `Modal` 弹出确认文案，不使用 native `window.confirm`。
+4. `coworkService.compactContext(sessionId)` 设置 `compactingSessionIds`，并启动 watchdog 兜底清理。
+5. preload 调用 `cowork:session:compactContext`。
+6. main 调用 `CoworkEngineRouter.compactContext(sessionId)`。
+7. OpenClaw runtime adapter 解析 LobsterAI session 对应的 OpenClaw `sessionKey`。
+8. 调用 OpenClaw `sessions.compact`。
+9. 成功后刷新 `getContextUsage(sessionId)`。
+10. renderer 插入 `system` 消息：
    - compacted: `上下文已压缩。`
    - noop: `当前上下文无需压缩。`
-10. 无论成功失败都清理 compacting 状态。
+11. 无论成功失败都清理 compacting 状态；如果 RPC/IPC 异常导致 Promise 未正常 settle，watchdog 会自动清理 stale compacting 状态，避免输入交互长期被软拦截。
+
+压缩期间发送策略：
+
+- 不因为 `compactingSessionIds` 把发送按钮硬禁用，避免异常状态导致按钮永久不可用。
+- 用户在手动压缩期间提交消息时，`coworkService.continueSession()` 做软拦截，toast 提示 `coworkContextCompactingSendBlocked`，不创建用户消息、不切换成 error，且 `CoworkPromptInput` 必须保留当前输入内容与附件。
+- OpenClaw 源码中 `queueEmbeddedPiMessage()` 在 `handle.isCompacting()` 时会返回 false，因此不能假设 compacting 期间的用户消息一定会被 OpenClaw 排队。
+- OpenClaw `sessions.compact` 在 manual compact 且未传 `maxLines` 时会先调用 `interruptSessionRunIfActive(...)`，所以 LobsterAI 不允许在任务仍运行时主动压缩，避免打断正在执行的用户任务。
 
 ### 4.7 OpenClaw 已确认 API 与事件
 
@@ -992,6 +1004,8 @@ npx eslint src/main/libs/agentEngine/openclawRuntimeAdapter.ts src/main/libs/age
 - `coworkService.loadSession()` 成功加载历史会话后调用 `refreshContextUsageForSessionEntry(sessionId)`。
 - `CoworkSessionDetail` 在 `sessionId` mount/switch 时也调用 `refreshContextUsageForSessionEntry(sessionId)`，覆盖“当前 session 已在 Redux 中、详情视图重新进入”的路径。
 - `refreshContextUsageForSessionEntry()` 使用 1.5 秒 per-session cooldown，避免快速来回切换时重复请求 OpenClaw。
+- runtime usage 查询优先使用 targeted `sessions.list(search=sessionKey)`，避免历史会话先 miss 近期 active list 后再二次查询造成可见延迟。
+- targeted lookup 未命中或异常时，仍回退到近期 active list 和本地 context window cache，不影响当前会话或历史会话的基本展示。
 - `refreshContextUsage()` 兜住 IPC 不存在、OpenClaw 返回失败、usage 为空和 IPC throw；失败时只返回 `null` 并保持圆环隐藏。
 - `ContextUsageIndicator` 在缺少 `percent` 时不渲染，避免展示“上下文使用量暂不可用”的 tooltip。
 - tooltip 只通过 hover 展示，不再使用 `group-focus-within`，避免点击圆环后 tooltip 常驻。
@@ -1016,9 +1030,12 @@ npx eslint src/main/libs/agentEngine/openclawRuntimeAdapter.ts src/main/libs/age
 - 圆环固定灰色，不按 warning/danger 状态变色。
 - tooltip 只 hover 展示，点击后不会常驻。
 - 历史会话进入/切换时触发 usage refresh，并带 per-session cooldown。
+- 历史会话 usage 优先通过 targeted session key lookup 命中，不先依赖近期 active list。
+- targeted usage lookup 未命中时，仍会回退到近期 active list 和 unknown usage。
 - context usage refresh 失败或 IPC throw 时安全返回 `null`。
 - compaction checkpoint count 增加只插入一次自动压缩提示。
-- 手动压缩成功插入手动提示。
+- 手动压缩成功插入手动提示，且提示显示在当前消息正文和文件/链接卡片之后。
+- 手动压缩期间误发送会保留输入框内容和附件。
 - 模型切换后用新 context window 重新计算。
 - 手动 compact 过程中重复点击被忽略。
 - compact API 失败时展示错误且不清理 session。
@@ -1114,6 +1131,7 @@ npx eslint src/main/libs/agentEngine/openclawRuntimeAdapter.ts src/main/libs/age
 - 自动 compaction event 完成。
 - 自动 compaction checkpoint count 增加。
 - context usage refresh 失败。
+- context usage lookup 命中路径和耗时。
 - lifecycle fallback abort。
 - 用户手动 stop abort。
 
@@ -1133,6 +1151,8 @@ npx eslint src/main/libs/agentEngine/openclawRuntimeAdapter.ts src/main/libs/age
 6. 仍需手测：OpenClaw 压缩失败时的错误形态是否稳定可识别。
 7. 第一版已定：上下文圈放在 `CoworkSessionDetail` 输入框发送按钮左侧，保持轻量。
 8. 第一版已定：会话 running 时不支持 pending queue；输入保持可见，发送按钮走 streaming/stop 状态，强行发送时给等待提示。
+9. 第一版已定：手动 compact 期间不硬禁用发送按钮；发送动作走软拦截和 toast，并用 watchdog 兜底清理 compacting 状态。
+10. 第一版已定：任务 running/context maintenance 时不允许主动 compact，因为 OpenClaw manual `sessions.compact` 可能先中断 active run。
 
 ## 9. 人工测试观察与日志时间线
 

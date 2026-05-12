@@ -1403,6 +1403,7 @@ const bindCoworkRuntimeForwarder = (): void => {
 
   runtime.on('contextMaintenance', (sessionId: string, active: boolean) => {
     const windows = BrowserWindow.getAllWindows();
+    console.log(`[CoworkRuntime] forwarding context maintenance ${active ? 'start' : 'end'} for session ${sessionId} to ${windows.length} windows.`);
     windows.forEach((win) => {
       if (win.isDestroyed()) return;
       try {
@@ -3258,6 +3259,7 @@ if (!gotTheLock) {
       const result = await getCoworkEngineRouter().compactContext(sessionId);
       return { success: true, ...result };
     } catch (error) {
+      console.warn(`[CoworkIPC] manual context compaction failed for session ${sessionId}:`, error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to compact context',

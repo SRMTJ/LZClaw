@@ -90,6 +90,57 @@ test('context usage uses checkpoint compaction count', () => {
   expect(usage.latestCompactionCheckpointId).toBe('checkpoint-2');
 });
 
+test('context usage resolves historical sessions with targeted lookup', async () => {
+  const session = {
+    id: 'session-1',
+    title: 'Historical Session',
+    claudeSessionId: null,
+    status: 'completed',
+    pinned: false,
+    cwd: '',
+    systemPrompt: '',
+    modelOverride: '',
+    executionMode: 'local',
+    activeSkillIds: [],
+    agentId: 'main',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1,
+  };
+  const sessionKey = `agent:main:lobsterai:${session.id}`;
+  const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+  const adapter = new OpenClawRuntimeAdapter({
+    getSession: (sessionId: string) => (sessionId === session.id ? session : null),
+  } as never, {} as never);
+  adapter.gatewayClient = {
+    request: async (method: string, params?: unknown) => {
+      requests.push({ method, params: params as Record<string, unknown> });
+      const p = params as Record<string, unknown>;
+      if (p.search === sessionKey) {
+        return {
+          sessions: [{
+            key: sessionKey,
+            totalTokens: 42_000,
+            contextTokens: 60_000,
+          }],
+        };
+      }
+      return { sessions: [] };
+    },
+  } as never;
+
+  const usage = await adapter.getContextUsage(session.id);
+
+  expect(usage?.usedTokens).toBe(42_000);
+  expect(usage?.percent).toBe(70);
+  expect(requests).toHaveLength(1);
+  expect(requests[0]).toMatchObject({
+    method: 'sessions.list',
+    params: { search: sessionKey, limit: 5 },
+  });
+  expect(requests[0].params).not.toHaveProperty('activeMinutes');
+});
+
 test('usage metadata falls back to latest assistant when preferred id was replaced', async () => {
   const { session, store } = createReconcileStore([
     { id: 'msg-1', type: 'user', content: 'Hello', timestamp: 1, metadata: {} },

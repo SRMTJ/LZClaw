@@ -53,6 +53,7 @@ const classifyError = (error: string): string => {
 const CONTEXT_USAGE_REFRESH_DELAY_MS = 800;
 const FINAL_CONTEXT_USAGE_REFRESH_DELAYS_MS = [800, 2500, 6000, 12000] as const;
 const SESSION_ENTRY_CONTEXT_USAGE_REFRESH_COOLDOWN_MS = 1500;
+const MANUAL_CONTEXT_COMPACTION_WATCHDOG_MS = 130_000;
 
 const restoreCurrentAgentDefaultSkills = (): void => {
   const state = store.getState();
@@ -74,6 +75,7 @@ class CoworkService {
   private latestLoadSessionRequestId = 0;
   private contextUsageRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private sessionEntryContextUsageRefreshAt = new Map<string, number>();
+  private contextCompactionWatchdogs = new Map<string, ReturnType<typeof setTimeout>>();
 
   async init(): Promise<void> {
     if (this.initialized) return;
@@ -166,6 +168,7 @@ class CoworkService {
     }
 
     const contextMaintenanceCleanup = cowork.onStreamContextMaintenance?.(({ sessionId, active }) => {
+      console.log(`[CoworkService] received context maintenance ${active ? 'start' : 'end'} for session ${sessionId}.`);
       store.dispatch(setContextMaintenance({ sessionId, active }));
     });
     if (contextMaintenanceCleanup) {
@@ -342,12 +345,23 @@ class CoworkService {
 
   async compactContext(sessionId: string): Promise<boolean> {
     const cowork = window.electron?.cowork;
-    if (!cowork?.compactContext) return false;
+    if (!cowork?.compactContext) {
+      console.warn('[CoworkService] manual context compaction is unavailable.');
+      return false;
+    }
 
+    console.log(`[CoworkService] manual context compaction started for session ${sessionId}.`);
     store.dispatch(setContextCompacting({ sessionId, compacting: true }));
+    this.clearContextCompactionWatchdog(sessionId);
+    this.contextCompactionWatchdogs.set(sessionId, setTimeout(() => {
+      console.warn(`[CoworkService] manual context compaction watchdog cleared stale state for session ${sessionId}.`);
+      store.dispatch(setContextCompacting({ sessionId, compacting: false }));
+      this.contextCompactionWatchdogs.delete(sessionId);
+    }, MANUAL_CONTEXT_COMPACTION_WATCHDOG_MS));
     try {
       const result = await cowork.compactContext(sessionId);
       if (result.success) {
+        console.log(`[CoworkService] manual context compaction completed for session ${sessionId}, compacted=${result.compacted === true}.`);
         if (result.usage) {
           this.handleContextUsageUpdate(result.usage, false);
         } else {
@@ -370,15 +384,30 @@ class CoworkService {
         }));
         return true;
       }
+      console.warn(`[CoworkService] manual context compaction failed for session ${sessionId}: ${result.error ?? 'Unknown error'}`);
       if (result.error) {
         window.dispatchEvent(new CustomEvent('app:showToast', {
           detail: result.error,
         }));
       }
       return false;
+    } catch (error) {
+      console.warn(`[CoworkService] manual context compaction failed for session ${sessionId}:`, error);
+      window.dispatchEvent(new CustomEvent('app:showToast', {
+        detail: error instanceof Error ? error.message : 'Failed to compact context',
+      }));
+      return false;
     } finally {
+      this.clearContextCompactionWatchdog(sessionId);
       store.dispatch(setContextCompacting({ sessionId, compacting: false }));
     }
+  }
+
+  private clearContextCompactionWatchdog(sessionId: string): void {
+    const timer = this.contextCompactionWatchdogs.get(sessionId);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.contextCompactionWatchdogs.delete(sessionId);
   }
 
   private setupOpenClawEngineListeners(): void {
@@ -523,6 +552,15 @@ class CoworkService {
     const cowork = window.electron?.cowork;
     if (!cowork) {
       console.error('Cowork API not available');
+      return false;
+    }
+
+    const state = store.getState().cowork;
+    if (state.compactingSessionIds.includes(options.sessionId)) {
+      console.debug(`[CoworkService] continue was ignored because manual context compaction is running for session ${options.sessionId}.`);
+      window.dispatchEvent(new CustomEvent('app:showToast', {
+        detail: i18nService.t('coworkContextCompactingSendBlocked'),
+      }));
       return false;
     }
 

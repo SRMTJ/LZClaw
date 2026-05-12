@@ -35,10 +35,12 @@ import { setActiveSkillIds } from '../../store/slices/skillSlice';
 import type { Artifact } from '../../types/artifact';
 import { PREVIEWABLE_ARTIFACT_TYPES } from '../../types/artifact';
 import type { CoworkImageAttachment,CoworkMessage, CoworkMessageMetadata } from '../../types/cowork';
+import { CoworkSessionStatusValue } from '../../types/cowork';
 import type { Skill } from '../../types/skill';
 import { formatMessageDateTime } from '../../utils/tokenFormat';
 import { parseUserMessageForDisplay } from '../../utils/userMessageDisplay';
 import { ArtifactPanel, ArtifactPreviewCard } from '../artifacts';
+import Modal from '../common/Modal';
 import ComposeIcon from '../icons/ComposeIcon';
 import CopyIcon from '../icons/CopyIcon';
 import ExclamationTriangleIcon from '../icons/ExclamationTriangleIcon';
@@ -47,8 +49,8 @@ import PuzzleIcon from '../icons/PuzzleIcon';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import MarkdownContent from '../MarkdownContent';
 import WindowTitleBar from '../window/WindowTitleBar';
-import ContextUsageIndicator from './ContextUsageIndicator';
 import { type CoworkOpenShareOptionsEventDetail,CoworkUiEvent } from './constants';
+import ContextUsageIndicator from './ContextUsageIndicator';
 import CoworkPromptInput, { type CoworkPromptInputRef } from './CoworkPromptInput';
 import DiffView, { extractDiffFromToolInput } from './DiffView';
 import ImagePreviewModal, { type ImagePreviewSource } from './ImagePreviewModal';
@@ -721,6 +723,10 @@ const isSilentAssistantMessage = (message: CoworkMessage): boolean => (
   message.type === 'assistant' && SILENT_TOKEN_RE.test(message.content.trim())
 );
 
+const isContextCompactionMessage = (message: CoworkMessage): boolean => (
+  message.type === 'system' && message.metadata?.kind === 'context_compaction'
+);
+
 export const buildDisplayItems = (messages: CoworkMessage[]): DisplayItem[] => {
   const items: DisplayItem[] = [];
   const groupsByToolUseId = new Map<string, ToolGroupItem>();
@@ -799,13 +805,18 @@ export const buildConversationTurns = (items: DisplayItem[]): ConversationTurn[]
       continue;
     }
 
-    const turn = ensureTurn();
     if (item.type === 'tool_group') {
+      const turn = ensureTurn();
       turn.assistantItems.push({ type: 'tool_group', group: item });
       continue;
     }
 
     const message = item.message;
+    if (isContextCompactionMessage(message) && currentTurn?.assistantItems.length) {
+      currentTurn = null;
+    }
+    const turn = ensureTurn();
+
     if (message.type === 'assistant') {
       turn.assistantItems.push({ type: 'assistant', message });
       continue;
@@ -1711,6 +1722,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const promptInputRef = useRef<CoworkPromptInputRef>(null);
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
   const [isLoadingMoreMessages, setIsLoadingMoreMessages] = useState(false);
+  const [showCompactConfirm, setShowCompactConfirm] = useState(false);
   const isLoadingMoreMessagesRef = useRef(false);
   const prevScrollHeightRef = useRef<number | null>(null);
 
@@ -1723,6 +1735,10 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   useEffect(() => {
     if (!sessionId) return;
     coworkService.refreshContextUsageForSessionEntry(sessionId);
+  }, [sessionId]);
+
+  useEffect(() => {
+    setShowCompactConfirm(false);
   }, [sessionId]);
 
   // Rail navigation states
@@ -1749,11 +1765,40 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   }, [currentSession?.id]);
 
   const handleCompactContext = useCallback(() => {
-    if (!currentSession?.id || isContextCompacting) return;
-    const confirmed = window.confirm(i18nService.t('coworkContextCompactConfirm'));
-    if (!confirmed) return;
+    if (!currentSession?.id) {
+      console.warn('[CoworkSessionDetail] manual context compaction was ignored because no session is selected.');
+      return;
+    }
+    if (isContextCompacting) {
+      console.debug('[CoworkSessionDetail] manual context compaction was ignored because compaction is already running.');
+      return;
+    }
+    if (isStreaming || isContextMaintenance || currentSession.status === CoworkSessionStatusValue.Running) {
+      console.debug('[CoworkSessionDetail] manual context compaction was ignored because the session is still running.');
+      window.dispatchEvent(new CustomEvent('app:showToast', {
+        detail: i18nService.t('coworkContextCompactBlockedRunning'),
+      }));
+      return;
+    }
+    console.debug('[CoworkSessionDetail] manual context compaction confirmation requested.');
+    setShowCompactConfirm(true);
+  }, [currentSession?.id, currentSession?.status, isContextCompacting, isContextMaintenance, isStreaming]);
+
+  const handleCancelCompactContext = useCallback(() => {
+    console.debug('[CoworkSessionDetail] manual context compaction was canceled by the user.');
+    setShowCompactConfirm(false);
+  }, []);
+
+  const handleConfirmCompactContext = useCallback(() => {
+    if (!currentSession?.id) {
+      setShowCompactConfirm(false);
+      console.warn('[CoworkSessionDetail] manual context compaction confirmation was ignored because no session is selected.');
+      return;
+    }
+    console.log(`[CoworkSessionDetail] manual context compaction confirmed for session ${currentSession.id}.`);
+    setShowCompactConfirm(false);
     void coworkService.compactContext(currentSession.id);
-  }, [currentSession?.id, isContextCompacting]);
+  }, [currentSession?.id]);
 
   // ─── Artifact detection ─────────────────────────────────────────────
   const isPanelOpen = useSelector(selectIsPanelOpen);
@@ -3067,6 +3112,38 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
         </div>
       </div>
     )}
+    <Modal
+      isOpen={showCompactConfirm}
+      onClose={handleCancelCompactContext}
+      className="w-[min(420px,calc(100vw-32px))] rounded-xl border border-border bg-background p-5 shadow-xl"
+    >
+      <div className="space-y-4">
+        <div>
+          <h3 className="text-base font-semibold text-primary">
+            {i18nService.t('coworkContextCompactConfirmTitle')}
+          </h3>
+          <p className="mt-2 text-sm leading-6 text-secondary">
+            {i18nService.t('coworkContextCompactConfirm')}
+          </p>
+        </div>
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={handleCancelCompactContext}
+            className="rounded-lg px-4 py-2 text-sm font-medium text-secondary hover:bg-surface-raised"
+          >
+            {i18nService.t('cancel')}
+          </button>
+          <button
+            type="button"
+            onClick={handleConfirmCompactContext}
+            className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary-hover"
+          >
+            {i18nService.t('coworkContextCompactConfirmAction')}
+          </button>
+        </div>
+      </div>
+    </Modal>
     </div>
     </div>
   );
