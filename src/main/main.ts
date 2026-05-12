@@ -3740,6 +3740,50 @@ if (!gotTheLock) {
       };
     }
   });
+  // ── Dreaming content display ──────────────────────────────────────────
+  ipcMain.handle('cowork:dreaming:status', async () => {
+    try {
+      const gwClient = openClawRuntimeAdapter?.getGatewayClient();
+      if (!gwClient) {
+        return { success: false, error: 'Gateway client not available' };
+      }
+      const result = await gwClient.request<Record<string, unknown>>(
+        'doctor.memory.status',
+        {},
+        { timeoutMs: 10_000 },
+      );
+      const dreaming = (result as any)?.dreaming;
+      if (!dreaming) {
+        return { success: true, data: null };
+      }
+      return { success: true, data: dreaming };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to fetch dreaming status',
+      };
+    }
+  });
+  ipcMain.handle('cowork:dreaming:diary', async () => {
+    try {
+      const gwClient = openClawRuntimeAdapter?.getGatewayClient();
+      if (!gwClient) {
+        return { success: false, error: 'Gateway client not available' };
+      }
+      const result = await gwClient.request<Record<string, unknown>>(
+        'doctor.memory.dreamDiary',
+        {},
+        { timeoutMs: 10_000 },
+      );
+      return { success: true, data: result };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to fetch dream diary',
+      };
+    }
+  });
+
   ipcMain.handle('cowork:bootstrap:read', async (_event, filename: string) => {
     try {
       const mainWorkspace = getMainAgentWorkspacePath(getOpenClawEngineManager().getStateDir());
@@ -5188,6 +5232,44 @@ if (!gotTheLock) {
       return { success: true };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  });
+
+  // ---- artifact file watching ----
+  const fileWatchers = new Map<string, { watcher: fs.FSWatcher; debounceTimer: ReturnType<typeof setTimeout> | null }>();
+
+  ipcMain.handle('artifact:watchFile', (_event, filePath: string) => {
+    if (fileWatchers.has(filePath)) return;
+    try {
+      const watcher = fs.watch(filePath, (eventType) => {
+        if (eventType !== 'change') return;
+        const entry = fileWatchers.get(filePath);
+        if (!entry) return;
+        if (entry.debounceTimer) clearTimeout(entry.debounceTimer);
+        entry.debounceTimer = setTimeout(() => {
+          entry.debounceTimer = null;
+          const windows = BrowserWindow.getAllWindows();
+          windows.forEach(win => {
+            if (!win.isDestroyed()) {
+              try { win.webContents.send('artifact:file:changed', { filePath }); } catch { /* */ }
+            }
+          });
+        }, 300);
+      });
+      watcher.on('error', () => {
+        fileWatchers.delete(filePath);
+        watcher.close();
+      });
+      fileWatchers.set(filePath, { watcher, debounceTimer: null });
+    } catch { /* file can't be watched */ }
+  });
+
+  ipcMain.handle('artifact:unwatchFile', (_event, filePath: string) => {
+    const entry = fileWatchers.get(filePath);
+    if (entry) {
+      if (entry.debounceTimer) clearTimeout(entry.debounceTimer);
+      entry.watcher.close();
+      fileWatchers.delete(filePath);
     }
   });
 

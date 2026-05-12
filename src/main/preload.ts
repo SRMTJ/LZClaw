@@ -309,6 +309,8 @@ contextBridge.exposeInMainWorld('electron', {
     deleteMemoryEntry: (input: { id: string }) =>
       ipcRenderer.invoke('cowork:memory:deleteEntry', input),
     getMemoryStats: () => ipcRenderer.invoke('cowork:memory:getStats'),
+    getDreamingStatus: () => ipcRenderer.invoke('cowork:dreaming:status'),
+    getDreamDiary: () => ipcRenderer.invoke('cowork:dreaming:diary'),
     readBootstrapFile: (filename: string) => ipcRenderer.invoke('cowork:bootstrap:read', filename),
     writeBootstrapFile: (filename: string, content: string) =>
       ipcRenderer.invoke('cowork:bootstrap:write', filename, content),
@@ -395,6 +397,15 @@ contextBridge.exposeInMainWorld('electron', {
     showItemInFolder: (filePath: string) => ipcRenderer.invoke('shell:showItemInFolder', filePath),
     openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
     openHtmlInBrowser: (htmlContent: string) => ipcRenderer.invoke('shell:openHtmlInBrowser', htmlContent),
+  },
+  artifact: {
+    watchFile: (filePath: string) => ipcRenderer.invoke('artifact:watchFile', filePath),
+    unwatchFile: (filePath: string) => ipcRenderer.invoke('artifact:unwatchFile', filePath),
+    onFileChanged: (callback: (data: { filePath: string }) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: { filePath: string }) => callback(data);
+      ipcRenderer.on('artifact:file:changed', handler);
+      return () => { ipcRenderer.removeListener('artifact:file:changed', handler); };
+    },
   },
   autoLaunch: {
     get: () => ipcRenderer.invoke('app:getAutoLaunch'),
