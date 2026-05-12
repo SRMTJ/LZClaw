@@ -1710,6 +1710,11 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     clearHeightCache();
   }, [sessionId]);
 
+  useEffect(() => {
+    if (!sessionId) return;
+    coworkService.refreshContextUsageForSessionEntry(sessionId);
+  }, [sessionId]);
+
   // Rail navigation states
   const [currentRailIndex, setCurrentRailIndex] = useState(-1);
   const currentRailIndexRef = useRef(-1);

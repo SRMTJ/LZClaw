@@ -51,6 +51,7 @@ const classifyError = (error: string): string => {
 
 const CONTEXT_USAGE_REFRESH_DELAY_MS = 800;
 const FINAL_CONTEXT_USAGE_REFRESH_DELAYS_MS = [800, 2500, 6000, 12000] as const;
+const SESSION_ENTRY_CONTEXT_USAGE_REFRESH_COOLDOWN_MS = 1500;
 
 class CoworkService {
   private streamListenerCleanups: Array<() => void> = [];
@@ -61,6 +62,7 @@ class CoworkService {
   private latestLoadSessionsRequestId = 0;
   private latestLoadSessionRequestId = 0;
   private contextUsageRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private sessionEntryContextUsageRefreshAt = new Map<string, number>();
 
   async init(): Promise<void> {
     if (this.initialized) return;
@@ -302,12 +304,29 @@ class CoworkService {
     const cowork = window.electron?.cowork;
     if (!cowork?.getContextUsage) return null;
 
-    const result = await cowork.getContextUsage(sessionId);
-    if (result?.success && result.usage) {
-      this.handleContextUsageUpdate(result.usage, options.notifyCompaction === true);
-      return result.usage;
+    try {
+      const result = await cowork.getContextUsage(sessionId);
+      if (result?.success && result.usage) {
+        this.handleContextUsageUpdate(result.usage, options.notifyCompaction === true);
+        return result.usage;
+      }
+    } catch (error) {
+      console.warn('[CoworkService] context usage refresh failed:', error);
     }
     return null;
+  }
+
+  refreshContextUsageForSessionEntry(sessionId: string): void {
+    if (!sessionId) return;
+
+    const now = Date.now();
+    const lastRefreshAt = this.sessionEntryContextUsageRefreshAt.get(sessionId) ?? 0;
+    if (now - lastRefreshAt < SESSION_ENTRY_CONTEXT_USAGE_REFRESH_COOLDOWN_MS) {
+      return;
+    }
+
+    this.sessionEntryContextUsageRefreshAt.set(sessionId, now);
+    void this.refreshContextUsage(sessionId, { notifyCompaction: false });
   }
 
   async compactContext(sessionId: string): Promise<boolean> {
@@ -694,7 +713,7 @@ class CoworkService {
       }
       store.dispatch(setCurrentSession(result.session));
       store.dispatch(setStreaming(result.session.status === 'running'));
-      void this.refreshContextUsage(sessionId, { notifyCompaction: false });
+      this.refreshContextUsageForSessionEntry(sessionId);
 
       const imResult = await cowork.remoteManaged(sessionId);
       if (requestId === this.latestLoadSessionRequestId) {
