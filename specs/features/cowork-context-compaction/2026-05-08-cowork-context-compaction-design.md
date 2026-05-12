@@ -35,6 +35,7 @@ LobsterAI Cowork 当前已经基于 OpenClaw 运行对话与工具调用。OpenC
 10. 在确认 OpenClaw 正在做 memory flush / context maintenance 时保持 session running，并展示友好状态 `正在整理上下文...`。
 11. 正确区分 checkpoint compaction 与 assembled context 中的 `compactionSummary`，避免误报“上下文已自动压缩”。
 12. 在 history reconcile 后仍能把 usage/meta 写回当前最新 assistant 消息。
+13. 从历史会话进入或切换会话时主动同步一次 OpenClaw context usage；同步失败或数据不完整时不展示圆环和 tooltip。
 
 ### 1.3 非目标
 
@@ -64,10 +65,16 @@ LobsterAI Cowork 当前已经基于 OpenClaw 运行对话与工具调用。OpenC
 **When** 用户悬停该指示器  
 **Then** tooltip 展示类似 `上下文：43% 已用，已用 86k tokens，共 200k`
 
+**And** 指示器视觉颜色保持中性灰色，不因 warning/danger 阈值变色
+
+**And** tooltip 只在 hover 时展示，点击后不应因 focus 状态常驻
+
+**And** 如果没有 OpenClaw token usage 数据或缺少百分比，指示器不展示
+
 ### 场景 2: 用户主动压缩上下文
 
 **Given** 用户看到上下文指示器  
-**When** 用户点击指示器并选择“压缩上下文”  
+**When** 用户点击指示器
 **Then** LobsterAI 调用 OpenClaw 的压缩能力
 
 **And** 压缩期间指示器展示 loading 状态
@@ -145,6 +152,18 @@ LobsterAI Cowork 当前已经基于 OpenClaw 运行对话与工具调用。OpenC
 
 **And** assistant 消息下方仍展示 agent、input/output tokens、context percent、model 等 meta 信息
 
+### 场景 10: 从历史会话进入后刷新 usage
+
+**Given** 用户从侧边栏或历史列表进入一个已有 Cowork 会话
+**When** 会话详情加载或 `sessionId` 切换
+**Then** LobsterAI 主动向 OpenClaw 同步一次 context usage
+
+**And** 如果 OpenClaw 返回完整 token/percent 数据，输入框附近展示上下文圆环
+
+**And** 如果 OpenClaw 暂时无法返回完整 usage，LobsterAI 不展示圆环，也不展示“不可用”tooltip
+
+**And** 快速来回切换同一个会话时应做轻量 cooldown，避免频繁请求 OpenClaw
+
 ## 3. 功能需求
 
 ### FR-1: 上下文使用量数据模型
@@ -177,7 +196,12 @@ percent = contextTokens > 0 ? Math.round((usedTokens / contextTokens) * 100) : u
 - `normal`: `< 70%`。
 - `warning`: `70% - 90%`。
 - `danger`: `>= 90%`。
-- `compacting`: 正在执行手动压缩或检测到压缩进行中。
+- `compacting`: 正在执行手动压缩。
+
+说明：
+
+- `warning` / `danger` 是数据状态，可用于 tooltip、日志或后续策略判断；当前输入框圆环不再按这些状态变色。
+- OpenClaw 自动 memory flush / pre-compaction / compaction stream 使用单独的 `contextMaintenanceSessionIds` 运行态，不复用手动压缩的 `compactingSessionIds`。
 
 ### FR-2: 数据来源优先级
 
@@ -197,9 +221,11 @@ percent = contextTokens > 0 ? Math.round((usedTokens / contextTokens) * 100) : u
 交互要求：
 
 - 圆形进度展示当前百分比。
-- 缺少数据时展示灰色空圈。
-- `warning` 和 `danger` 状态使用更明显颜色。
-- 悬停展示 tooltip。
+- 缺少 `percent` 时不展示圆环，也不展示“不可用”tooltip。
+- 圆环始终使用中性灰色，不因 warning/danger 阈值变色。
+- 不展示右上角红点或其他高占用徽标，避免和发送按钮、错误状态产生干扰。
+- compacting 时可以保留旋转动画，但颜色仍保持中性灰色。
+- 仅悬停展示 tooltip；点击后不应因 focus/focus-within 让 tooltip 常驻。
 - tooltip 文案必须走 i18n。
 - 不能遮挡输入框、模型选择、语音按钮等现有控件。
 - 不引入复杂面板，第一版保持轻量。
@@ -208,16 +234,18 @@ tooltip 建议文案：
 
 - `上下文：{percent}% 已用`
 - `已用 {usedTokens} tokens，共 {contextTokens}`
-- `OpenClaw 会在接近上限时自动压缩上下文`
+
+当前实现 tooltip 不再追加“压缩上下文”或自动压缩说明，只保留百分比和 token 数。
 
 ### FR-4: 用户主动压缩
 
 用户点击上下文指示器后，可以主动触发压缩。
 
-第一版交互可以是以下任一方式：
+第一版当前交互：
 
-1. 点击后直接弹出确认。
-2. 点击后展示小菜单，包含 `压缩上下文` 和 `刷新 token`。
+- 点击圆环直接触发手动压缩。
+- tooltip 只展示 usage 信息，不追加“压缩上下文”命令文案。
+- 不展示额外菜单，避免在输入区引入复杂交互。
 
 主动压缩行为：
 
@@ -358,13 +386,14 @@ LobsterAI 需要过滤以下 OpenClaw 内部消息：
   - zh: `正在整理上下文...`
   - en: `Organizing context...`
 - 等待 OpenClaw 后续同 session run/lifecycle/tool/assistant 事件。
-- 当前实现使用 `SILENT_MAINTENANCE_FOLLOWUP_GRACE_MS = 15_000` 作为 watchdog：
+- 当前实现使用 `SILENT_MAINTENANCE_FOLLOWUP_GRACE_MS = 60_000` 作为 watchdog：
   - follow-up 事件到来则取消等待，继续真实任务输出。
-  - 15 秒内无后续事件则安全 complete，避免永久 loading。
+  - 60 秒内无后续事件则安全 complete，避免永久 loading。
 
 说明：
 
 - 这不是纯定时器方案，而是事件驱动为主、timer 兜底。
+- 该 watchdog 只用于 confirmed maintenance / silent follow-up 等内部维护路径，不用于普通 assistant final；普通 `chat.final` completion grace 当前为 `800ms`。
 - 如果 OpenClaw 后续提供明确 `memoryFlush.end` / `willContinue` / `followupRunId` 语义，应改为完全事件驱动，timer 仅保留异常 watchdog。
 
 ### FR-12: Usage/meta 回填必须处理消息 id 替换
@@ -455,6 +484,7 @@ contextUsageBySessionId: Record<string, ContextUsageState>;
 状态更新来源：
 
 - 初始化/切 session 时主动 refresh。
+- `CoworkSessionDetail` 根据 `sessionId` mount/switch 时主动 refresh，用于覆盖当前 session 已在 Redux 中但详情视图重新进入的历史会话路径。
 - 收到 main process context usage update。
 - 收到 model switch 成功事件后 refresh。
 - 手动 compact 成功后 refresh。
@@ -463,6 +493,13 @@ contextUsageBySessionId: Record<string, ContextUsageState>;
 - 收到 `Session ... is still running.` 并发保护错误时，不标记为终止性 error，而是恢复 running 并提示用户等待。
 - 收到 `cowork:stream:contextMaintenance` 时维护 `contextMaintenanceSessionIds`。
 - context maintenance active 时，StreamingActivityBar 优先展示 `coworkContextMaintenanceRunning`。
+
+当前实现细节：
+
+- `refreshContextUsageForSessionEntry(sessionId)` 专门用于历史进入/切换会话时同步 usage。
+- 该入口带 `SESSION_ENTRY_CONTEXT_USAGE_REFRESH_COOLDOWN_MS = 1500` 的 per-session cooldown，避免快速来回切换时重复请求 OpenClaw。
+- `refreshContextUsage()` 对 IPC 不存在、OpenClaw 返回失败、usage 为空和 IPC throw 都返回 `null`，不会展示不可用 tooltip，也不会产生未处理 promise rejection。
+- usage 只写入 renderer Redux `contextUsageBySessionId` 运行期缓存；当前不新增数据库 schema，不持久化 usage 快照。
 
 ### 4.4 Renderer UI
 
@@ -488,6 +525,10 @@ UI 要求：
 
 - 使用现有主题变量和 Tailwind 风格。
 - 圆形指示器尺寸稳定，不因 tooltip 或状态变化导致输入框跳动。
+- 圆环固定为中性灰色，显示进度但不按 warning/danger 变色。
+- 不展示高占用红点；高占用状态只体现在 tooltip 数字或后续策略里。
+- tooltip 仅由 hover 触发，不使用 focus-within 触发，避免点击后 tooltip 常驻。
+- 缺少 `percent` 时组件返回 `null`，不显示空圈或“不可用”提示。
 - tooltip 和按钮文案走 `i18n`。
 - 不影响移动/窄宽布局；空间不足时只展示图标，tooltip 仍可访问。
 
@@ -678,7 +719,7 @@ chat.final -> context overflow -> auto-compaction -> retry -> tool/assistant str
 因此 `chat.final` 不能作为唯一最终完成信号。当前实现：
 
 1. `handleChatFinal()` 不再立即 `emit('complete')`。
-2. 先调用 `deferChatFinalCompletion()`，延迟 `CHAT_FINAL_COMPLETION_GRACE_MS = 3_000`。
+2. 先调用 `deferChatFinalCompletion()`，延迟 `CHAT_FINAL_COMPLETION_GRACE_MS = 800`。
 3. 如果 grace window 内同一 active turn 收到以下事件，则取消 completed 并恢复 running：
    - `chat.delta`
    - `stream: "assistant"`
@@ -710,7 +751,7 @@ LobsterAI 当前处理：
 3. `isContextMaintenanceToolEvent()` 识别 read/write `memory/YYYY-MM-DD.md`。
 4. 对已识别 maintenance tool 的 `toolCallId` 记录到 `contextMaintenanceToolCallIds`，确保 start/update/result 都被 suppress。
 5. `handleChatFinal()` 遇到 `NO_REPLY/no_reply`：
-   - 如果本轮有 context maintenance tool，则进入 15 秒 follow-up grace。
+   - 如果本轮有 context maintenance tool，则进入 60 秒 follow-up grace。
    - 否则仅作为普通 silent token suppress，并正常结束。
 6. context maintenance active 时通过 `cowork:stream:contextMaintenance` 通知 renderer。
 
@@ -799,7 +840,7 @@ resolveAssistantMessageIdForUsage(sessionId, preferredMessageId)
 - `lifecycle error fallback ignores a later run for the same session`
   - 旧 run 的 timer 不会 abort 新 run。
 - `chat final completes after the retry grace window`
-  - 普通 `chat.final` 在 3 秒 grace 后仍会正常完成。
+  - 普通 `chat.final` 在 800ms grace 后仍会正常完成。
 - `chat final completion is canceled when the same run continues streaming`
   - `chat.final` 后同一 run 继续产生 stream 时，不会把 UI 置为 completed。
   - session 保持 `running`，active turn 不被清理。
@@ -854,6 +895,8 @@ npx eslint src/main/libs/agentEngine/openclawRuntimeAdapter.ts src/main/libs/age
   - `ContextUsageIndicator`
   - `CoworkSessionDetail` 输入区附近接入 indicator
   - 点击确认后触发手动 compact
+  - 圆环固定灰色，去掉高占用红点，tooltip 仅 hover 展示
+  - 历史会话进入/切换时触发一次 OpenClaw usage 同步
 - i18n 新增中英文文案：
   - context usage tooltip
   - manual compact confirm
@@ -898,7 +941,7 @@ npx eslint src/main/libs/agentEngine/openclawRuntimeAdapter.ts src/main/libs/age
   - assistant stream、chat delta、chat final 路径 suppress 纯 `NO_REPLY/no_reply`。
   - memory daily file read/write 被识别为 context maintenance tool event。
   - maintenance tool 的 start/update/result 都不作为正式 tool_use/tool_result 展示。
-  - confirmed maintenance + `NO_REPLY` final 保持 running，并进入 15 秒 follow-up grace。
+  - confirmed maintenance + `NO_REPLY` final 保持 running，并进入 60 秒 follow-up grace。
   - follow-up 事件到来后取消 maintenance waiting，继续正常真实输出。
 - renderer
   - 新增 `contextMaintenanceSessionIds`。
@@ -942,6 +985,24 @@ npx eslint src/main/libs/agentEngine/openclawRuntimeAdapter.ts src/main/libs/age
 
 - preferred assistant message id 被 history reconcile 替换后，usage/meta 仍能写到最新 assistant message。
 
+### 5.10 历史会话 usage 同步与圆环交互修复
+
+已完成：
+
+- `coworkService.loadSession()` 成功加载历史会话后调用 `refreshContextUsageForSessionEntry(sessionId)`。
+- `CoworkSessionDetail` 在 `sessionId` mount/switch 时也调用 `refreshContextUsageForSessionEntry(sessionId)`，覆盖“当前 session 已在 Redux 中、详情视图重新进入”的路径。
+- `refreshContextUsageForSessionEntry()` 使用 1.5 秒 per-session cooldown，避免快速来回切换时重复请求 OpenClaw。
+- `refreshContextUsage()` 兜住 IPC 不存在、OpenClaw 返回失败、usage 为空和 IPC throw；失败时只返回 `null` 并保持圆环隐藏。
+- `ContextUsageIndicator` 在缺少 `percent` 时不渲染，避免展示“上下文使用量暂不可用”的 tooltip。
+- tooltip 只通过 hover 展示，不再使用 `group-focus-within`，避免点击圆环后 tooltip 常驻。
+- 圆环视觉固定为灰色；去掉 warning/danger 变色和右上角高占用红点。
+- compacting 状态仍可旋转，但颜色保持灰色。
+
+边界说明：
+
+- 当前 usage 是 renderer Redux 内存缓存，不持久化到数据库；应用重启或 renderer 刷新后需要重新向 OpenClaw 同步。
+- 快速切换历史会话时，异步返回按 `sessionId` 写入 `contextUsageBySessionId`，不会覆盖当前会话内容。
+
 ## 6. 测试计划
 
 ### 6.1 Unit Tests
@@ -951,6 +1012,11 @@ npx eslint src/main/libs/agentEngine/openclawRuntimeAdapter.ts src/main/libs/age
 - context usage 百分比计算。
 - used/context 缺失时为 unknown。
 - warning/danger 状态阈值。
+- context usage 缺少 `percent` 时圆环不展示。
+- 圆环固定灰色，不按 warning/danger 状态变色。
+- tooltip 只 hover 展示，点击后不会常驻。
+- 历史会话进入/切换时触发 usage refresh，并带 per-session cooldown。
+- context usage refresh 失败或 IPC throw 时安全返回 `null`。
 - compaction checkpoint count 增加只插入一次自动压缩提示。
 - 手动压缩成功插入手动提示。
 - 模型切换后用新 context window 重新计算。
@@ -969,12 +1035,13 @@ npx eslint src/main/libs/agentEngine/openclawRuntimeAdapter.ts src/main/libs/age
 需要覆盖：
 
 - `sessions.list` 返回 token 数据后，renderer 收到 context usage update。
+- 从历史会话进入时，renderer 主动调用 `cowork:session:contextUsage` 并更新圆环。
 - `chat.final` usage 更新后，当前 session 指示器刷新。
 - `stream: "compaction"` end/completed 后触发 usage refresh。
 - `compactionCheckpointCount` 从 0 到 1 时插入自动压缩提示。
 - 切换模型后触发 refresh。
 - lifecycle error fallback 不会在 2 秒打断 OpenClaw 恢复流程。
-- `chat.final` 后 3 秒内出现 overflow retry stream 时，输入框和 loading 保持 running。
+- `chat.final` 后 800ms grace 内出现 overflow retry stream 时，输入框和 loading 保持 running。
 - pre-compaction memory flush 后不展示内部 prompt、memory tool、`NO_REPLY`。
 - OpenClaw Chat UI 显示 `COMPACTION` 但 Sessions 页面 checkpoint 为 none 时，LobsterAI 不提示“已自动压缩”。
 - history reconcile 发生后，assistant 底部 token/meta 仍显示。
@@ -983,9 +1050,9 @@ npx eslint src/main/libs/agentEngine/openclawRuntimeAdapter.ts src/main/libs/age
 
 手动验证场景：
 
-1. 正常短会话显示灰色或低百分比上下文圈。
-2. 长会话显示较高百分比。
-3. hover tooltip 数字正确。
+1. 正常短会话拿到 usage 后显示灰色上下文圈。
+2. 长会话仍显示灰色圆环，tooltip 中百分比和 token 数正确。
+3. hover tooltip 数字正确，点击后鼠标移开 tooltip 消失。
 4. 点击手动压缩，压缩中 loading，完成后提示和百分比刷新。
 5. 自动压缩触发后，对话流出现提示。
 6. 切换大窗口模型，百分比下降。
@@ -993,6 +1060,7 @@ npx eslint src/main/libs/agentEngine/openclawRuntimeAdapter.ts src/main/libs/age
 8. 手动 stop 仍立即停止。
 9. IM/channel session 不因新事件崩溃。
 10. macOS 和 Windows 下 UI 布局稳定。
+11. 重启或刷新 renderer 后首次进入历史会话，OpenClaw 返回 usage 前不展示圆环；返回完整 usage 后展示圆环。
 
 ## 7. 兼容性与风险
 
@@ -1002,7 +1070,7 @@ npx eslint src/main/libs/agentEngine/openclawRuntimeAdapter.ts src/main/libs/age
 
 因此老用户覆盖安装主要风险来自 UI 新状态缺省值，需保证：
 
-- 没有 usage 数据时展示 unknown，而不是报错。
+- 没有 usage 数据或缺少 `percent` 时不展示圆环，而不是报错或展示“不可用”提示。
 - 没有 sessionKey 时不调用 compact。
 - OpenClaw gateway 不支持 compact API 时给出可恢复错误。
 
@@ -1034,6 +1102,7 @@ npx eslint src/main/libs/agentEngine/openclawRuntimeAdapter.ts src/main/libs/age
 建议：
 
 - 只刷新当前 session 的 context usage。
+- 历史会话进入/切换时刷新 usage 需要短 cooldown，避免快速切换造成重复请求。
 - `sessions.list` refresh 节流。
 - usage 状态按 sessionId 覆盖写，不保留无限历史。
 
@@ -1060,9 +1129,9 @@ npx eslint src/main/libs/agentEngine/openclawRuntimeAdapter.ts src/main/libs/age
 2. 已确认：手动 compact 有专用 gateway API：`sessions.compact`。
 3. 已确认：`sessions.list` 关键字段包括 `totalTokens`、`inputTokens`、`outputTokens`、`contextTokens`、`compactionCheckpointCount`、`latestCompactionCheckpoint`。
 4. 已确认：OpenClaw store 内部维护 `compactionCount`；gateway list 对 UI 暴露 `compactionCheckpointCount` 和 `latestCompactionCheckpoint`。第一版 UI 以 checkpoint count 去重。
-5. 已处理：自动压缩期间可能与 `chat.final` / retry stream 交错，LobsterAI 通过 3 秒 deferred completion 和 stream cancel 处理。
+5. 已处理：自动压缩期间可能与 `chat.final` / retry stream 交错，LobsterAI 通过 800ms deferred completion 和 stream cancel 处理。
 6. 仍需手测：OpenClaw 压缩失败时的错误形态是否稳定可识别。
-7. 第一版已定：上下文圈放在 `CoworkSessionDetail` 输入框上方右侧，保持轻量。
+7. 第一版已定：上下文圈放在 `CoworkSessionDetail` 输入框发送按钮左侧，保持轻量。
 8. 第一版已定：会话 running 时不支持 pending queue；输入保持可见，发送按钮走 streaming/stop 状态，强行发送时给等待提示。
 
 ## 9. 人工测试观察与日志时间线
@@ -1337,7 +1406,7 @@ npx tsc -p tsconfig.json --noEmit
 
 - history silent/pre-compaction 过滤。
 - adapter chat.final grace、lifecycle end immediate flush、tool continuation cancel。
-- memory maintenance `NO_REPLY` suppress 和 15 秒 follow-up grace。
+- memory maintenance `NO_REPLY` suppress 和 60 秒 follow-up grace。
 - 普通 write 不触发 maintenance。
 - `compactionCount` 不作为 checkpoint count。
 - usage/meta fallback 到最新 assistant message。

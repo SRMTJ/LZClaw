@@ -31,13 +31,6 @@ const formatTooltip = (usage?: CoworkContextUsage): string => {
   return lines.join('\n');
 };
 
-const resolveColorClass = (percent?: number): string => {
-  if (percent === undefined) return 'text-secondary';
-  if (percent >= 90) return 'text-red-500';
-  if (percent >= 70) return 'text-amber-500';
-  return 'text-primary';
-};
-
 const ContextUsageIndicator: React.FC<ContextUsageIndicatorProps> = ({
   usage,
   compacting = false,
@@ -51,11 +44,6 @@ const ContextUsageIndicator: React.FC<ContextUsageIndicatorProps> = ({
   const offset = percent === undefined
     ? CIRCUMFERENCE
     : CIRCUMFERENCE * (1 - Math.min(Math.max(percent, 0), 100) / 100);
-  const colorClass = usage?.status === 'danger'
-    ? 'text-red-500'
-    : usage?.status === 'warning'
-      ? 'text-amber-500'
-      : resolveColorClass(percent);
   const isDisabled = disabled || compacting || !onCompact;
   const tooltip = compacting ? i18nService.t('coworkContextCompacting') : formatTooltip(usage);
   const tooltipLines = tooltip.split('\n');
@@ -75,7 +63,7 @@ const ContextUsageIndicator: React.FC<ContextUsageIndicatorProps> = ({
       >
         <svg
           viewBox="0 0 24 24"
-          className={`h-5 w-5 ${compacting ? 'animate-spin text-primary' : colorClass}`}
+          className={`h-5 w-5 text-secondary ${compacting ? 'animate-spin' : ''}`}
           aria-hidden="true"
         >
           <circle
@@ -100,11 +88,8 @@ const ContextUsageIndicator: React.FC<ContextUsageIndicatorProps> = ({
             transform="rotate(-90 12 12)"
           />
         </svg>
-        {percent !== undefined && percent >= 90 && (
-          <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-red-500" />
-        )}
       </button>
-      <span className="pointer-events-none absolute bottom-full right-0 z-50 mb-2 hidden min-w-max max-w-[260px] whitespace-nowrap rounded-md border border-border bg-surface-raised px-2 py-1.5 text-left text-xs leading-5 text-foreground shadow-elevated group-hover:block group-focus-within:block">
+      <span className="pointer-events-none absolute bottom-full right-0 z-50 mb-2 hidden min-w-max max-w-[260px] whitespace-nowrap rounded-md border border-border bg-surface-raised px-2 py-1.5 text-left text-xs leading-5 text-foreground shadow-elevated group-hover:block">
         {tooltipLines.map((line, index) => (
           <React.Fragment key={`${line}-${index}`}>
             {line}
