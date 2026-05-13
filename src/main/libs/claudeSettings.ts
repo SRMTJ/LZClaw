@@ -41,6 +41,16 @@ type ProviderModelInputConfig = {
   supportsImage?: boolean;
 };
 
+export type ServerModelMetadata = {
+  modelId: string;
+  modelName?: string;
+  provider?: string;
+  apiFormat?: string;
+  supportsImage?: boolean;
+  apiBaseUrl?: string;
+  apiKey?: string;
+};
+
 export type ApiConfigResolution = {
   config: CoworkApiConfig | null;
   error?: string;
@@ -75,26 +85,43 @@ export function setServerBaseUrlGetter(getter: () => string): void {
 }
 
 // Cached server model metadata (populated when auth:getModels is called)
-// Keyed by modelId → { supportsImage }
-let serverModelMetadataCache: Map<string, { supportsImage?: boolean }> = new Map();
+// Keyed by modelId → model metadata
+let serverModelMetadataCache: Map<string, Omit<ServerModelMetadata, 'modelId'>> = new Map();
 
 const serializeServerModelMetadata = (
-  models: Array<{ modelId: string; supportsImage?: boolean }>,
+  models: ServerModelMetadata[],
 ): string => JSON.stringify(
   models
     .map((model) => ({
       modelId: model.modelId,
+      modelName: model.modelName,
+      provider: model.provider,
+      apiFormat: model.apiFormat,
       supportsImage: model.supportsImage,
+      apiBaseUrl: model.apiBaseUrl,
+      apiKey: model.apiKey,
     }))
     .sort((a, b) => a.modelId.localeCompare(b.modelId)),
 );
 
-export function updateServerModelMetadata(models: Array<{ modelId: string; supportsImage?: boolean }>): boolean {
+export function updateServerModelMetadata(models: ServerModelMetadata[]): boolean {
   const previous = serializeServerModelMetadata(getAllServerModelMetadata());
-  const nextCache = new Map(models.map(m => [m.modelId, { supportsImage: m.supportsImage }]));
+  const nextCache = new Map(models.map(m => [m.modelId, {
+    modelName: m.modelName,
+    provider: m.provider,
+    apiFormat: m.apiFormat,
+    supportsImage: m.supportsImage,
+    apiBaseUrl: m.apiBaseUrl,
+    apiKey: m.apiKey,
+  }]));
   const next = serializeServerModelMetadata(Array.from(nextCache.entries()).map(([modelId, meta]) => ({
     modelId,
+    modelName: meta.modelName,
+    provider: meta.provider,
+    apiFormat: meta.apiFormat,
     supportsImage: meta.supportsImage,
+    apiBaseUrl: meta.apiBaseUrl,
+    apiKey: meta.apiKey,
   })));
   serverModelMetadataCache = nextCache;
   return previous !== next;
@@ -104,10 +131,15 @@ export function clearServerModelMetadata(): void {
   serverModelMetadataCache.clear();
 }
 
-export function getAllServerModelMetadata(): Array<{ modelId: string; supportsImage?: boolean }> {
+export function getAllServerModelMetadata(): ServerModelMetadata[] {
   return Array.from(serverModelMetadataCache.entries()).map(([modelId, meta]) => ({
     modelId,
+    modelName: meta.modelName,
+    provider: meta.provider,
+    apiFormat: meta.apiFormat,
     supportsImage: meta.supportsImage,
+    apiBaseUrl: meta.apiBaseUrl,
+    apiKey: meta.apiKey,
   }));
 }
 

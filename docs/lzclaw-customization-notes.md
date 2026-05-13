@@ -1,6 +1,6 @@
 # LZClaw 定制修改说明
 
-更新时间：2026-05-12
+更新时间：2026-05-13
 
 本文记录 `LZClaw/src` 内针对 LZClaw 分支做过的定制修改，目的是让后续合并上游项目代码时，可以快速判断哪些改动属于本项目保留项。
 
@@ -206,6 +206,19 @@ LZService 的 mock 登录配置已调整为登录成功后返回 DeepSeek 模型
 - 如果后续 LZService 接入真实模型配置，应保持 `/api/models/available` 返回字段不变：`modelId`、`modelName`、`provider`、`apiFormat`、`supportsImage`。
 - DeepSeek 当前按文本模型处理，`supportsImage` 为 `false`。
 
+### 服务端模型直连参数
+
+`/api/models/available` 已支持可选字段：
+
+- `apiBaseUrl`
+- `apiKey`
+
+LZClaw 行为：
+
+- 当模型同时下发 `apiBaseUrl + apiKey` 时，OpenClaw token proxy 会按模型直连该上游地址；
+- 当模型未下发或字段不完整时，自动回退到原有链路：`{LZ_SERVICE_BASE_URL}/api/proxy/v1/chat/completions`；
+- 请求日志会打印模型路由来源（`direct`/`fallback`）和最终上游 URL，`apiKey` 会脱敏显示。
+
 ## 登录协议修复
 
 开发模式下，Windows 会把 `lobsterai://auth/callback?...` 错误识别为 Electron app 路径，导致启动失败。
@@ -256,6 +269,20 @@ LZService 的 mock 登录配置已调整为登录成功后返回 DeepSeek 模型
 - 从设置页 tab 列表移除 `coworkAgentEngine`。
 - 如果外部仍传入 `coworkAgentEngine` 作为初始 tab，则自动回退到 `general`。
 - 保留底层 `agentEngine` 配置读取和保存逻辑，避免影响已有配置。
+
+相关文件：
+
+- `src/renderer/components/Settings.tsx`
+
+## 设置页模型 Tab 隐藏
+
+设置页侧边栏已隐藏「模型」Tab。
+
+处理方式：
+
+- 从设置页侧边栏 tab 列表移除 `model`。
+- 如果外部仍传入 `model` 作为初始 tab，则自动回退到 `general`。
+- 保留模型配置的底层逻辑与渲染代码，避免影响已有数据结构和后续恢复能力。
 
 相关文件：
 

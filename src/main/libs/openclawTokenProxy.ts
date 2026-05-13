@@ -1,6 +1,9 @@
 import http from 'http';
 import { net } from 'electron';
 
+import type { ServerModelMetadata } from './claudeSettings';
+import { buildOpenAIChatCompletionsURL } from './coworkFormatTransform';
+
 const PROXY_BIND_HOST = '127.0.0.1';
 
 let proxyServer: http.Server | null = null;
@@ -10,17 +13,20 @@ let proxyPort: number | null = null;
 let tokenGetter: (() => { accessToken: string; refreshToken: string } | null) | null = null;
 let tokenRefresher: ((reason: string) => Promise<string | null>) | null = null;
 let serverBaseUrlGetter: (() => string) | null = null;
+let serverModelMetadataGetter: (() => ServerModelMetadata[]) | null = null;
 
 export type OpenClawTokenProxyConfig = {
   getAuthTokens: () => { accessToken: string; refreshToken: string } | null;
   refreshToken: (reason: string) => Promise<string | null>;
   getServerBaseUrl: () => string;
+  getServerModelMetadata: () => ServerModelMetadata[];
 };
 
 export function startOpenClawTokenProxy(config: OpenClawTokenProxyConfig): Promise<{ port: number }> {
   tokenGetter = config.getAuthTokens;
   tokenRefresher = config.refreshToken;
   serverBaseUrlGetter = config.getServerBaseUrl;
+  serverModelMetadataGetter = config.getServerModelMetadata;
 
   return new Promise((resolve, reject) => {
     if (proxyServer) {
@@ -76,6 +82,95 @@ function collectRequestBody(req: http.IncomingMessage): Promise<Buffer> {
   });
 }
 
+type UpstreamRoute = {
+  modelId: string | null;
+  source: 'direct' | 'fallback';
+  url: string;
+  authToken: string;
+};
+
+export type OpenClawUpstreamRouteDecision = UpstreamRoute;
+
+type DirectModelRoute = {
+  modelId: string;
+  apiBaseUrl: string;
+  apiKey: string;
+};
+
+export const maskTokenForLog = (value: string): string => {
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  if (trimmed.length <= 8) {
+    return `${trimmed.slice(0, 2)}***`;
+  }
+  return `${trimmed.slice(0, 4)}***${trimmed.slice(-2)}`;
+};
+
+export const parseModelIdFromOpenAIRequestBody = (body: Buffer): string | null => {
+  if (body.length === 0) return null;
+  try {
+    const parsed = JSON.parse(body.toString('utf8')) as { model?: unknown };
+    if (typeof parsed.model !== 'string') {
+      return null;
+    }
+    const modelId = parsed.model.trim();
+    return modelId || null;
+  } catch {
+    return null;
+  }
+};
+
+export const resolveDirectOpenAIRouteForModel = (
+  modelId: string | null,
+  models: ServerModelMetadata[],
+): DirectModelRoute | null => {
+  if (!modelId) return null;
+  const matchedModel = models.find((model) => model.modelId === modelId);
+  if (!matchedModel) return null;
+
+  const apiBaseUrl = matchedModel.apiBaseUrl?.trim() || '';
+  const apiKey = matchedModel.apiKey?.trim() || '';
+  if (!apiBaseUrl || !apiKey) return null;
+
+  return {
+    modelId: matchedModel.modelId,
+    apiBaseUrl,
+    apiKey,
+  };
+};
+
+export const resolveOpenClawUpstreamRoute = (options: {
+  requestUrl?: string;
+  body: Buffer;
+  fallbackAccessToken: string;
+  serverBaseUrl: string;
+  models: ServerModelMetadata[];
+}): OpenClawUpstreamRouteDecision => {
+  const { requestUrl, body, fallbackAccessToken, serverBaseUrl, models } = options;
+  const modelId = parseModelIdFromOpenAIRequestBody(body);
+  const directRoute = resolveDirectOpenAIRouteForModel(
+    modelId,
+    models,
+  );
+  if (directRoute) {
+    const directUrl = buildOpenAIChatCompletionsURL(directRoute.apiBaseUrl);
+    return {
+      modelId: directRoute.modelId,
+      source: 'direct',
+      url: directUrl,
+      authToken: directRoute.apiKey,
+    };
+  }
+
+  const upstreamPath = `/api/proxy${requestUrl || '/'}`;
+  return {
+    modelId,
+    source: 'fallback',
+    url: `${serverBaseUrl}${upstreamPath}`,
+    authToken: fallbackAccessToken,
+  };
+};
+
 async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   try {
     const tokens = tokenGetter?.();
@@ -89,18 +184,43 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
 
     const body = await collectRequestBody(req);
 
-    // Build upstream URL: serverBaseUrl + request path
-    // OpenClaw sends to /v1/chat/completions, upstream is /api/proxy/v1/chat/completions
-    const upstreamPath = `/api/proxy${req.url || '/'}`;
-    const upstreamUrl = `${serverBaseUrl}${upstreamPath}`;
+    const upstreamRoute = resolveOpenClawUpstreamRoute({
+      requestUrl: req.url,
+      body,
+      fallbackAccessToken: tokens.accessToken,
+      serverBaseUrl,
+      models: serverModelMetadataGetter?.() ?? [],
+    });
+    console.log('[OpenClawTokenProxy] forwarding request', {
+      modelId: upstreamRoute.modelId,
+      source: upstreamRoute.source,
+      upstreamUrl: upstreamRoute.url,
+      authToken: maskTokenForLog(upstreamRoute.authToken),
+    });
 
-    const result = await forwardRequest(upstreamUrl, req.method || 'POST', tokens.accessToken, body, req.headers);
+    const result = await forwardRequest(
+      upstreamRoute.url,
+      req.method || 'POST',
+      upstreamRoute.authToken,
+      body,
+      req.headers,
+    );
 
-    if ((result.status === 401 || result.status === 403) && tokenRefresher) {
+    if (
+      upstreamRoute.source === 'fallback'
+      && (result.status === 401 || result.status === 403)
+      && tokenRefresher
+    ) {
       console.log(`[OpenClawTokenProxy] received ${result.status}, attempting token refresh`);
       const newToken = await tokenRefresher('openclaw-proxy');
       if (newToken) {
-        const retryResult = await forwardRequest(upstreamUrl, req.method || 'POST', newToken, body, req.headers);
+        const retryResult = await forwardRequest(
+          upstreamRoute.url,
+          req.method || 'POST',
+          newToken,
+          body,
+          req.headers,
+        );
         pipeResponse(retryResult, res);
         return;
       }

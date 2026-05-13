@@ -12,6 +12,8 @@ export interface Model {
   supportsImage?: boolean;
   isServerModel?: boolean; // 是否为服务端套餐模型
   serverApiFormat?: string; // 服务端模型的 API 格式 ("openai" | "anthropic")
+  serverApiBaseUrl?: string; // 服务端模型指定的直连 base URL（可选）
+  serverApiKey?: string; // 服务端模型指定的直连 API Key（可选）
 }
 
 export function getModelIdentityKey(model: Pick<Model, 'id' | 'providerKey'>): string {
