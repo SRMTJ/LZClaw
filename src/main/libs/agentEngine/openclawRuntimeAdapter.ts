@@ -2549,7 +2549,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     // Capture session.tool events for media extraction
     if (event.event === 'session.tool') {
-      console.log('[Debug:session.tool]', JSON.stringify(event.payload).slice(0, 1500));
+      console.debug('[Debug:session.tool]', JSON.stringify(event.payload).slice(0, 1500));
     }
 
     // Log unhandled event types (temporary debug)
@@ -3583,16 +3583,16 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const finalSegmentText = this.resolveAssistantSegmentText(turn, finalText);
     turn.currentAssistantSegmentText = finalSegmentText;
 
-    // Collect media URLs: the agent tool event does not carry the result text,
-    // so fetch MEDIA: tokens from chat.history when the turn had tool calls.
-    if ((!turn.pendingMediaUrls || turn.pendingMediaUrls.length === 0)
-        && turn.toolUseMessageIdByToolCallId.size > 0
+    // Collect media URLs and backfill tool result text from chat.history.
+    // The agent tool event does not carry the result text (gateway strips it),
+    // so we fetch it from the authoritative transcript via chat.history.
+    if (turn.toolUseMessageIdByToolCallId.size > 0
         && turn.sessionKey
         && this.gatewayClient) {
       try {
         const history = await this.gatewayClient.request<{ messages?: unknown[] }>('chat.history', {
           sessionKey: turn.sessionKey,
-          limit: 10,
+          limit: 50,
         }, { timeoutMs: 5_000 });
         if (Array.isArray(history?.messages)) {
           const mediaFromHistory: string[] = [];
@@ -3602,14 +3602,58 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             if (text) {
               mediaFromHistory.push(...extractMediaTokenPaths(text));
             }
+
+            // Backfill tool result text: chat.history includes toolResult messages
+            // with {role: "toolResult", toolCallId: "...", content: [...]}
+            const msgRole = typeof msg.role === 'string' ? msg.role : '';
+            const msgToolCallId = typeof msg.toolCallId === 'string' ? msg.toolCallId.trim()
+              : typeof msg.tool_call_id === 'string' ? (msg.tool_call_id as string).trim()
+                : '';
+            if (msgToolCallId && (msgRole === 'toolResult' || msgRole === 'tool') && text.trim()) {
+              const existingResultMsgId = turn.toolResultMessageIdByToolCallId.get(msgToolCallId);
+              const existingText = turn.toolResultTextByToolCallId.get(msgToolCallId) ?? '';
+              if (text.length > existingText.length) {
+                const isError = Boolean(msg.isError);
+                if (existingResultMsgId) {
+                  this.store.updateMessage(sessionId, existingResultMsgId, {
+                    content: text,
+                    metadata: {
+                      toolResult: text,
+                      toolUseId: msgToolCallId,
+                      isError,
+                      isStreaming: false,
+                      isFinal: true,
+                    },
+                  });
+                  turn.toolResultTextByToolCallId.set(msgToolCallId, text);
+                  this.emit('messageUpdate', sessionId, existingResultMsgId, text);
+                } else {
+                  const resultMessage = this.store.addMessage(sessionId, {
+                    type: 'tool_result',
+                    content: text,
+                    metadata: {
+                      toolResult: text,
+                      toolUseId: msgToolCallId,
+                      isError,
+                      isStreaming: false,
+                      isFinal: true,
+                    },
+                  });
+                  turn.toolResultMessageIdByToolCallId.set(msgToolCallId, resultMessage.id);
+                  turn.toolResultTextByToolCallId.set(msgToolCallId, text);
+                  this.emit('message', sessionId, resultMessage);
+                }
+                console.log('[OpenClawRuntime] backfilled tool result from chat.history', `toolCallId=${msgToolCallId}`, `len=${text.length}`, `prevLen=${existingText.length}`);
+              }
+            }
           }
-          if (mediaFromHistory.length > 0) {
+          if (mediaFromHistory.length > 0 && (!turn.pendingMediaUrls || turn.pendingMediaUrls.length === 0)) {
             turn.pendingMediaUrls = [...new Set(mediaFromHistory)];
             console.log('[Debug:mediaFromHistory]', `sessionId=${sessionId}`, `found=${turn.pendingMediaUrls.length}`, `urls=${JSON.stringify(turn.pendingMediaUrls)}`);
           }
         }
       } catch (err) {
-        console.warn('[OpenClawRuntime] media history fetch failed:', err);
+        console.warn('[OpenClawRuntime] chat.history fetch failed:', err);
       }
     }
 
