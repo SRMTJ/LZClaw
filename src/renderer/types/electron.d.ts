@@ -609,6 +609,7 @@ interface IElectronAPI {
         source: 'npm' | 'clawhub' | 'git' | 'local' | 'bundled';
         enabled: boolean;
         canUninstall: boolean;
+        hasConfig: boolean;
       }>;
       error?: string;
     }>;
@@ -620,6 +621,23 @@ interface IElectronAPI {
     }) => Promise<{ ok: boolean; pluginId?: string; version?: string; error?: string }>;
     uninstall: (pluginId: string) => Promise<{ ok: boolean; error?: string }>;
     setEnabled: (pluginId: string, enabled: boolean) => Promise<{ ok: boolean; error?: string }>;
+    getConfigSchema: (pluginId: string) => Promise<{
+      success: boolean;
+      schema?: {
+        configSchema: Record<string, unknown>;
+        uiHints: Record<string, {
+          label?: string;
+          help?: string;
+          sensitive?: boolean;
+          advanced?: boolean;
+          placeholder?: string;
+          order?: number;
+        }>;
+      } | null;
+      config?: Record<string, unknown> | null;
+      error?: string;
+    }>;
+    saveConfig: (pluginId: string, config: Record<string, unknown>) => Promise<{ ok: boolean; error?: string }>;
     onInstallLog: (callback: (line: string) => void) => () => void;
   };
   im: {

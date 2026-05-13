@@ -1169,7 +1169,7 @@ const getOpenClawConfigSync = (): OpenClawConfigSync => {
       },
       getMcpBridgeSecret: () => mcpBridgeSecret,
       getAgents: () => getCoworkStore().listAgents(),
-      getUserPlugins: () => getCoworkStore().listUserPlugins().map(p => ({ pluginId: p.pluginId, enabled: p.enabled })),
+      getUserPlugins: () => getCoworkStore().listUserPlugins().map(p => ({ pluginId: p.pluginId, enabled: p.enabled, config: p.config })),
     });
   }
   return openClawConfigSync;
@@ -3969,6 +3969,30 @@ if (!gotTheLock) {
       return { ok: true };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : 'Failed to toggle plugin' };
+    }
+  });
+
+  ipcMain.handle('plugins:get-config-schema', async (_event, pluginId: string) => {
+    try {
+      const { PluginManager } = await import('./libs/pluginManager');
+      const manager = new PluginManager(getCoworkStore());
+      const schema = manager.getPluginConfigSchema(pluginId);
+      const config = manager.getPluginConfig(pluginId);
+      return { success: true, schema, config };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to get config schema' };
+    }
+  });
+
+  ipcMain.handle('plugins:save-config', async (_event, pluginId: string, config: Record<string, unknown>) => {
+    try {
+      const { PluginManager } = await import('./libs/pluginManager');
+      const manager = new PluginManager(getCoworkStore());
+      manager.savePluginConfig(pluginId, config);
+      await syncOpenClawConfig({ reason: 'plugin-config' });
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : 'Failed to save plugin config' };
     }
   });
 

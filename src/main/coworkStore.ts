@@ -543,6 +543,7 @@ export interface UserInstalledPlugin {
   version?: string;
   enabled: boolean;
   installedAt: number;
+  config?: Record<string, unknown>;
 }
 
 
@@ -2245,6 +2246,7 @@ export class CoworkStore {
       version: string | null;
       enabled: number;
       installed_at: number;
+      config: string | null;
     }>('SELECT * FROM user_plugins ORDER BY installed_at ASC');
 
     return rows.map(row => ({
@@ -2255,6 +2257,7 @@ export class CoworkStore {
       version: row.version || undefined,
       enabled: Boolean(row.enabled),
       installedAt: row.installed_at,
+      config: row.config ? JSON.parse(row.config) as Record<string, unknown> : undefined,
     }));
   }
 
@@ -2289,6 +2292,23 @@ export class CoworkStore {
       .run(enabled ? 1 : 0, pluginId);
   }
 
+  getUserPluginConfig(pluginId: string): Record<string, unknown> | null {
+    const row = this.getOne<{ config: string | null }>(
+      'SELECT config FROM user_plugins WHERE plugin_id = ?', [pluginId],
+    );
+    if (!row?.config) return null;
+    try {
+      return JSON.parse(row.config) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  }
+
+  setUserPluginConfig(pluginId: string, config: Record<string, unknown>): void {
+    this.db.prepare('UPDATE user_plugins SET config = ? WHERE plugin_id = ?')
+      .run(JSON.stringify(config), pluginId);
+  }
+
   getUserPlugin(pluginId: string): UserInstalledPlugin | undefined {
     const row = this.getOne<{
       plugin_id: string;
@@ -2298,6 +2318,7 @@ export class CoworkStore {
       version: string | null;
       enabled: number;
       installed_at: number;
+      config: string | null;
     }>('SELECT * FROM user_plugins WHERE plugin_id = ?', [pluginId]);
 
     if (!row) return undefined;
@@ -2309,6 +2330,7 @@ export class CoworkStore {
       version: row.version || undefined,
       enabled: Boolean(row.enabled),
       installedAt: row.installed_at,
+      config: row.config ? JSON.parse(row.config) as Record<string, unknown> : undefined,
     };
   }
 }

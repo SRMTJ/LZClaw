@@ -1,11 +1,11 @@
-import { app } from 'electron';
 import { spawn } from 'child_process';
+import { app } from 'electron';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+import type { CoworkStore, PluginSource,UserInstalledPlugin } from '../coworkStore';
 import { findThirdPartyExtensionsDir, listBundledOpenClawExtensionManifests } from './openclawLocalExtensions';
-import type { CoworkStore, UserInstalledPlugin, PluginSource } from '../coworkStore';
 
 export interface PluginInstallParams {
   source: PluginSource;
@@ -23,6 +23,20 @@ export interface PluginInstallResult {
   error?: string;
 }
 
+export interface PluginConfigUiHint {
+  label?: string;
+  help?: string;
+  sensitive?: boolean;
+  advanced?: boolean;
+  placeholder?: string;
+  order?: number;
+}
+
+export interface PluginConfigSchema {
+  configSchema: Record<string, unknown>;
+  uiHints: Record<string, PluginConfigUiHint>;
+}
+
 export interface PluginListItem {
   pluginId: string;
   version?: string;
@@ -30,6 +44,7 @@ export interface PluginListItem {
   source: PluginSource | 'bundled';
   enabled: boolean;
   canUninstall: boolean;
+  hasConfig: boolean;
 }
 
 interface PluginManifest {
@@ -37,6 +52,8 @@ interface PluginManifest {
   name?: string;
   description?: string;
   version?: string;
+  configSchema?: Record<string, unknown>;
+  uiHints?: Record<string, PluginConfigUiHint>;
 }
 
 function getOpenClawMjsPath(): string {
@@ -111,6 +128,59 @@ function runAsync(
   });
 }
 
+/** Humanize a camelCase/snake_case key into a label */
+function humanizeKey(key: string): string {
+  return key
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/[_-]/g, ' ')
+    .replace(/\b\w/g, c => c.toUpperCase());
+}
+
+/**
+ * Walk a JSON Schema `properties` tree and generate uiHint entries for any
+ * property that doesn't already have one.  Produces dot-separated paths
+ * (e.g. "embedding.apiKey") that SchemaForm expects.
+ */
+function generateHintsFromSchema(
+  schema: Record<string, unknown>,
+  existingHints: Record<string, PluginConfigUiHint>,
+  prefix = '',
+): Record<string, PluginConfigUiHint> {
+  const hints = { ...existingHints };
+  const properties = (schema.properties ?? schema) as Record<string, Record<string, unknown>>;
+
+  for (const [key, prop] of Object.entries(properties)) {
+    if (!prop || typeof prop !== 'object') continue;
+    const dotPath = prefix ? `${prefix}.${key}` : key;
+
+    if (prop.type === 'object' && prop.properties) {
+      // Add a group hint if missing
+      if (!hints[dotPath]) {
+        hints[dotPath] = { label: humanizeKey(key) };
+      }
+      // Recurse into nested object properties
+      const nested = generateHintsFromSchema(
+        prop as Record<string, unknown>,
+        hints,
+        dotPath,
+      );
+      Object.assign(hints, nested);
+    } else if (prop.type && prop.type !== 'object') {
+      // Leaf property — add hint if missing
+      if (!hints[dotPath]) {
+        const isSensitive = /key|secret|token|password/i.test(key);
+        hints[dotPath] = {
+          label: humanizeKey(key),
+          ...(isSensitive ? { sensitive: true } : {}),
+          ...(typeof prop.default !== 'undefined' ? { placeholder: String(prop.default) } : {}),
+        };
+      }
+    }
+  }
+
+  return hints;
+}
+
 export class PluginManager {
   private store: CoworkStore;
 
@@ -127,12 +197,17 @@ export class PluginManager {
     for (const plugin of userPlugins) {
       let description: string | undefined;
       let version = plugin.version;
+      let hasConfig = false;
 
       if (extensionsDir) {
         const pluginDir = path.join(extensionsDir, plugin.pluginId);
         const manifest = readPluginManifest(pluginDir);
         if (manifest) {
           description = manifest.description || manifest.name;
+          hasConfig = !!(manifest.configSchema
+            && typeof manifest.configSchema === 'object'
+            && (manifest.configSchema as Record<string, unknown>).properties
+            && Object.keys((manifest.configSchema as Record<string, unknown>).properties as object).length > 0);
         }
         if (!version) {
           version = readPluginVersion(pluginDir);
@@ -146,6 +221,7 @@ export class PluginManager {
         source: plugin.source,
         enabled: plugin.enabled,
         canUninstall: true,
+        hasConfig,
       });
     }
 
@@ -290,6 +366,35 @@ export class PluginManager {
 
   setPluginEnabled(pluginId: string, enabled: boolean): void {
     this.store.setUserPluginEnabled(pluginId, enabled);
+  }
+
+  getPluginConfigSchema(pluginId: string): PluginConfigSchema | null {
+    const extensionsDir = getExtensionsDir();
+    if (!extensionsDir) return null;
+
+    const pluginDir = path.join(extensionsDir, pluginId);
+    const manifest = readPluginManifest(pluginDir);
+    const schemaProps = (manifest?.configSchema as Record<string, unknown> | undefined)?.properties;
+    if (!schemaProps || Object.keys(schemaProps as object).length === 0) {
+      return null;
+    }
+
+    const uiHints = manifest.uiHints ?? {};
+    // Auto-generate uiHints from configSchema properties when not provided
+    const mergedHints = generateHintsFromSchema(manifest.configSchema, uiHints);
+
+    return {
+      configSchema: manifest.configSchema,
+      uiHints: mergedHints,
+    };
+  }
+
+  getPluginConfig(pluginId: string): Record<string, unknown> | null {
+    return this.store.getUserPluginConfig(pluginId);
+  }
+
+  savePluginConfig(pluginId: string, config: Record<string, unknown>): void {
+    this.store.setUserPluginConfig(pluginId, config);
   }
 
   private async packNpmPlugin(params: PluginInstallParams, onLog?: PluginInstallLogCallback): Promise<string> {

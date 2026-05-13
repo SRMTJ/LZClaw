@@ -1,6 +1,8 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { PlusIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { Cog6ToothIcon,PlusIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { useCallback, useEffect, useRef,useState } from 'react';
+
 import { i18nService } from '../../services/i18n';
+import PluginConfigPage from './PluginConfigPage';
 
 type PluginSource = 'npm' | 'clawhub' | 'git' | 'local';
 
@@ -11,6 +13,7 @@ interface PluginListItem {
   source: PluginSource | 'bundled';
   enabled: boolean;
   canUninstall: boolean;
+  hasConfig: boolean;
 }
 
 interface InstallForm {
@@ -29,6 +32,7 @@ export default function PluginsSettings() {
   const [installLog, setInstallLog] = useState<string>('');
   const [confirmUninstall, setConfirmUninstall] = useState<string | null>(null);
   const [uninstalling, setUninstalling] = useState(false);
+  const [configPluginId, setConfigPluginId] = useState<string | null>(null);
   const logRef = useRef<HTMLPreElement>(null);
   const [form, setForm] = useState<InstallForm>({
     source: 'npm',
@@ -123,6 +127,16 @@ export default function PluginsSettings() {
     }
   };
 
+  // Sub-view: Plugin config page
+  if (configPluginId) {
+    return (
+      <PluginConfigPage
+        pluginId={configPluginId}
+        onBack={() => setConfigPluginId(null)}
+      />
+    );
+  }
+
   return (
     <div className="space-y-6 px-1">
       {/* Header */}
@@ -184,6 +198,16 @@ export default function PluginsSettings() {
                 )}
               </div>
               <div className="flex items-center gap-2 ml-4">
+                {plugin.hasConfig && (
+                  <button
+                    type="button"
+                    onClick={() => setConfigPluginId(plugin.pluginId)}
+                    className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-surface-raised transition-colors"
+                    title={i18nService.t('pluginsConfigTitle')}
+                  >
+                    <Cog6ToothIcon className="h-4 w-4" />
+                  </button>
+                )}
                 {plugin.canUninstall && (
                   <button
                     type="button"

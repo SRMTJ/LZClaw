@@ -1167,6 +1167,13 @@ const translations: Record<LanguageType, Record<string, string>> = {
     pluginsEmptyHint: '点击右上角"安装插件"开始',
     pluginsEnabled: '已启用',
     pluginsDisabled: '已禁用',
+    pluginsConfigTitle: '插件配置',
+    pluginsConfigSave: '保存',
+    pluginsConfigSaved: '已保存',
+    pluginsConfigSaving: '保存中...',
+    pluginsConfigBack: '返回',
+    pluginsConfigNoSchema: '此插件没有可配置项',
+    pluginsConfigLoadError: '加载配置失败',
 
     // IM Bot
     imBot: 'IM 机器人',
@@ -3060,6 +3067,13 @@ const translations: Record<LanguageType, Record<string, string>> = {
     pluginsEmptyHint: 'Click "Install Plugin" to get started',
     pluginsEnabled: 'Enabled',
     pluginsDisabled: 'Disabled',
+    pluginsConfigTitle: 'Plugin Settings',
+    pluginsConfigSave: 'Save',
+    pluginsConfigSaved: 'Saved',
+    pluginsConfigSaving: 'Saving...',
+    pluginsConfigBack: 'Back',
+    pluginsConfigNoSchema: 'This plugin has no configurable settings',
+    pluginsConfigLoadError: 'Failed to load config',
 
     // IM Bot
     imBot: 'IM Bot',

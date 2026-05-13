@@ -431,6 +431,10 @@ contextBridge.exposeInMainWorld('electron', {
     uninstall: (pluginId: string) => ipcRenderer.invoke('plugins:uninstall', pluginId),
     setEnabled: (pluginId: string, enabled: boolean) =>
       ipcRenderer.invoke('plugins:set-enabled', pluginId, enabled),
+    getConfigSchema: (pluginId: string) =>
+      ipcRenderer.invoke('plugins:get-config-schema', pluginId),
+    saveConfig: (pluginId: string, config: Record<string, unknown>) =>
+      ipcRenderer.invoke('plugins:save-config', pluginId, config),
     onInstallLog: (callback: (line: string) => void) => {
       const handler = (_event: any, line: string) => callback(line);
       ipcRenderer.on('plugins:install-log', handler);
