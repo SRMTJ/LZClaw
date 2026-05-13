@@ -31,5 +31,6 @@ export const buildLzServiceEndpoints = (
   loginUrl: openApiUrl(baseUrl, environment, 'login-url'),
   updateUrl: openApiUrl(baseUrl, environment, 'update'),
   manualUpdateUrl: openApiUrl(baseUrl, environment, 'update-manual'),
+  skillStoreUrl: openApiUrl(baseUrl, environment, 'skill-store'),
+  agentTemplateUrl: openApiUrl(baseUrl, environment, 'agent-template'),
 });
-

@@ -62,9 +62,11 @@ export const getFallbackDownloadUrl = (): string => (
 );
 
 export const getSkillStoreUrl = (): string => (
-  isTestMode()
-    ? 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/test/skill-store'
-    : 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/prod/skill-store'
+  getLzServiceEndpoints().skillStoreUrl
+);
+
+export const getAgentTemplateUrl = (): string => (
+  getLzServiceEndpoints().agentTemplateUrl
 );
 
 export const getLoginUrlEndpoint = (): string => (

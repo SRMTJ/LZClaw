@@ -854,6 +854,7 @@ interface IElectronAPI {
   };
   auth: {
     login: (loginUrl?: string) => Promise<{ success: boolean; error?: string }>;
+    getPendingCallback: () => Promise<string | null>;
     exchange: (
       code: string,
     ) => Promise<{ success: boolean; user?: any; quota?: any; error?: string }>;
@@ -883,6 +884,7 @@ interface IElectronAPI {
   };
   auth: {
     login: (loginUrl?: string) => Promise<{ success: boolean; error?: string }>;
+    getPendingCallback: () => Promise<string | null>;
     exchange: (
       code: string,
     ) => Promise<{

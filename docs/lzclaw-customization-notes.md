@@ -1,6 +1,6 @@
 # LZClaw 定制修改说明
 
-更新时间：2026-05-11
+更新时间：2026-05-12
 
 本文记录 `LZClaw/src` 内针对 LZClaw 分支做过的定制修改，目的是让后续合并上游项目代码时，可以快速判断哪些改动属于本项目保留项。
 
@@ -36,6 +36,8 @@
 - 登录地址：`/openapi/get/luna/hardware/lobsterai/{test|prod}/login-url`
 - 自动更新：`/openapi/get/luna/hardware/lobsterai/{test|prod}/update`
 - 手动更新：`/openapi/get/luna/hardware/lobsterai/{test|prod}/update-manual`
+- 技能市场：`/openapi/get/luna/hardware/lobsterai/{test|prod}/skill-store`
+- Agent 模板：`/openapi/get/luna/hardware/lobsterai/{test|prod}/agent-template`
 - 用户接口：`/api/auth/*`、`/api/user/*`、`/api/models/available`
 
 相关文件：
@@ -44,6 +46,133 @@
 - `src/main/main.ts`
 - `src/renderer/services/auth.ts`
 - `src/renderer/services/endpoints.ts`
+
+### 技能市场接口
+
+LZService 已新增静态 JSON 管理的技能市场接口，响应格式兼容原 `api-overmind` 的 `skill-store`。配置按环境拆分，避免 test/prod 技能市场互相影响。
+
+LZService 配置文件：
+
+- `D:/SRMTJ/LZClaw/LZService/public/skill_store_test.json`
+- `D:/SRMTJ/LZClaw/LZService/public/skill_store_prod.json`
+
+LZService 相关文件：
+
+- `D:/SRMTJ/LZClaw/LZService/app/http/controllers/skill_store_controller.go`
+- `D:/SRMTJ/LZClaw/LZService/routes/web.go`
+- `D:/SRMTJ/LZClaw/LZService/tests/feature/skill_store_test.go`
+- `D:/SRMTJ/LZClaw/LZService/app/http/controllers/skill_store_controller_test.go`
+
+接口路径：
+
+- `/openapi/get/luna/hardware/lobsterai/test/skill-store`
+- `/openapi/get/luna/hardware/lobsterai/prod/skill-store`
+
+配置覆盖：
+
+- 可通过 `LZ_SERVICE_SKILL_STORE_TEST_CONFIG_PATH` 指定 test 环境替代 JSON 文件。
+- 可通过 `LZ_SERVICE_SKILL_STORE_PROD_CONFIG_PATH` 指定 prod 环境替代 JSON 文件。
+
+LZClaw 侧已将技能市场地址纳入 `src/shared/lzServiceConfig.ts`，并让主进程 `skills:fetchMarketplace` 使用 Electron `session.defaultSession.fetch` 请求接口，因此支持本地 `http://127.0.0.1:5000`。
+
+技能接口与安装日志：
+
+- LZService `SkillStoreAPI` 会记录技能市场配置加载路径、请求环境，以及返回的 `localSkill`、`marketTags`、`marketplace` 数量。
+- LZClaw 主进程 `skills:fetchMarketplace` 会记录技能市场请求 URL、HTTP 状态，以及解析出的本地技能、标签、市场技能数量。
+- LZClaw `SkillManager` 会记录技能安装来源、发现的候选技能目录、直接安装结果、待确认安装处理、升级请求、升级安全扫描摘要和失败原因。
+- 这些日志用于排查 LZService 技能市场接口调用、本地技能包安装、市场技能升级的完整链路。
+
+合并注意：
+
+- 不要把技能市场 URL 写回 `api-overmind.youdao.com`。
+- 如需增删市场技能，优先按环境维护 LZService 的 `public/skill_store_test.json` 或 `public/skill_store_prod.json`。
+
+### Agent 模板接口
+
+LZService 已新增静态 JSON 管理的 Agent 模板接口，LZClaw 的“预设 Agent”和“使用模板”入口会优先从该接口读取模板。
+
+LZService 配置文件：
+
+- `D:/SRMTJ/LZClaw/LZService/public/agent_templates_test.json`
+- `D:/SRMTJ/LZClaw/LZService/public/agent_templates_prod.json`
+
+LZService 相关文件：
+
+- `D:/SRMTJ/LZClaw/LZService/app/http/controllers/agent_template_controller.go`
+- `D:/SRMTJ/LZClaw/LZService/routes/web.go`
+- `D:/SRMTJ/LZClaw/LZService/tests/feature/agent_template_test.go`
+- `D:/SRMTJ/LZClaw/LZService/app/http/controllers/agent_template_controller_test.go`
+
+接口路径：
+
+- `/openapi/get/luna/hardware/lobsterai/test/agent-template`
+- `/openapi/get/luna/hardware/lobsterai/prod/agent-template`
+
+配置覆盖：
+
+- 可通过 `LZ_SERVICE_AGENT_TEMPLATES_TEST_CONFIG_PATH` 指定 test 环境替代 JSON 文件。
+- 可通过 `LZ_SERVICE_AGENT_TEMPLATES_PROD_CONFIG_PATH` 指定 prod 环境替代 JSON 文件。
+
+响应格式：
+
+```json
+{
+  "data": {
+    "value": {
+      "templates": []
+    }
+  }
+}
+```
+
+LZClaw 侧已将 Agent 模板地址纳入 `src/shared/lzServiceConfig.ts`，主进程通过 Electron `session.defaultSession.fetch` 请求接口并校验模板字段。接口不可用或返回为空时，会回退到本地 `src/main/presetAgents.ts` 的内置模板，避免 LZService 未启动时 Agent 页面不可用。
+
+相关文件：
+
+- `src/shared/lzServiceConfig.ts`
+- `src/main/libs/endpoints.ts`
+- `src/renderer/services/endpoints.ts`
+- `src/main/main.ts`
+- `src/main/agentManager.ts`
+- `src/main/presetAgents.ts`
+
+合并注意：
+
+- 不要重新把 Agent 模板仅固定在 `src/main/presetAgents.ts`。该文件现在主要作为接口失败时的兜底和模板字段规范。
+- 如需增删模板，优先按环境维护 LZService 的 `public/agent_templates_test.json` 或 `public/agent_templates_prod.json`。
+
+### LZService 管理后台
+
+LZService 已新增 Next.js 静态管理后台，用于在线管理技能市场、Agent 模板和更新配置。后台构建产物由 Goravel 托管在 `/admin/`，不会改变 LZClaw 调用的现有接口路径。
+
+LZService 相关文件：
+
+- `D:/SRMTJ/LZClaw/LZService/web`
+- `D:/SRMTJ/LZClaw/LZService/app/http/controllers/admin_controller.go`
+- `D:/SRMTJ/LZClaw/LZService/database/migrations/20260512000001_create_users_table.go`
+- `D:/SRMTJ/LZClaw/LZService/docs/admin.md`
+
+后台接口：
+
+- `/api/admin/auth/login`
+- `/api/admin/auth/logout`
+- `/api/admin/auth/me`
+- `/api/admin/status`
+- `/api/admin/config/skill-store/{test|prod}`
+- `/api/admin/config/agent-template/{test|prod}`
+- `/api/admin/config/update/{test|prod}`
+
+数据库说明：
+
+- `users` 表兼容 SQLite 和 PostgreSQL。
+- `role` 使用字符串：`admin`、`user`。
+- `status` 使用整数，`1` 表示启用。
+- 后台只允许 `admin` 用户登录；普通用户账号不进入后台。
+
+合并注意：
+
+- 后台只管理 LZService 配置文件，LZClaw 仍然通过公开的 `skill-store`、`agent-template`、`update` 接口读取。
+- 如需首次创建管理员账号，可使用 `LZ_SERVICE_ADMIN_USERNAME` 和 `LZ_SERVICE_ADMIN_PASSWORD` 在服务启动时写入数据库。
 
 ## LZService 登录后可用模型
 
@@ -214,7 +343,16 @@ export const LZ_VISIBLE_IM_PLATFORMS = [
 - `npx eslint src/main/appConstants.ts src/main/i18n.ts src/main/libs/agentEngine/openclawRuntimeAdapter.ts src/main/libs/openaiCodexAuth.ts src/main/libs/openclawMemoryFile.ts src/main/logger.ts src/main/main.ts src/renderer/components/Settings.tsx src/renderer/components/WelcomeDialog.tsx src/renderer/components/cowork/CoworkSessionDetail.tsx src/renderer/constants/app.ts src/renderer/services/i18n.ts`
 - `node -e "JSON.parse(require('fs').readFileSync('electron-builder.json','utf8')); JSON.parse(require('fs').readFileSync('package.json','utf8')); JSON.parse(require('fs').readFileSync('package-lock.json','utf8')); console.log('json ok')"`
 - `node -e "JSON.parse(require('fs').readFileSync('public/auth.mock.json','utf8')); console.log('auth mock json ok')"`（在 `D:/SRMTJ/LZClaw/LZService`）
+- `node -e "for (const f of ['public/skill_store_test.json','public/skill_store_prod.json']) JSON.parse(require('fs').readFileSync(f,'utf8')); console.log('skill store json ok')"`（在 `D:/SRMTJ/LZClaw/LZService`）
+- `node -e "for (const f of ['public/agent_templates_test.json','public/agent_templates_prod.json']) JSON.parse(require('fs').readFileSync(f,'utf8')); console.log('agent template json ok')"`（在 `D:/SRMTJ/LZClaw/LZService`）
 - `go test ./tests/feature -run TestAuthTestSuite -count=1`（在 `D:/SRMTJ/LZClaw/LZService`）
+- `go test ./app/http/controllers -run TestLoadSkillStoreConfigFromEnvPath -count=1`（在 `D:/SRMTJ/LZClaw/LZService`）
+- `go test ./tests/feature -run TestSkillStoreTestSuite -count=1`（在 `D:/SRMTJ/LZClaw/LZService`）
+- `go test ./app/http/controllers -run TestLoadAgentTemplateConfigFromEnvPath -count=1`（在 `D:/SRMTJ/LZClaw/LZService`）
+- `go test ./tests/feature -run TestAgentTemplateTestSuite -count=1`（在 `D:/SRMTJ/LZClaw/LZService`）
+- `npx eslint src/main/main.ts src/main/skillManager.ts`
+- `npx eslint src/shared/lzServiceConfig.ts src/shared/lzServiceConfig.test.ts src/main/libs/endpoints.ts src/renderer/services/endpoints.ts src/main/presetAgents.ts src/main/agentManager.ts src/main/main.ts`
+- `npx vitest run src/shared/lzServiceConfig.test.ts`
 - `npx tsc --noEmit`
 - `npx tsc --project electron-tsconfig.json --noEmit`
 

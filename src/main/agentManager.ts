@@ -48,21 +48,21 @@ export class AgentManager {
 
   // --- Preset agents ---
 
-  getPresetAgents(): PresetAgent[] {
+  getPresetAgents(presets: PresetAgent[] = PRESET_AGENTS): PresetAgent[] {
     const existingAgents = this.store.listAgents();
     const existingPresetIds = new Set(
       existingAgents.filter(a => a.source === 'preset').map(a => a.presetId)
     );
     // Only return presets that haven't been added yet
-    return PRESET_AGENTS.filter(p => !existingPresetIds.has(p.id));
+    return presets.filter(p => !existingPresetIds.has(p.id));
   }
 
-  getAllPresetAgents(): PresetAgent[] {
-    return PRESET_AGENTS;
+  getAllPresetAgents(presets: PresetAgent[] = PRESET_AGENTS): PresetAgent[] {
+    return presets;
   }
 
-  addPresetAgent(presetId: string, defaultModel?: string): Agent | null {
-    const preset = PRESET_AGENTS.find(p => p.id === presetId);
+  addPresetAgent(presetId: string, defaultModel?: string, presets: PresetAgent[] = PRESET_AGENTS): Agent | null {
+    const preset = presets.find(p => p.id === presetId);
     if (!preset) return null;
 
     // Check if already installed

@@ -52,7 +52,7 @@ import { saveCoworkApiConfig } from './libs/coworkConfigStore';
 import { getCoworkLogPath } from './libs/coworkLogger';
 import { registerProxyTokenRefresher, startCoworkOpenAICompatProxy, stopCoworkOpenAICompatProxy } from './libs/coworkOpenAICompatProxy';
 import { generateSessionTitle, probeCoworkModelReadiness } from './libs/coworkUtil';
-import { getLoginUrlEndpoint, getServerApiBaseUrl, getSkillStoreUrl, refreshEndpointsTestMode } from './libs/endpoints';
+import { getAgentTemplateUrl, getLoginUrlEndpoint, getServerApiBaseUrl, getSkillStoreUrl, refreshEndpointsTestMode } from './libs/endpoints';
 import { mergeEnterpriseOpenclawConfig, resolveEnterpriseConfigPath, syncEnterpriseConfig } from './libs/enterpriseConfigSync';
 import { exportLogsZip } from './libs/logExport';
 import { McpBridgeServer } from './libs/mcpBridgeServer';
@@ -96,6 +96,7 @@ import { McpStore } from './mcpStore';
 import { OpenClawSessionIpc } from './openclawSession/constants';
 import { OpenClawSessionPolicyIpc } from './openclawSessionPolicy/constants';
 import { loadOpenClawSessionPolicyConfig, saveOpenClawSessionPolicyConfig } from './openclawSessionPolicy/store';
+import { normalizePresetAgents, PRESET_AGENTS, type PresetAgent } from './presetAgents';
 import { SkillManager } from './skillManager';
 import { getSkillServiceManager } from './skillServices';
 import { SqliteStore } from './sqliteStore';
@@ -316,6 +317,45 @@ const migrateAgentModelRefs = (): number => {
   }
 
   return changed;
+};
+
+const fetchAgentTemplatesFromLzService = async (): Promise<PresetAgent[]> => {
+  const url = getAgentTemplateUrl();
+  console.log(`[AgentTemplate] Fetching agent templates from ${url}`);
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => abortController.abort(), 10000);
+  let response: Response;
+  try {
+    response = await session.defaultSession.fetch(url, {
+      method: 'GET',
+      signal: abortController.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  console.log(`[AgentTemplate] Agent template response status: ${response.status}`);
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status} ${response.statusText}`);
+  }
+
+  const body = await response.json();
+  const templates = normalizePresetAgents(body?.data?.value?.templates);
+  if (templates.length === 0) {
+    throw new Error('Agent template response did not contain any valid templates');
+  }
+
+  console.log(`[AgentTemplate] Fetched ${templates.length} agent template(s)`);
+  return templates;
+};
+
+const getAgentTemplatesWithFallback = async (): Promise<PresetAgent[]> => {
+  try {
+    return await fetchAgentTemplatesFromLzService();
+  } catch (error) {
+    console.warn('[AgentTemplate] Failed to fetch remote agent templates, using local fallback:', error);
+    return PRESET_AGENTS;
+  }
 };
 
 const sanitizeAttachmentFileName = (value?: string): string => {
@@ -2672,27 +2712,39 @@ if (!gotTheLock) {
 
   ipcMain.handle('skills:fetchMarketplace', async () => {
     const url = getSkillStoreUrl();
-    console.log(`[SkillMarketplace] fetching from: ${url}`);
+    console.log(`[SkillMarketplace] Fetching skill marketplace from ${url}`);
     try {
-      const https = await import('https');
-      const data = await new Promise<string>((resolve, reject) => {
-        const req = https.get(url, { timeout: 10000 }, (res) => {
-          if (res.statusCode !== 200) {
-            reject(new Error(`HTTP ${res.statusCode}`));
-            res.resume();
-            return;
-          }
-          let body = '';
-          res.setEncoding('utf8');
-          res.on('data', (chunk: string) => { body += chunk; });
-          res.on('end', () => resolve(body));
-          res.on('error', reject);
+      const abortController = new AbortController();
+      const timeout = setTimeout(() => abortController.abort(), 10000);
+      let response: Response;
+      try {
+        response = await session.defaultSession.fetch(url, {
+          method: 'GET',
+          signal: abortController.signal,
         });
-        req.on('error', reject);
-        req.on('timeout', () => { req.destroy(); reject(new Error('Request timeout')); });
-      });
+      } finally {
+        clearTimeout(timeout);
+      }
+      console.log(`[SkillMarketplace] Skill marketplace response status: ${response.status}`);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} ${response.statusText}`);
+      }
+      const data = await response.text();
+      try {
+        const parsed = JSON.parse(data);
+        const value = parsed?.data?.value;
+        const localSkillCount = Array.isArray(value?.localSkill) ? value.localSkill.length : 0;
+        const marketTagCount = Array.isArray(value?.marketTags) ? value.marketTags.length : 0;
+        const marketplaceCount = Array.isArray(value?.marketplace) ? value.marketplace.length : 0;
+        console.log(
+          `[SkillMarketplace] Fetched ${localSkillCount} local skills, ${marketTagCount} tags, and ${marketplaceCount} marketplace skills`
+        );
+      } catch (parseError) {
+        console.warn('[SkillMarketplace] Fetched marketplace response but failed to parse summary:', parseError);
+      }
       return { success: true, data };
     } catch (error) {
+      console.warn('[SkillMarketplace] Failed to fetch skill marketplace:', error);
       return { success: false, error: error instanceof Error ? error.message : 'Failed to fetch skill marketplace' };
     }
   });
@@ -3331,7 +3383,8 @@ if (!gotTheLock) {
 
   ipcMain.handle(AgentIpcChannel.Presets, async () => {
     try {
-      const presets = getAgentManager().getPresetAgents();
+      const templates = await getAgentTemplatesWithFallback();
+      const presets = getAgentManager().getPresetAgents(templates);
       return { success: true, presets };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to get presets' };
@@ -3340,7 +3393,8 @@ if (!gotTheLock) {
 
   ipcMain.handle(AgentIpcChannel.PresetTemplates, async () => {
     try {
-      const presets = getAgentManager().getAllPresetAgents();
+      const templates = await getAgentTemplatesWithFallback();
+      const presets = getAgentManager().getAllPresetAgents(templates);
       return { success: true, presets };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Failed to get preset templates' };
@@ -3349,7 +3403,8 @@ if (!gotTheLock) {
 
   ipcMain.handle(AgentIpcChannel.AddPreset, async (_event, presetId: string) => {
     try {
-      const agent = getAgentManager().addPresetAgent(presetId, resolveDefaultAgentModelRef());
+      const templates = await getAgentTemplatesWithFallback();
+      const agent = getAgentManager().addPresetAgent(presetId, resolveDefaultAgentModelRef(), templates);
       syncOpenClawConfig({ reason: 'agent-preset-added' }).catch((err) => {
         console.error('[OpenClaw] config sync after agent-preset-added failed:', err);
       });

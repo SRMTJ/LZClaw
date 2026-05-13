@@ -1,4 +1,4 @@
-import { AgentAvatarSvg, encodeAgentAvatarIcon } from '../shared/agent/avatar';
+import { AgentAvatarSvg, encodeAgentAvatarIcon, normalizeAgentAvatarIcon } from '../shared/agent/avatar';
 import type { CreateAgentRequest } from './coworkStore';
 import { getLanguage } from './i18n';
 
@@ -353,6 +353,55 @@ export const PRESET_AGENTS: PresetAgent[] = [
     skillIds: ['web-search'],
   },
 ];
+
+const getStringField = (record: Record<string, unknown>, key: string): string => {
+  const value = record[key];
+  return typeof value === 'string' ? value.trim() : '';
+};
+
+const getStringArrayField = (record: Record<string, unknown>, key: string): string[] => {
+  const value = record[key];
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === 'string').map(item => item.trim()).filter(Boolean);
+};
+
+export const normalizePresetAgent = (value: unknown): PresetAgent | null => {
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Record<string, unknown>;
+  const id = getStringField(record, 'id');
+  const name = getStringField(record, 'name');
+  const description = getStringField(record, 'description');
+  const systemPrompt = getStringField(record, 'systemPrompt');
+  if (!id || !name || !description || !systemPrompt) {
+    return null;
+  }
+
+  return {
+    id,
+    name,
+    nameEn: getStringField(record, 'nameEn'),
+    icon: normalizeAgentAvatarIcon(getStringField(record, 'icon')),
+    description,
+    descriptionEn: getStringField(record, 'descriptionEn'),
+    systemPrompt,
+    systemPromptEn: getStringField(record, 'systemPromptEn'),
+    skillIds: getStringArrayField(record, 'skillIds'),
+  };
+};
+
+export const normalizePresetAgents = (value: unknown): PresetAgent[] => {
+  if (!Array.isArray(value)) return [];
+
+  const seen = new Set<string>();
+  const presets: PresetAgent[] = [];
+  for (const item of value) {
+    const preset = normalizePresetAgent(item);
+    if (!preset || seen.has(preset.id)) continue;
+    seen.add(preset.id);
+    presets.push(preset);
+  }
+  return presets;
+};
 
 /**
  * Convert a preset agent template to a CreateAgentRequest.

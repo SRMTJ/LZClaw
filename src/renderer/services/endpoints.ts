@@ -30,9 +30,10 @@ export const getFallbackDownloadUrl = () => isTestMode()
   : 'https://lobsterai.youdao.com/#/download-list';
 
 // Skill 商店
-export const getSkillStoreUrl = () => isTestMode()
-  ? 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/test/skill-store'
-  : 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/prod/skill-store';
+export const getSkillStoreUrl = () => getLzServiceEndpoints().skillStoreUrl;
+
+// Agent 模板
+export const getAgentTemplateUrl = () => getLzServiceEndpoints().agentTemplateUrl;
 
 // 登录地址
 export const getLoginOvermindUrl = () => getLzServiceEndpoints().loginUrl;

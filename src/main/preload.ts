@@ -575,6 +575,7 @@ contextBridge.exposeInMainWorld('electron', {
   },
   auth: {
     login: (loginUrl?: string) => ipcRenderer.invoke('auth:login', { loginUrl }),
+    getPendingCallback: () => ipcRenderer.invoke('auth:getPendingCallback') as Promise<string | null>,
     exchange: (code: string) => ipcRenderer.invoke('auth:exchange', { code }),
     getUser: () => ipcRenderer.invoke('auth:getUser'),
     getQuota: () => ipcRenderer.invoke('auth:getQuota'),

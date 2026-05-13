@@ -1853,6 +1853,11 @@ export class SkillManager {
         cleanupPath = null;
         return { success: false, error: t('skillErrNoSkillMd') };
       }
+      console.log(
+        '[SkillManager] Discovered %d installable skill dir(s): %s',
+        skillDirs.length,
+        skillDirs.map(dir => path.basename(dir)).join(', '),
+      );
 
       // Security scan before installation
       let auditReport: SkillSecurityReport | null = null;
@@ -1900,6 +1905,7 @@ export class SkillManager {
 
       // Safe or scan failed — install directly
       console.log(`[SkillManager] Skill is safe (or scan failed), installing directly`);
+      const installedIds: string[] = [];
       for (const skillDir of skillDirs) {
         const folderName = normalizeFolderName(path.basename(skillDir));
         let targetDir = resolveWithin(root, folderName);
@@ -1915,6 +1921,7 @@ export class SkillManager {
         } else {
           console.warn('[skills] install normalization failed for "%s" at %s: %s', folderName, targetDir, normalizeResult.detail || 'unknown');
         }
+        installedIds.push(path.basename(targetDir));
       }
 
       cleanupPathSafely(cleanupPath);
@@ -1922,9 +1929,15 @@ export class SkillManager {
 
       this.startWatching();
       this.notifySkillsChanged();
+      console.log(
+        '[SkillManager] Installed %d skill(s): %s',
+        installedIds.length,
+        installedIds.join(', '),
+      );
       return { success: true, skills: this.listSkills() };
     } catch (error) {
       cleanupPathSafely(cleanupPath);
+      console.error('[SkillManager] Failed to install skill from source:', error);
       return { success: false, error: error instanceof Error ? error.message : 'Failed to download skill' };
     }
   }
@@ -1938,6 +1951,7 @@ export class SkillManager {
   }> {
     // Prevent concurrent upgrades of the same skill
     if (this.upgradingSkillIds.has(skillId)) {
+      console.warn('[SkillManager] Skipped upgrade for "%s" because another upgrade is already running', skillId);
       return { success: false, error: `Skill "${skillId}" is already being upgraded` };
     }
 
@@ -1945,14 +1959,17 @@ export class SkillManager {
     const installedSkills = this.listSkills();
     const installed = installedSkills.find(s => s.id === skillId);
     if (!installed) {
+      console.warn('[SkillManager] Skipped upgrade for "%s" because it is not installed', skillId);
       return { success: false, error: `Skill "${skillId}" is not installed` };
     }
 
     const existingSkillDir = path.dirname(installed.skillPath);
     if (!fs.existsSync(existingSkillDir)) {
+      console.warn('[SkillManager] Skipped upgrade for "%s" because its directory is missing', skillId);
       return { success: false, error: `Skill directory not found: ${existingSkillDir}` };
     }
 
+    console.log('[SkillManager] Requested upgrade for "%s" from %s', skillId, downloadUrl);
     this.upgradingSkillIds.add(skillId);
     try {
       return await this.performUpgradeDownload(skillId, downloadUrl, existingSkillDir);
@@ -1967,9 +1984,10 @@ export class SkillManager {
     error?: string;
     auditReport?: SkillSecurityReport;
     pendingInstallId?: string;
-  }> {    let cleanupPath: string | null = null;
+  }> {
+    let cleanupPath: string | null = null;
     try {
-      console.log(`[SkillManager] starting upgrade for skill "${skillId}"`);
+      console.log(`[SkillManager] Starting upgrade for skill "${skillId}"`);
       const root = this.ensureSkillsRoot();
 
       // Download new version (reuse downloadSkill's download logic)
@@ -2027,6 +2045,11 @@ export class SkillManager {
         cleanupPathSafely(cleanupPath);
         return { success: false, error: t('skillErrNoSkillMd') };
       }
+      console.log(
+        '[SkillManager] Discovered %d upgrade candidate skill dir(s) for "%s"',
+        skillDirs.length,
+        skillId,
+      );
 
       // Find the matching skill dir for this ID
       const matchingSkillDir = skillDirs.find(d => normalizeFolderName(path.basename(d)) === skillId) || skillDirs[0];
@@ -2036,6 +2059,15 @@ export class SkillManager {
       try {
         const reports = await scanMultipleSkillDirs([matchingSkillDir]);
         auditReport = mergeReports(reports);
+        if (auditReport) {
+          console.log(
+            '[SkillManager] Completed upgrade security scan for "%s": risk=%s score=%d findings=%d',
+            skillId,
+            auditReport.riskLevel,
+            auditReport.riskScore,
+            auditReport.findings.length,
+          );
+        }
       } catch (err) {
         console.warn('[SkillManager] Security scan failed (non-blocking):', err);
       }
@@ -2075,9 +2107,11 @@ export class SkillManager {
 
       this.startWatching();
       this.notifySkillsChanged();
+      console.log('[SkillManager] Upgraded "%s" successfully', skillId);
       return { success: true, skills: this.listSkills() };
     } catch (error) {
       cleanupPathSafely(cleanupPath);
+      console.error('[SkillManager] Failed to upgrade "%s":', skillId, error);
       return { success: false, error: error instanceof Error ? error.message : 'Failed to upgrade skill' };
     }
   }
@@ -2129,7 +2163,7 @@ export class SkillManager {
     pendingId: string,
     action: SecurityReportAction
   ): { success: boolean; skills?: SkillRecord[]; error?: string } {
-    console.log(`[SkillManager] confirmPendingInstall: id=${pendingId}, action=${action}`);
+    console.log(`[SkillManager] Confirming pending skill install ${pendingId} with action "${action}"`);
     const pending = this.pendingInstalls.get(pendingId);
     if (!pending) {
       console.warn(`[SkillManager] Pending install not found: ${pendingId}`);
@@ -2141,6 +2175,7 @@ export class SkillManager {
 
     if (action === 'cancel') {
       cleanupPathSafely(pending.cleanupPath);
+      console.log('[SkillManager] Cancelled pending skill install %s', pendingId);
       return { success: true };
     }
 
@@ -2189,6 +2224,11 @@ export class SkillManager {
 
     this.startWatching();
     this.notifySkillsChanged();
+    console.log(
+      '[SkillManager] Completed pending install for %d skill(s): %s',
+      installedIds.length,
+      installedIds.join(', '),
+    );
     return { success: true, skills: this.listSkills() };
   }
 

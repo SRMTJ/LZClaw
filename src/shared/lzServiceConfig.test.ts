@@ -31,6 +31,12 @@ test('buildLzServiceEndpoints builds test login and update routes', () => {
   expect(endpoints.manualUpdateUrl).toBe(
     'http://127.0.0.1:5000/openapi/get/luna/hardware/lobsterai/test/update-manual',
   );
+  expect(endpoints.skillStoreUrl).toBe(
+    'http://127.0.0.1:5000/openapi/get/luna/hardware/lobsterai/test/skill-store',
+  );
+  expect(endpoints.agentTemplateUrl).toBe(
+    'http://127.0.0.1:5000/openapi/get/luna/hardware/lobsterai/test/agent-template',
+  );
 });
 
 test('buildLzServiceEndpoints builds prod login and update routes', () => {
@@ -48,5 +54,10 @@ test('buildLzServiceEndpoints builds prod login and update routes', () => {
   expect(endpoints.manualUpdateUrl).toBe(
     'http://service.local/openapi/get/luna/hardware/lobsterai/prod/update-manual',
   );
+  expect(endpoints.skillStoreUrl).toBe(
+    'http://service.local/openapi/get/luna/hardware/lobsterai/prod/skill-store',
+  );
+  expect(endpoints.agentTemplateUrl).toBe(
+    'http://service.local/openapi/get/luna/hardware/lobsterai/prod/agent-template',
+  );
 });
-

@@ -112,13 +112,13 @@ const UserMenu: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   };
 
   const handleSubscribe = async () => {
-    const { getPortalPricingUrl } = await import('../services/endpoints');
-    await window.electron.shell.openExternal(getPortalPricingUrl());
+    await authService.login();
+    onClose();
   };
 
   const handleLearnMore = async () => {
-    const { getPortalProfileUrl } = await import('../services/endpoints');
-    await window.electron.shell.openExternal(getPortalProfileUrl());
+    await authService.login();
+    onClose();
   };
 
   const phoneSuffix = user?.phone ? user.phone.slice(-4) : '';

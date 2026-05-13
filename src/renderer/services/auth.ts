@@ -16,6 +16,21 @@ class AuthService {
     // Clean up any existing listeners to prevent stacking on repeated init()
     this.destroy();
 
+    // Register callback listener first to avoid missing deep-link events during init.
+    this.unsubCallback = window.electron.auth.onCallback(async ({ code }) => {
+      await this.handleCallback(code);
+    });
+
+    // Consume a buffered deep-link callback code, if one arrived before listener setup.
+    try {
+      const pendingCode = await window.electron.auth.getPendingCallback();
+      if (pendingCode) {
+        await this.handleCallback(pendingCode);
+      }
+    } catch {
+      // ignore
+    }
+
     store.dispatch(setAuthLoading(true));
     try {
       const result = await window.electron.auth.getUser();
@@ -28,11 +43,6 @@ class AuthService {
     } catch {
       store.dispatch(setLoggedOut());
     }
-
-    // Listen for OAuth callback from protocol handler
-    this.unsubCallback = window.electron.auth.onCallback(async ({ code }) => {
-      await this.handleCallback(code);
-    });
 
     // Listen for quota changes (e.g. after cowork session using server model)
     this.unsubQuotaChanged = window.electron.auth.onQuotaChanged(() => {
@@ -69,6 +79,8 @@ class AuthService {
       if (result.success) {
         store.dispatch(setLoggedIn({ user: result.user, quota: result.quota }));
         await this.loadServerModels();
+      } else {
+        console.error('Auth callback exchange failed:', result.error);
       }
     } catch (e) {
       console.error('Auth callback failed:', e);
