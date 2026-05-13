@@ -6,7 +6,7 @@ import os from 'os';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 
-import { normalizeAgentAvatarIcon } from '../shared/agent/avatar';
+import { AgentId, normalizeAgentAvatarIcon } from '../shared/agent';
 import { COWORK_MESSAGE_PAGE_SIZE, COWORK_SESSION_PAGE_SIZE } from '../shared/cowork/constants';
 
 
@@ -47,6 +47,11 @@ const DEFAULT_EMBEDDING_LOCAL_MODEL_PATH = '';
 const DEFAULT_EMBEDDING_VECTOR_WEIGHT = 0.7;
 const DEFAULT_EMBEDDING_REMOTE_BASE_URL = '';
 const DEFAULT_EMBEDDING_REMOTE_API_KEY = '';
+
+const DEFAULT_DREAMING_ENABLED = false;
+const DEFAULT_DREAMING_FREQUENCY = '0 3 * * *';
+const DEFAULT_DREAMING_MODEL = '';
+const DEFAULT_DREAMING_TIMEZONE = '';
 
 // Regexes and helper inlined from the removed coworkMemoryExtractor module.
 // Used only by shouldAutoDeleteMemoryText() during startup memory cleanup.
@@ -498,6 +503,10 @@ export interface CoworkConfig {
   embeddingVectorWeight: number;
   embeddingRemoteBaseUrl: string;
   embeddingRemoteApiKey: string;
+  dreamingEnabled: boolean;
+  dreamingFrequency: string;
+  dreamingModel: string;
+  dreamingTimezone: string;
 }
 
 export type CoworkConfigUpdate = Partial<Pick<
@@ -518,6 +527,10 @@ CoworkConfig,
   | 'embeddingVectorWeight'
   | 'embeddingRemoteBaseUrl'
   | 'embeddingRemoteApiKey'
+  | 'dreamingEnabled'
+  | 'dreamingFrequency'
+  | 'dreamingModel'
+  | 'dreamingTimezone'
 >>;
 
 
@@ -765,19 +778,50 @@ export class CoworkStore {
       .run(...values);
   }
 
+  listSessionIdsByAgent(agentId: string): string[] {
+    const rows = this.getAll<{ id: string }>(
+      'SELECT id FROM cowork_sessions WHERE agent_id = ?',
+      [agentId],
+    );
+    return rows.map(row => row.id);
+  }
+
+  private deleteSessionRows(ids: string[]): void {
+    if (ids.length === 0) return;
+    const placeholders = ids.map(() => '?').join(',');
+    this.db.prepare(`DELETE FROM cowork_messages WHERE session_id IN (${placeholders})`).run(...ids);
+    this.db.prepare(`DELETE FROM cowork_sessions WHERE id IN (${placeholders})`).run(...ids);
+  }
+
+  private deleteSessionsForAgent(agentId: string): string[] {
+    const sessionIds = this.listSessionIdsByAgent(agentId);
+    for (const sessionId of sessionIds) {
+      this.markMemorySourcesInactiveBySession(sessionId);
+    }
+    this.deleteSessionRows(sessionIds);
+    return sessionIds;
+  }
+
   deleteSession(id: string): void {
-    this.markMemorySourcesInactiveBySession(id);
-    this.db.prepare('DELETE FROM cowork_sessions WHERE id = ?').run(id);
+    const deleteSession = this.db.transaction((sessionId: string) => {
+      this.markMemorySourcesInactiveBySession(sessionId);
+      this.deleteSessionRows([sessionId]);
+    });
+    deleteSession(id);
     this.markOrphanImplicitMemoriesStale();
   }
 
   deleteSessions(ids: string[]): void {
-    if (ids.length === 0) return;
-    for (const id of ids) {
-      this.markMemorySourcesInactiveBySession(id);
-    }
-    const placeholders = ids.map(() => '?').join(',');
-    this.db.prepare(`DELETE FROM cowork_sessions WHERE id IN (${placeholders})`).run(...ids);
+    const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
+    if (uniqueIds.length === 0) return;
+
+    const deleteSessions = this.db.transaction((sessionIds: string[]) => {
+      for (const id of sessionIds) {
+        this.markMemorySourcesInactiveBySession(id);
+      }
+      this.deleteSessionRows(sessionIds);
+    });
+    deleteSessions(uniqueIds);
     this.markOrphanImplicitMemoriesStale();
   }
 
@@ -1248,6 +1292,10 @@ export class CoworkStore {
       'embeddingVectorWeight',
       'embeddingRemoteBaseUrl',
       'embeddingRemoteApiKey',
+      'dreamingEnabled',
+      'dreamingFrequency',
+      'dreamingModel',
+      'dreamingTimezone',
     ] as const;
     const configRows = this.getAll<{ key: string; value: string }>(
       `SELECT key, value FROM cowork_config WHERE key IN (${configKeys.map(() => '?').join(', ')})`,
@@ -1281,6 +1329,10 @@ export class CoworkStore {
       embeddingVectorWeight: parseEmbeddingVectorWeight(cfg.get('embeddingVectorWeight')),
       embeddingRemoteBaseUrl: cfg.get('embeddingRemoteBaseUrl') || DEFAULT_EMBEDDING_REMOTE_BASE_URL,
       embeddingRemoteApiKey: cfg.get('embeddingRemoteApiKey') || DEFAULT_EMBEDDING_REMOTE_API_KEY,
+      dreamingEnabled: parseBooleanConfig(cfg.get('dreamingEnabled'), DEFAULT_DREAMING_ENABLED),
+      dreamingFrequency: cfg.get('dreamingFrequency') || DEFAULT_DREAMING_FREQUENCY,
+      dreamingModel: cfg.get('dreamingModel') || DEFAULT_DREAMING_MODEL,
+      dreamingTimezone: cfg.get('dreamingTimezone') || DEFAULT_DREAMING_TIMEZONE,
     };
   }
 
@@ -1334,6 +1386,18 @@ export class CoworkStore {
     }
     if (config.embeddingRemoteApiKey !== undefined) {
       this.upsertConfig('embeddingRemoteApiKey', String(config.embeddingRemoteApiKey), now);
+    }
+    if (config.dreamingEnabled !== undefined) {
+      this.upsertConfig('dreamingEnabled', config.dreamingEnabled ? '1' : '0', now);
+    }
+    if (config.dreamingFrequency !== undefined) {
+      this.upsertConfig('dreamingFrequency', String(config.dreamingFrequency), now);
+    }
+    if (config.dreamingModel !== undefined) {
+      this.upsertConfig('dreamingModel', String(config.dreamingModel), now);
+    }
+    if (config.dreamingTimezone !== undefined) {
+      this.upsertConfig('dreamingTimezone', String(config.dreamingTimezone), now);
     }
   }
 
@@ -1977,28 +2041,37 @@ export class CoworkStore {
       return this.createAgent({ ...request, id: `${id}-${Date.now()}` });
     }
 
-    this.db
-      .prepare(
-        `
-      INSERT INTO agents (id, name, description, system_prompt, identity, model, working_directory, icon, skill_ids, enabled, is_default, source, preset_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?)
-    `,
-      )
-      .run(
-        id,
-        request.name,
-        request.description || '',
-        request.systemPrompt || '',
-        request.identity || '',
-        request.model || '',
-        request.workingDirectory || '',
-        normalizeAgentAvatarIcon(request.icon),
-        JSON.stringify(request.skillIds || []),
-        request.source || 'custom',
-        request.presetId || '',
-        now,
-        now,
-      );
+    let removedOrphanSessionCount = 0;
+    const createAgent = this.db.transaction(() => {
+      removedOrphanSessionCount = this.deleteSessionsForAgent(id).length;
+
+      this.db
+        .prepare(
+          `
+        INSERT INTO agents (id, name, description, system_prompt, identity, model, working_directory, icon, skill_ids, enabled, is_default, source, preset_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?)
+      `,
+        )
+        .run(
+          id,
+          request.name,
+          request.description || '',
+          request.systemPrompt || '',
+          request.identity || '',
+          request.model || '',
+          request.workingDirectory || '',
+          normalizeAgentAvatarIcon(request.icon),
+          JSON.stringify(request.skillIds || []),
+          request.source || 'custom',
+          request.presetId || '',
+          now,
+          now,
+        );
+    });
+    createAgent();
+    if (removedOrphanSessionCount > 0) {
+      this.markOrphanImplicitMemoriesStale();
+    }
 
     return this.getAgent(id)!;
   }
@@ -2077,9 +2150,23 @@ export class CoworkStore {
   }
 
   deleteAgent(id: string): boolean {
-    if (id === 'main') return false; // Cannot delete default agent
-    this.db.prepare('DELETE FROM agents WHERE id = ? AND is_default = 0').run(id);
-    return true;
+    if (id === AgentId.Main) return false; // Cannot delete default agent
+
+    const deleteAgent = this.db.transaction((agentId: string): boolean => {
+      const result = this.db.prepare('DELETE FROM agents WHERE id = ? AND is_default = 0').run(agentId);
+      if (result.changes === 0) {
+        return false;
+      }
+
+      this.deleteSessionsForAgent(agentId);
+      return true;
+    });
+
+    const deleted = deleteAgent(id);
+    if (deleted) {
+      this.markOrphanImplicitMemoriesStale();
+    }
+    return deleted;
   }
 
   private mapAgentRow(row: {

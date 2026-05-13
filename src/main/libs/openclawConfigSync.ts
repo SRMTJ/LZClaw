@@ -80,6 +80,7 @@ const mapExecutionModeToSandboxMode = (
  */
 export const OPENCLAW_AGENT_TIMEOUT_SECONDS = 3600;
 const DINGTALK_OPENCLAW_CHANNEL = 'dingtalk-connector';
+export const OPENCLAW_BINDING_ANY_ACCOUNT_ID = '*';
 
 function deriveNimAccountId(instance: Pick<NimInstanceConfig, 'nimToken' | 'appKey' | 'account'>): string | null {
   const nimToken = instance.nimToken?.trim();
@@ -1482,6 +1483,35 @@ export class OpenClawConfigSync {
       };
     }
 
+    // Sync Dreaming config into memory-core plugin
+    if (managedConfig.plugins) {
+      const plugins = managedConfig.plugins as Record<string, unknown>;
+      const entries = plugins.entries as Record<string, Record<string, unknown>>;
+      const existingMemoryCore = entries['memory-core'] ?? {};
+      const existingMemoryCoreConfig = (existingMemoryCore as Record<string, unknown>).config as Record<string, unknown> | undefined;
+      if (coworkConfig.dreamingEnabled) {
+        entries['memory-core'] = {
+          ...existingMemoryCore,
+          config: {
+            ...existingMemoryCoreConfig,
+            dreaming: {
+              enabled: true,
+              frequency: coworkConfig.dreamingFrequency || '0 3 * * *',
+              ...(coworkConfig.dreamingTimezone ? { timezone: coworkConfig.dreamingTimezone } : {}),
+              ...(coworkConfig.dreamingModel ? { model: coworkConfig.dreamingModel } : {}),
+            },
+          },
+        };
+      } else if (existingMemoryCoreConfig?.dreaming) {
+        // Remove dreaming config when disabled
+        const { dreaming: _, ...restConfig } = existingMemoryCoreConfig;
+        entries['memory-core'] = {
+          ...existingMemoryCore,
+          config: Object.keys(restConfig).length > 0 ? restConfig : undefined,
+        };
+      }
+    }
+
     // Sync Telegram OpenClaw channel config — multi-instance via accounts
     const telegramInstances = this.getTelegramInstances();
     const enabledTelegramInstances = telegramInstances.filter(i => i.enabled && i.botToken);
@@ -2666,7 +2696,10 @@ export class OpenClawConfigSync {
         if (platformAgentId && platformAgentId !== 'main') {
           const targetAgent = agents.find(a => a.id === platformAgentId && a.enabled);
           if (targetAgent && instances.some(i => i.enabled)) {
-            bindings.push({ agentId: platformAgentId, match: { channel } });
+            bindings.push({
+              agentId: platformAgentId,
+              match: { channel, accountId: OPENCLAW_BINDING_ANY_ACCOUNT_ID },
+            });
           }
         }
       } catch {
@@ -2694,7 +2727,10 @@ export class OpenClawConfigSync {
       try {
         const cfg = getter();
         if (cfg?.enabled) {
-          bindings.push({ agentId, match: { channel } });
+          bindings.push({
+            agentId,
+            match: { channel, accountId: OPENCLAW_BINDING_ANY_ACCOUNT_ID },
+          });
         }
       } catch {
         // Skip channels that fail to load config
