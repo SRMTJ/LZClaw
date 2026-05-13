@@ -21,7 +21,6 @@ import { toOpenClawModelRef } from '../../utils/openclawModelRef';
 import ComposeIcon from '../icons/ComposeIcon';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import { PromptPanel,QuickActionBar } from '../quick-actions';
-import type { SettingsOpenOptions } from '../Settings';
 import WindowTitleBar from '../window/WindowTitleBar';
 import { useAgentSelectedModel } from './agentModelSelection';
 import CoworkPromptInput, { type CoworkPromptInputRef } from './CoworkPromptInput';
@@ -29,7 +28,6 @@ import CoworkSessionDetail from './CoworkSessionDetail';
 import { buildCoworkContinuationSystemPrompt, buildCoworkSystemPrompt } from './skillSystemPrompt';
 
 export interface CoworkViewProps {
-  onRequestAppSettings?: (options?: SettingsOpenOptions) => void;
   onShowSkills?: () => void;
   isSidebarCollapsed?: boolean;
   onToggleSidebar?: () => void;
@@ -37,7 +35,7 @@ export interface CoworkViewProps {
   updateBadge?: React.ReactNode;
 }
 
-const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSkills, isSidebarCollapsed, onToggleSidebar, onNewChat, updateBadge }) => {
+const CoworkView: React.FC<CoworkViewProps> = ({ onShowSkills, isSidebarCollapsed, onToggleSidebar, onNewChat, updateBadge }) => {
   const dispatch = useDispatch();
   const isMac = window.electron.platform === 'darwin';
   const [isInitialized, setIsInitialized] = useState(false);
@@ -69,21 +67,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
   const currentAgent = agents.find((agent) => agent.id === currentAgentId);
   const currentAgentWorkingDirectory = currentAgent?.workingDirectory?.trim() || config.workingDirectory || '';
   const currentAgentSelectedModel = useAgentSelectedModel(currentAgentId, currentAgent?.model ?? '');
-
-  const buildApiConfigNotice = (error?: string): { noticeI18nKey: string; noticeExtra?: string } => {
-    const key = 'coworkModelSettingsRequired';
-    if (!error) {
-      return { noticeI18nKey: key };
-    }
-    const normalizedError = error.trim();
-    if (
-      normalizedError.startsWith('No enabled provider found for model:')
-      || normalizedError === 'No available model configured in enabled providers.'
-    ) {
-      return { noticeI18nKey: key };
-    }
-    return { noticeI18nKey: key, noticeExtra: error };
-  };
 
   const resolveEngineStatusText = (status: OpenClawEngineStatus): string => {
     switch (status.phase) {
@@ -138,10 +121,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
       try {
         const apiConfig = await coworkService.checkApiConfig();
         if (apiConfig && !apiConfig.hasConfig) {
-          onRequestAppSettings?.({
-            initialTab: 'model',
-            ...buildApiConfigNotice(apiConfig.error),
-          });
+          console.warn('[CoworkView] API config missing during init, skip settings popup and toast:', apiConfig.error);
         }
       } catch (error) {
         console.error('Failed to check cowork API config:', error);
@@ -168,7 +148,6 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
       unsubscribe();
       unsubscribeOpenClawStatus();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dispatch]);
 
   const handleStartSession = async (prompt: string, skillPrompt?: string, imageAttachments?: CoworkImageAttachment[]): Promise<boolean | void> => {
@@ -202,10 +181,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
       try {
         const apiConfig = await coworkService.checkApiConfig();
         if (apiConfig && !apiConfig.hasConfig) {
-          onRequestAppSettings?.({
-            initialTab: 'model',
-            ...buildApiConfigNotice(apiConfig.error),
-          });
+          console.warn('[CoworkView] API config missing before start session, block this request:', apiConfig.error);
           isStartingRef.current = false;
           return;
         }
@@ -550,12 +526,12 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
               alt="logo"
               className="h-16 w-auto max-w-[240px] object-contain mx-auto animate-fade-in-up"
             />
-            <h2
+            {/* <h2
               className="mt-4 text-[24px] font-semibold leading-8 tracking-normal text-foreground animate-fade-in-up"
               style={{ animationDelay: '70ms', animationFillMode: 'both' }}
             >
               {i18nService.t('coworkWelcome')}
-            </h2>
+            </h2> */}
             <p
               className="mt-2 text-[15px] font-normal leading-6 text-secondary animate-fade-in-up"
               style={{ animationDelay: '120ms', animationFillMode: 'both' }}

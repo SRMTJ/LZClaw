@@ -15,7 +15,6 @@ import CoworkPermissionModal from './components/cowork/CoworkPermissionModal';
 import CoworkQuestionWizard from './components/cowork/CoworkQuestionWizard';
 import EngineStartupOverlay from './components/cowork/EngineStartupOverlay';
 import { McpView } from './components/mcp';
-import PrivacyDialog from './components/PrivacyDialog';
 import { ScheduledTasksView } from './components/scheduledTasks';
 import Settings, { type SettingsOpenOptions } from './components/Settings';
 import Sidebar from './components/Sidebar';
@@ -78,7 +77,6 @@ const App: React.FC = () => {
     errorMessage: null,
   });
   const [showUpdateModal, setShowUpdateModal] = useState(false);
-  const [privacyAgreed, setPrivacyAgreed] = useState<boolean | null>(null);
   const [showWelcome, setShowWelcome] = useState(false);
   const [enterpriseConfig, setEnterpriseConfig] = useState<{
     ui?: Record<string, 'hide' | 'disable' | 'readonly'>;
@@ -204,7 +202,9 @@ const App: React.FC = () => {
         mark('model resolution done');
 
         const agreed = await window.electron.store.get('privacy_agreed');
-        setPrivacyAgreed(agreed === true);
+        if (agreed !== true) {
+          await window.electron.store.set('privacy_agreed', true);
+        }
         mark('privacy check done');
 
         setIsInitialized(true);
@@ -481,17 +481,6 @@ const App: React.FC = () => {
     shouldInstallReadyUpdateRef.current = false;
     await window.electron.appUpdate.retryDownload();
   }, [updateInfo]);
-
-  const handlePrivacyAccept = useCallback(async () => {
-    await window.electron.store.set('privacy_agreed', true);
-    setPrivacyAgreed(true);
-    setShowWelcome(true);
-  }, []);
-
-  const handlePrivacyReject = useCallback(() => {
-    // 立刻隐藏窗口，让用户感觉立即关闭
-    window.electron.window.close();
-  }, []);
 
   const handleWelcomeClose = useCallback(() => setShowWelcome(false), []);
   const handleWelcomeLogin = useCallback(async () => {
@@ -823,7 +812,6 @@ const App: React.FC = () => {
               />
             ) : (
               <CoworkView
-                onRequestAppSettings={privacyAgreed === true && !showWelcome ? handleShowSettings : undefined}
                 onShowSkills={handleShowSkills}
                 isSidebarCollapsed={isSidebarCollapsed}
                 onToggleSidebar={handleToggleSidebar}
@@ -859,12 +847,6 @@ const App: React.FC = () => {
         />
       )}
       {permissionModal}
-      {privacyAgreed === false && (
-        <PrivacyDialog
-          onAccept={handlePrivacyAccept}
-          onReject={handlePrivacyReject}
-        />
-      )}
       {showWelcome && (
         <WelcomeDialog
           onLogin={handleWelcomeLogin}

@@ -2,7 +2,7 @@ import { app } from 'electron';
 
 import {
   buildLzServiceEndpoints,
-  LZ_SERVICE_DEFAULT_BASE_URL,
+  getLzServiceDefaultBaseUrl,
   LZ_SERVICE_ENVIRONMENTS,
   normalizeLzServiceBaseUrl,
 } from '../../shared/lzServiceConfig';
@@ -28,7 +28,10 @@ const isTestMode = (): boolean => {
 };
 
 const getLzServiceBaseUrl = (): string => (
-  normalizeLzServiceBaseUrl(process.env.LZ_SERVICE_BASE_URL || LZ_SERVICE_DEFAULT_BASE_URL)
+  normalizeLzServiceBaseUrl(
+    process.env.LZ_SERVICE_BASE_URL
+    || getLzServiceDefaultBaseUrl({ isPackaged: app.isPackaged, nodeEnv: process.env.NODE_ENV }),
+  )
 );
 
 const getLzServiceEnvironment = () => (

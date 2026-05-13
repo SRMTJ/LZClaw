@@ -1,4 +1,7 @@
-export const LZ_SERVICE_DEFAULT_BASE_URL = 'http://127.0.0.1:5000';
+// export const LZ_SERVICE_DEFAULT_DEV_BASE_URL = 'http://127.0.0.1:5000';
+export const LZ_SERVICE_DEFAULT_DEV_BASE_URL = 'http://120.53.3.76:7001';
+export const LZ_SERVICE_DEFAULT_PROD_BASE_URL = 'http://120.53.3.76:7001';
+export const LZ_SERVICE_DEFAULT_BASE_URL = LZ_SERVICE_DEFAULT_DEV_BASE_URL;
 
 export const LZ_SERVICE_ENVIRONMENTS = {
   Test: 'test',
@@ -12,8 +15,16 @@ const LZ_SERVICE_OPENAPI_BASE_PATH = '/openapi/get/luna/hardware/lobsterai';
 
 const trimTrailingSlash = (value: string): string => value.trim().replace(/\/+$/, '');
 
+export const getLzServiceDefaultBaseUrl = (options?: {
+  isPackaged?: boolean;
+  nodeEnv?: string | null;
+}): string => {
+  const isProductionRuntime = options?.isPackaged === true || options?.nodeEnv === 'production';
+  return isProductionRuntime ? LZ_SERVICE_DEFAULT_PROD_BASE_URL : LZ_SERVICE_DEFAULT_DEV_BASE_URL;
+};
+
 export const normalizeLzServiceBaseUrl = (baseUrl?: string | null): string => {
-  const normalized = trimTrailingSlash(baseUrl || LZ_SERVICE_DEFAULT_BASE_URL);
+  const normalized = trimTrailingSlash(baseUrl || getLzServiceDefaultBaseUrl());
   return normalized || LZ_SERVICE_DEFAULT_BASE_URL;
 };
 

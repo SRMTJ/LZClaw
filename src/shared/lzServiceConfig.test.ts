@@ -2,7 +2,9 @@ import { expect, test } from 'vitest';
 
 import {
   buildLzServiceEndpoints,
+  getLzServiceDefaultBaseUrl,
   LZ_SERVICE_DEFAULT_BASE_URL,
+  LZ_SERVICE_DEFAULT_PROD_BASE_URL,
   LZ_SERVICE_ENVIRONMENTS,
   normalizeLzServiceBaseUrl,
 } from './lzServiceConfig';
@@ -13,6 +15,12 @@ test('normalizeLzServiceBaseUrl trims trailing slashes', () => {
 
 test('normalizeLzServiceBaseUrl falls back to the default local LZService URL', () => {
   expect(normalizeLzServiceBaseUrl('')).toBe(LZ_SERVICE_DEFAULT_BASE_URL);
+});
+
+test('getLzServiceDefaultBaseUrl returns prod base url in production runtime', () => {
+  expect(getLzServiceDefaultBaseUrl({ nodeEnv: 'production' })).toBe(
+    LZ_SERVICE_DEFAULT_PROD_BASE_URL,
+  );
 });
 
 test('buildLzServiceEndpoints builds test login and update routes', () => {

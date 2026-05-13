@@ -1,7 +1,7 @@
 import { store } from '../store';
 import { setAuthLoading, setLoggedIn, setLoggedOut, setProfileSummary, updateQuota } from '../store/slices/authSlice';
 import type { Model } from '../store/slices/modelSlice';
-import { clearServerModels, setServerModels } from '../store/slices/modelSlice';
+import { clearServerModels, setDefaultSelectedModel, setServerModels } from '../store/slices/modelSlice';
 
 class AuthService {
   private unsubCallback: (() => void) | null = null;
@@ -78,7 +78,7 @@ class AuthService {
       const result = await window.electron.auth.exchange(code);
       if (result.success) {
         store.dispatch(setLoggedIn({ user: result.user, quota: result.quota }));
-        await this.loadServerModels();
+        await this.loadServerModels({ forceDefaultServerModel: true });
       } else {
         console.error('Auth callback exchange failed:', result.error);
       }
@@ -147,7 +147,7 @@ class AuthService {
   /**
    * Load available models from server and dispatch to store.
    */
-  private async loadServerModels() {
+  private async loadServerModels(options?: { forceDefaultServerModel?: boolean }) {
     try {
       const modelsResult = await window.electron.auth.getModels();
       if (modelsResult.success && modelsResult.models) {
@@ -171,6 +171,9 @@ class AuthService {
           serverApiKey: m.apiKey,
         }));
         store.dispatch(setServerModels(serverModels));
+        if (options?.forceDefaultServerModel && serverModels.length > 0) {
+          store.dispatch(setDefaultSelectedModel(serverModels[0]));
+        }
       }
     } catch {
       // ignore — server models are optional

@@ -385,6 +385,53 @@ export const LZ_VISIBLE_IM_PLATFORMS = [
 
 完整 `npm run test` 和 `npm run compile:electron` 曾因 Windows 下 `better_sqlite3.node` 被占用导致原生模块 rebuild 失败；这是本地文件锁问题，不是上述定制代码的类型或语法错误。
 
+## LZService 默认地址（开发/生产）
+
+按环境调整了 LZService 默认地址策略：
+
+- 本地开发默认：`http://127.0.0.1:5000`
+- 生产模式默认：`http://120.53.3.76:7001`
+
+实现方式：
+
+- 在 `src/shared/lzServiceConfig.ts` 新增 `getLzServiceDefaultBaseUrl(...)`；
+- 主进程按 `app.isPackaged` / `NODE_ENV` 选择默认地址；
+- 渲染进程按 `NODE_ENV` 选择默认地址；
+- 若显式设置 `LZ_SERVICE_BASE_URL`，仍优先使用环境变量覆盖默认值。
+
+## 登录 URL 调试日志
+
+为便于排查登录跳转地址问题，在 LZClaw 主进程登录流程增加了关键日志：
+
+- 打印 `auth:login` 实际请求的 login-url 接口地址；
+- 打印 LZService 返回的登录 URL（`data.value`）；
+- 打印追加 `source=electron` 后最终调用 `openExternal` 的 URL；
+- 若渲染层显式传入 `loginUrl`，也会单独打印“使用渲染层传入 URL”。
+
+## 隐藏服务协议弹窗
+
+已隐藏应用启动时的服务协议弹窗（`PrivacyDialog`）：
+
+- 启动初始化阶段会自动写入 `privacy_agreed=true`；
+- 不再渲染服务协议弹窗组件；
+- 保持原有欢迎页和后续流程可用，不再因协议弹窗阻塞。
+
+## 登录后默认模型切换到套餐模型
+
+登录成功后，默认模型会从本地自定义模型切换为套餐模型（服务端模型）：
+
+- 在 `auth:exchange` 成功后，拉取 `/api/models/available`；
+- 将服务端模型写入模型列表后，强制把默认模型切换到第一个套餐模型；
+- 仅在登录成功当次强制切换，不影响后续用户手动切换模型。
+
+## 模型/Provider 配置不足时不再弹设置页
+
+已调整 cowork 页面行为：当模型或 Provider 配置不足时，不再自动弹出“设置-模型”页面，也不再 toast 提示。
+
+- 初始化检查 `checkApiConfig` 失败时：静默处理（仅记录日志）；
+- 发起会话前检查 `checkApiConfig` 失败时：静默拦截并阻止本次发送（仅记录日志）；
+- 不再触发设置页弹窗，也不再显示配置不足 toast。
+
 ## 后续修改建议
 
 新增 LZClaw 定制项时，优先按以下顺序放置：

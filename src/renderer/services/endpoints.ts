@@ -5,7 +5,7 @@
 
 import {
   buildLzServiceEndpoints,
-  LZ_SERVICE_DEFAULT_BASE_URL,
+  getLzServiceDefaultBaseUrl,
   LZ_SERVICE_ENVIRONMENTS,
 } from '../../shared/lzServiceConfig';
 import { configService } from './config';
@@ -15,7 +15,7 @@ const isTestMode = () => {
 };
 
 const getLzServiceEndpoints = () => buildLzServiceEndpoints(
-  LZ_SERVICE_DEFAULT_BASE_URL,
+  getLzServiceDefaultBaseUrl({ nodeEnv: process.env.NODE_ENV }),
   isTestMode() ? LZ_SERVICE_ENVIRONMENTS.Test : LZ_SERVICE_ENVIRONMENTS.Prod,
 );
 

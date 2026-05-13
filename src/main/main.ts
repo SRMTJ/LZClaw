@@ -2431,7 +2431,9 @@ if (!gotTheLock) {
   };
 
   const fetchLoginUrl = async (): Promise<string> => {
-    const resp = await net.fetch(getLoginUrlEndpoint(), {
+    const endpoint = getLoginUrlEndpoint();
+    console.log(`[Auth] fetching login URL from: ${endpoint}`);
+    const resp = await net.fetch(endpoint, {
       method: 'GET',
       headers: { Accept: 'application/json' },
     });
@@ -2443,13 +2445,19 @@ if (!gotTheLock) {
     if (body.code !== 0 || !value) {
       throw new Error(body.message || 'Login URL response is missing data.value');
     }
+    console.log(`[Auth] login URL received: ${value}`);
     return value;
   };
 
   ipcMain.handle('auth:login', async (_event, { loginUrl }: { loginUrl?: string } = {}) => {
     try {
-      const baseUrl = loginUrl?.trim() || await fetchLoginUrl();
+      const requestedLoginUrl = loginUrl?.trim();
+      if (requestedLoginUrl) {
+        console.log(`[Auth] using explicit login URL from renderer: ${requestedLoginUrl}`);
+      }
+      const baseUrl = requestedLoginUrl || await fetchLoginUrl();
       const finalUrl = appendLoginSource(baseUrl);
+      console.log(`[Auth] opening login URL: ${finalUrl}`);
       await shell.openExternal(finalUrl);
       return { success: true };
     } catch (error) {
