@@ -4,8 +4,8 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import type { CoworkStore, PluginSource,UserInstalledPlugin } from '../coworkStore';
-import { findThirdPartyExtensionsDir, listBundledOpenClawExtensionManifests } from './openclawLocalExtensions';
+import type { CoworkStore, PluginSource } from '../coworkStore';
+import { findThirdPartyExtensionsDir } from './openclawLocalExtensions';
 
 export interface PluginInstallParams {
   source: PluginSource;
