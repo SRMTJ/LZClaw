@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import { IpcChannel as ScheduledTaskIpc } from '../scheduledTask/constants';
 import { AgentIpcChannel } from '../shared/agent/constants';
 import { AppUpdateIpc } from '../shared/appUpdate/constants';
+import { ArtifactPreviewIpc } from '../shared/artifactPreview/constants';
 import type { Platform } from '../shared/platform';
 import { NimQrLoginIpc } from './ipcHandlers/nimQrLogin';
 import { OpenClawSessionIpc } from './openclawSession/constants';
@@ -415,8 +416,9 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.on('artifact:file:changed', handler);
       return () => { ipcRenderer.removeListener('artifact:file:changed', handler); };
     },
-    createPreviewSession: (filePath: string) => ipcRenderer.invoke('artifact:createPreviewSession', filePath),
-    destroyPreviewSession: (sessionId: string) => ipcRenderer.invoke('artifact:destroyPreviewSession', sessionId),
+    createPreviewSession: (filePath: string) => ipcRenderer.invoke(ArtifactPreviewIpc.CreateSession, filePath),
+    createOfficePreviewSession: (filePath: string) => ipcRenderer.invoke(ArtifactPreviewIpc.CreateOfficeSession, filePath),
+    destroyPreviewSession: (sessionId: string) => ipcRenderer.invoke(ArtifactPreviewIpc.DestroySession, sessionId),
   },
   autoLaunch: {
     get: () => ipcRenderer.invoke('app:getAutoLaunch'),

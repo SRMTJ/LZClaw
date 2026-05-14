@@ -600,6 +600,7 @@ interface IElectronAPI {
     unwatchFile: (filePath: string) => Promise<void>;
     onFileChanged: (callback: (data: { filePath: string }) => void) => () => void;
     createPreviewSession: (filePath: string) => Promise<{ success: boolean; sessionId?: string; url?: string; error?: string }>;
+    createOfficePreviewSession: (filePath: string) => Promise<{ success: boolean; sessionId?: string; url?: string; error?: string }>;
     destroyPreviewSession: (sessionId: string) => Promise<{ success: boolean }>;
   };
   autoLaunch: {
