@@ -9,7 +9,7 @@ import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
 
 import { getScheduledReminderDisplayText } from '../../../scheduledTask/reminderText';
-import { getArtifactTypeFromExtension, normalizeFilePathForDedup, parseFileLinksFromMessage, parseFilePathsFromText, parseToolArtifact, stripFileLinksFromText } from '../../services/artifactParser';
+import { getArtifactTypeFromExtension, normalizeFilePathForDedup, parseFileLinksFromMessage, parseFilePathsFromText, parseMediaTokensFromText, parseToolArtifact, stripFileLinksFromText } from '../../services/artifactParser';
 import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
 import { RootState } from '../../store';
@@ -415,10 +415,13 @@ const getToolInputString = (
 const truncatePreview = (value: string, maxLength = 120): string =>
   value.length <= maxLength ? value : `${value.slice(0, maxLength - 3)}...`;
 
+const MEDIA_TOKEN_DISPLAY_RE = /\n?MEDIA:\s*`?[^\s`\n]+`?/gi;
+
 const normalizeToolResultText = (value: string): string => {
   const withoutAnsi = value.replace(ANSI_ESCAPE_PATTERN, '');
   const errorTagMatch = withoutAnsi.trim().match(TOOL_USE_ERROR_TAG_PATTERN);
-  return errorTagMatch ? errorTagMatch[1].trim() : withoutAnsi;
+  const cleaned = errorTagMatch ? errorTagMatch[1].trim() : withoutAnsi;
+  return cleaned.replace(MEDIA_TOKEN_DISPLAY_RE, '').trimEnd();
 };
 
 const isTodoWriteToolName = (toolName: string | undefined): boolean => {
@@ -1367,7 +1370,8 @@ const AssistantMessageItem: React.FC<{
 }) => {
   const [isHovered, setIsHovered] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ImagePreviewSource | null>(null);
-  const displayContent = mapDisplayText ? mapDisplayText(message.content) : message.content;
+  const rawContent = mapDisplayText ? mapDisplayText(message.content) : message.content;
+  const displayContent = rawContent.replace(MEDIA_TOKEN_DISPLAY_RE, '').trimEnd();
   const modelLabel = getMessageModelLabel(turnMetadata);
   const handleBlur = useCallback((event: React.FocusEvent<HTMLDivElement>) => {
     const nextTarget = event.relatedTarget;
@@ -1950,12 +1954,12 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
         }
 
         if (msg.type === 'tool_result' && msg.content) {
-          const pathArtifacts = parseFilePathsFromText(msg.content, msg.id, sessionId, 'artifact-toolresult');
-          for (const pa of pathArtifacts) {
-            const normalized = pa.filePath ? normalizeFilePathForDedup(pa.filePath) : '';
-            if (pa.filePath && !seenFilePaths.has(normalized)) {
+          const mediaArtifacts = parseMediaTokensFromText(msg.content, msg.id, sessionId);
+          for (const ma of mediaArtifacts) {
+            const normalized = ma.filePath ? normalizeFilePathForDedup(ma.filePath) : '';
+            if (ma.filePath && !seenFilePaths.has(normalized)) {
               seenFilePaths.add(normalized);
-              detected.push(pa);
+              detected.push(ma);
             }
           }
         }
@@ -2034,6 +2038,94 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       console.error('[ArtifactDetection] failed:', err);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- uses messagesLength as stable proxy for currentSession.messages
+  }, [sessionId, messagesLength, isStreaming, dispatch]);
+
+  // Mid-turn artifact detection: detect MEDIA/file artifacts from backfilled tool results
+  // while still streaming. The main effect above skips when isStreaming=true, but incremental
+  // backfill can populate tool_result text mid-turn. This effect handles that case.
+  useEffect(() => {
+    if (!sessionId || !isStreaming || !currentSession?.messages?.length) return;
+
+    try {
+      const messages = currentSession.messages;
+      const cwd = currentSession.cwd;
+      const toLoad: Artifact[] = [];
+      const seenFilePaths = new Set<string>();
+
+      for (const msg of messages) {
+        if (msg.type !== 'tool_result' || !msg.content || !msg.metadata?.isFinal) continue;
+        if (loadedFileIdsRef.current.has(msg.id)) continue;
+
+        const mediaArtifacts = parseMediaTokensFromText(msg.content, msg.id, sessionId);
+        for (const ma of mediaArtifacts) {
+          const normalized = ma.filePath ? normalizeFilePathForDedup(ma.filePath) : '';
+          if (ma.filePath && !seenFilePaths.has(normalized) && !loadedFileIdsRef.current.has(ma.id)) {
+            seenFilePaths.add(normalized);
+            toLoad.push(ma);
+          }
+        }
+
+        const pathArtifacts = parseFilePathsFromText(msg.content, msg.id, sessionId);
+        for (const pa of pathArtifacts) {
+          const normalized = pa.filePath ? normalizeFilePathForDedup(pa.filePath) : '';
+          if (pa.filePath && !seenFilePaths.has(normalized) && !loadedFileIdsRef.current.has(pa.id)) {
+            seenFilePaths.add(normalized);
+            toLoad.push(pa);
+          }
+        }
+      }
+
+      if (toLoad.length === 0) return;
+
+      const loadFiles = async () => {
+        for (const artifact of toLoad) {
+          if (loadedFileIdsRef.current.has(artifact.id)) continue;
+          let rawPath = artifact.filePath!;
+          if (rawPath.startsWith('file:///')) {
+            rawPath = rawPath.slice(7);
+          } else if (rawPath.startsWith('file://')) {
+            rawPath = rawPath.slice(7);
+          } else if (rawPath.startsWith('file:/')) {
+            rawPath = rawPath.slice(5);
+          }
+          if (/^\/[A-Za-z]:/.test(rawPath)) {
+            rawPath = rawPath.slice(1);
+          }
+          const absPath = rawPath.startsWith('/')
+            ? rawPath
+            : (/^[A-Za-z]:/.test(rawPath) ? rawPath : `${cwd}/${rawPath}`);
+          try {
+            const result = await window.electron.dialog.readFileAsDataUrl(absPath);
+            if (result?.success && result.dataUrl) {
+              const isTextType = artifact.type !== 'image' && artifact.type !== 'document';
+              let content = result.dataUrl;
+              if (isTextType) {
+                try {
+                  const base64 = result.dataUrl.split(',')[1] || '';
+                  const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+                  content = new TextDecoder('utf-8').decode(bytes);
+                } catch {
+                  content = result.dataUrl;
+                }
+              }
+              loadedFileIdsRef.current.add(artifact.id);
+              dispatch(addArtifact({
+                sessionId,
+                artifact: { ...artifact, content, filePath: absPath },
+              }));
+            } else {
+              loadedFileIdsRef.current.add(artifact.id);
+            }
+          } catch {
+            loadedFileIdsRef.current.add(artifact.id);
+          }
+        }
+      };
+      loadFiles();
+    } catch (err) {
+      console.error('[ArtifactDetection:midTurn] failed:', err);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- mid-turn artifact detection for backfilled tool results
   }, [sessionId, messagesLength, isStreaming, dispatch]);
 
   // Intercept clicks on artifact-compatible file links → open in panel

@@ -1002,6 +1002,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private pendingStoreUpdateTimer: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private static readonly STORE_UPDATE_THROTTLE_MS = 250;
 
+  /** Debounced incremental backfill of tool result text from chat.history. */
+  private incrementalBackfillTimer: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  private pendingBackfillToolCallIds: Map<string, Set<string>> = new Map();
+  private static readonly INCREMENTAL_BACKFILL_DEBOUNCE_MS = 2000;
+
   /**
    * Server-side agent timeout in seconds (mirrors agents.defaults.timeoutSeconds in openclaw config).
    * Used to set a client-side fallback timer that fires slightly after the server timeout,
@@ -2356,6 +2361,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
     this.pendingMessageUpdateTimer.clear();
     this.lastMessageUpdateEmitTime.clear();
+    // Clear incremental backfill state
+    for (const timer of this.incrementalBackfillTimer.values()) {
+      clearTimeout(timer);
+    }
+    this.incrementalBackfillTimer.clear();
+    this.pendingBackfillToolCallIds.clear();
     this.gatewayStoppingIntentionally = false;
   }
 
@@ -2494,6 +2505,128 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       this.store.updateMessage(sessionId, messageId, {
         content: turn.currentAssistantSegmentText,
       });
+    }
+  }
+
+  // ─── Incremental Tool Result Backfill ─────────────────────────────────────────
+
+  /**
+   * Schedule a debounced incremental backfill of tool result text from chat.history.
+   * Called when a tool result event arrives with empty text (gateway stripped it).
+   * Multiple tool results arriving within INCREMENTAL_BACKFILL_DEBOUNCE_MS are
+   * batched into a single chat.history call.
+   */
+  private scheduleIncrementalBackfill(sessionId: string, toolCallId: string): void {
+    let pending = this.pendingBackfillToolCallIds.get(sessionId);
+    if (!pending) {
+      pending = new Set();
+      this.pendingBackfillToolCallIds.set(sessionId, pending);
+    }
+    pending.add(toolCallId);
+
+    // Trailing-edge debounce: reset timer on each new arrival
+    const existingTimer = this.incrementalBackfillTimer.get(sessionId);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+    }
+
+    this.incrementalBackfillTimer.set(sessionId, setTimeout(() => {
+      this.incrementalBackfillTimer.delete(sessionId);
+      void this.executeIncrementalBackfill(sessionId);
+    }, OpenClawRuntimeAdapter.INCREMENTAL_BACKFILL_DEBOUNCE_MS));
+  }
+
+  /**
+   * Execute a single incremental backfill: fetch chat.history and update
+   * any tool results whose currently stored text is shorter than the authoritative text.
+   */
+  private async executeIncrementalBackfill(sessionId: string): Promise<void> {
+    const turn = this.activeTurns.get(sessionId);
+    if (!turn?.sessionKey) {
+      this.pendingBackfillToolCallIds.delete(sessionId);
+      return;
+    }
+
+    const pending = this.pendingBackfillToolCallIds.get(sessionId);
+    if (!pending || pending.size === 0) return;
+
+    const client = this.gatewayClient;
+    if (!client) return;
+
+    // Snapshot and clear — new arrivals during the fetch create a fresh batch.
+    const toolCallIdsToBackfill = new Set(pending);
+    pending.clear();
+
+    const turnToken = turn.turnToken;
+    const limit = Math.min(toolCallIdsToBackfill.size * 3 + 5, 30);
+
+    try {
+      const history = await client.request<{ messages?: unknown[] }>('chat.history', {
+        sessionKey: turn.sessionKey,
+        limit,
+      }, { timeoutMs: 5_000 });
+
+      // Re-check turn is still active after the await
+      const currentTurn = this.activeTurns.get(sessionId);
+      if (!currentTurn || currentTurn.turnToken !== turnToken) return;
+
+      if (Array.isArray(history?.messages)) {
+        for (const msg of history.messages) {
+          if (!isRecord(msg)) continue;
+
+          const msgRole = typeof msg.role === 'string' ? msg.role : '';
+          const msgToolCallId = typeof msg.toolCallId === 'string' ? msg.toolCallId.trim()
+            : typeof msg.tool_call_id === 'string' ? (msg.tool_call_id as string).trim()
+              : '';
+
+          if (!msgToolCallId || (msgRole !== 'toolResult' && msgRole !== 'tool')) continue;
+
+          const text = extractMessageText(msg);
+          if (!text.trim()) continue;
+
+          // Opportunistically backfill any tool result found, not just pending ones
+          const existingResultMsgId = currentTurn.toolResultMessageIdByToolCallId.get(msgToolCallId);
+          const existingText = currentTurn.toolResultTextByToolCallId.get(msgToolCallId) ?? '';
+
+          if (text.length > existingText.length && existingResultMsgId) {
+            const isError = Boolean(msg.isError);
+            this.store.updateMessage(sessionId, existingResultMsgId, {
+              content: text,
+              metadata: {
+                toolResult: text,
+                toolUseId: msgToolCallId,
+                isError,
+                isStreaming: false,
+                isFinal: true,
+              },
+            });
+            currentTurn.toolResultTextByToolCallId.set(msgToolCallId, text);
+            this.emit('messageUpdate', sessionId, existingResultMsgId, text);
+            console.log(
+              '[OpenClawRuntime] incremental backfill from chat.history',
+              `toolCallId=${msgToolCallId}`, `len=${text.length}`, `prevLen=${existingText.length}`,
+            );
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[OpenClawRuntime] incremental backfill chat.history fetch failed:', err);
+      // Re-add toolCallIds so handleChatFinal or next round can retry
+      const currentPending = this.pendingBackfillToolCallIds.get(sessionId);
+      if (currentPending) {
+        for (const id of toolCallIdsToBackfill) currentPending.add(id);
+      } else {
+        this.pendingBackfillToolCallIds.set(sessionId, toolCallIdsToBackfill);
+      }
+    } finally {
+      // If more toolCallIds accumulated during the fetch, schedule another round
+      const remainingPending = this.pendingBackfillToolCallIds.get(sessionId);
+      if (remainingPending && remainingPending.size > 0 && this.activeTurns.has(sessionId)) {
+        this.incrementalBackfillTimer.set(sessionId, setTimeout(() => {
+          this.incrementalBackfillTimer.delete(sessionId);
+          void this.executeIncrementalBackfill(sessionId);
+        }, OpenClawRuntimeAdapter.INCREMENTAL_BACKFILL_DEBOUNCE_MS));
+      }
     }
   }
 
@@ -3434,6 +3567,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         this.emit('message', sessionId, resultMessage);
       }
       turn.toolResultTextByToolCallId.set(toolCallId, finalContent);
+
+      // Schedule incremental backfill if the result text is empty (gateway stripped it).
+      // The authoritative text will be fetched from chat.history after a debounce window.
+      if (!finalContent.trim()) {
+        this.scheduleIncrementalBackfill(sessionId, toolCallId);
+      }
     }
   }
 
@@ -3925,6 +4064,72 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
     const finalSegmentText = this.resolveAssistantSegmentText(turn, finalText);
     turn.currentAssistantSegmentText = finalSegmentText;
+
+    // Collect media URLs and backfill tool result text from chat.history.
+    // The agent tool event does not carry the result text (gateway strips it),
+    // so we fetch it from the authoritative transcript via chat.history.
+    if (turn.toolUseMessageIdByToolCallId.size > 0
+        && turn.sessionKey
+        && this.gatewayClient) {
+      try {
+        const history = await this.gatewayClient.request<{ messages?: unknown[] }>('chat.history', {
+          sessionKey: turn.sessionKey,
+          limit: 20,
+        }, { timeoutMs: 5_000 });
+        if (Array.isArray(history?.messages)) {
+          for (const msg of history.messages) {
+            if (!isRecord(msg)) continue;
+            const text = extractMessageText(msg);
+
+            // Backfill tool result text: chat.history includes toolResult messages
+            // with {role: "toolResult", toolCallId: "...", content: [...]}
+            const msgRole = typeof msg.role === 'string' ? msg.role : '';
+            const msgToolCallId = typeof msg.toolCallId === 'string' ? msg.toolCallId.trim()
+              : typeof msg.tool_call_id === 'string' ? (msg.tool_call_id as string).trim()
+                : '';
+            if (msgToolCallId && (msgRole === 'toolResult' || msgRole === 'tool') && text.trim()) {
+              const existingResultMsgId = turn.toolResultMessageIdByToolCallId.get(msgToolCallId);
+              const existingText = turn.toolResultTextByToolCallId.get(msgToolCallId) ?? '';
+              if (text.length > existingText.length) {
+                const isError = Boolean(msg.isError);
+                if (existingResultMsgId) {
+                  this.store.updateMessage(sessionId, existingResultMsgId, {
+                    content: text,
+                    metadata: {
+                      toolResult: text,
+                      toolUseId: msgToolCallId,
+                      isError,
+                      isStreaming: false,
+                      isFinal: true,
+                    },
+                  });
+                  turn.toolResultTextByToolCallId.set(msgToolCallId, text);
+                  this.emit('messageUpdate', sessionId, existingResultMsgId, text);
+                } else {
+                  const resultMessage = this.store.addMessage(sessionId, {
+                    type: 'tool_result',
+                    content: text,
+                    metadata: {
+                      toolResult: text,
+                      toolUseId: msgToolCallId,
+                      isError,
+                      isStreaming: false,
+                      isFinal: true,
+                    },
+                  });
+                  turn.toolResultMessageIdByToolCallId.set(msgToolCallId, resultMessage.id);
+                  turn.toolResultTextByToolCallId.set(msgToolCallId, text);
+                  this.emit('message', sessionId, resultMessage);
+                }
+                console.log('[OpenClawRuntime] backfilled tool result from chat.history', `toolCallId=${msgToolCallId}`, `len=${text.length}`, `prevLen=${existingText.length}`);
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[OpenClawRuntime] chat.history fetch failed:', err);
+      }
+    }
 
     if (turn.assistantMessageId) {
       // Flush any pending throttled updates so store content is current.
@@ -5359,6 +5564,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         this.clearPendingStoreUpdate(turn.assistantMessageId);
         this.lastStoreUpdateTime.delete(turn.assistantMessageId);
       }
+      // Cancel any pending incremental backfill timer for this session
+      const backfillTimer = this.incrementalBackfillTimer.get(sessionId);
+      if (backfillTimer) {
+        clearTimeout(backfillTimer);
+        this.incrementalBackfillTimer.delete(sessionId);
+      }
+      this.pendingBackfillToolCallIds.delete(sessionId);
       const shouldRememberClosedRunIds = !turn.suppressRecentlyClosedRunIdsOnCleanup;
       turn.knownRunIds.forEach((knownRunId) => {
         if (shouldRememberClosedRunIds) {
