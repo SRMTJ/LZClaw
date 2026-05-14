@@ -415,7 +415,7 @@ const getToolInputString = (
 const truncatePreview = (value: string, maxLength = 120): string =>
   value.length <= maxLength ? value : `${value.slice(0, maxLength - 3)}...`;
 
-const MEDIA_TOKEN_DISPLAY_RE = /\n?MEDIA:\s*`?[^\s`\n]+`?/gi;
+const MEDIA_TOKEN_DISPLAY_RE = /\n?MEDIA:\s*`?[^`\n]+?`?\s*$/gim;
 
 const normalizeToolResultText = (value: string): string => {
   const withoutAnsi = value.replace(ANSI_ESCAPE_PATTERN, '');
@@ -2058,21 +2058,14 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
         if (msg.type !== 'tool_result' || !msg.content || !msg.metadata?.isFinal) continue;
         if (loadedFileIdsRef.current.has(msg.id)) continue;
 
+        // Only detect explicit MEDIA: tokens in tool results — do NOT parse bare file paths
+        // here, because tool output (e.g. `ls`) may contain many irrelevant file paths.
         const mediaArtifacts = parseMediaTokensFromText(msg.content, msg.id, sessionId);
         for (const ma of mediaArtifacts) {
           const normalized = ma.filePath ? normalizeFilePathForDedup(ma.filePath) : '';
           if (ma.filePath && !seenFilePaths.has(normalized) && !loadedFileIdsRef.current.has(ma.id)) {
             seenFilePaths.add(normalized);
             toLoad.push(ma);
-          }
-        }
-
-        const pathArtifacts = parseFilePathsFromText(msg.content, msg.id, sessionId);
-        for (const pa of pathArtifacts) {
-          const normalized = pa.filePath ? normalizeFilePathForDedup(pa.filePath) : '';
-          if (pa.filePath && !seenFilePaths.has(normalized) && !loadedFileIdsRef.current.has(pa.id)) {
-            seenFilePaths.add(normalized);
-            toLoad.push(pa);
           }
         }
       }
