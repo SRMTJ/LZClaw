@@ -892,6 +892,21 @@ export interface ResolvedMcpServer {
   headers?: Record<string, string>;
 }
 
+// Normalize header keys to lowercase before writing to openclaw.json.
+// The MCP SDK internally uses a `Headers` object which normalizes keys to lowercase,
+// then OpenClaw's `buildSseEventSourceFetch` merges them back with the original config headers.
+// If the config has e.g. "Authorization" (capitalized), the merge produces duplicate keys:
+//   { authorization: "Bearer ...", Authorization: "Bearer ..." }
+// Servers behind WAFs (e.g. Huawei Cloud) reject requests with duplicate auth headers (HTTP 500).
+// Storing keys as lowercase prevents this duplication since HTTP headers are case-insensitive.
+function lowercaseHeaderKeys(headers: Record<string, string>): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    result[key.toLowerCase()] = value;
+  }
+  return result;
+}
+
 function buildOpenClawMcpServers(
   servers: ResolvedMcpServer[],
 ): Record<string, Record<string, unknown>> {
@@ -907,12 +922,12 @@ function buildOpenClawMcpServers(
       case 'sse':
         if (server.url) entry.url = server.url;
         if (server.headers && Object.keys(server.headers).length > 0)
-          entry.headers = server.headers;
+          entry.headers = lowercaseHeaderKeys(server.headers);
         break;
       case 'http':
         if (server.url) entry.url = server.url;
         if (server.headers && Object.keys(server.headers).length > 0)
-          entry.headers = server.headers;
+          entry.headers = lowercaseHeaderKeys(server.headers);
         entry.transport = 'streamable-http';
         break;
     }
