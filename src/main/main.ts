@@ -10,6 +10,7 @@ import { buildScheduledTaskEnginePrompt } from '../scheduledTask/enginePrompt';
 import { migrateScheduledTaskRunsToOpenclaw, migrateScheduledTasksToOpenclaw } from '../scheduledTask/migrate';
 import { AgentId, AgentIpcChannel } from '../shared/agent/constants';
 import { AppUpdateIpc } from '../shared/appUpdate/constants';
+import { ArtifactPreviewIpc } from '../shared/artifactPreview/constants';
 import { COWORK_MESSAGE_PAGE_SIZE, COWORK_SESSION_PAGE_SIZE } from '../shared/cowork/constants';
 import { PlatformRegistry } from '../shared/platform';
 import { ProviderName } from '../shared/providers';
@@ -54,7 +55,7 @@ import { registerProxyTokenRefresher, startCoworkOpenAICompatProxy, stopCoworkOp
 import { generateSessionTitle, getElectronNodeRuntimePath, probeCoworkModelReadiness } from './libs/coworkUtil';
 import { getServerApiBaseUrl, getSkillStoreUrl, refreshEndpointsTestMode } from './libs/endpoints';
 import { mergeEnterpriseOpenclawConfig, resolveEnterpriseConfigPath, syncEnterpriseConfig } from './libs/enterpriseConfigSync';
-import { createPreviewSession, destroyPreviewSession, isPreviewServerUrl, stopHtmlPreviewServer } from './libs/htmlPreviewServer';
+import { createOfficePreviewSession, createPreviewSession, destroyPreviewSession, isPreviewServerUrl, stopHtmlPreviewServer } from './libs/htmlPreviewServer';
 import { exportLogsZip } from './libs/logExport';
 import { McpBridgeServer } from './libs/mcpBridgeServer';
 import { parsePrimaryModelRef, resolveQualifiedAgentModelRef } from './libs/openclawAgentModels';
@@ -5473,7 +5474,7 @@ end tell'`, { timeout: 5000 });
     }
   });
 
-  ipcMain.handle('artifact:createPreviewSession', async (_event, filePath: string) => {
+  ipcMain.handle(ArtifactPreviewIpc.CreateSession, async (_event, filePath: string) => {
     try {
       const result = await createPreviewSession(filePath);
       return { success: true, ...result };
@@ -5482,7 +5483,16 @@ end tell'`, { timeout: 5000 });
     }
   });
 
-  ipcMain.handle('artifact:destroyPreviewSession', async (_event, sessionId: string) => {
+  ipcMain.handle(ArtifactPreviewIpc.CreateOfficeSession, async (_event, filePath: string) => {
+    try {
+      const result = await createOfficePreviewSession(filePath);
+      return { success: true, ...result };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  });
+
+  ipcMain.handle(ArtifactPreviewIpc.DestroySession, async (_event, sessionId: string) => {
     destroyPreviewSession(sessionId);
     return { success: true };
   });
