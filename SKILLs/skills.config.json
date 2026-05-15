@@ -32,6 +32,14 @@
     "skill-creator": { "order": 300, "enabled": true },
     "find-skills": { "order": 301, "enabled": true },
     "data-analysis": { "order": 302, "enabled": true },
-    "juejin-skills": { "order": 302, "enabled": true }
+    "juejin-skills": { "order": 302, "enabled": true },
+    "csm-sales-insight": { "order": 400, "enabled": true },
+    "csm-doc-export": { "order": 401, "enabled": true },
+    "csm-self-expanded": { "order": 402, "enabled": true },
+    "csm-health-risk": { "order": 403, "enabled": true },
+    "csm-renew-opportunity": { "order": 404, "enabled": true },
+    "csm-task-flow": { "order": 405, "enabled": true },
+    "csm-data-audit": { "order": 406, "enabled": true },
+    "csm-weekly-pipeline": { "order": 407, "enabled": true }
   }
 }

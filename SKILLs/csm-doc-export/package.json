@@ -1,0 +1,10 @@
+{
+  "name": "csm-doc-export",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "dependencies": {
+    "docx": "^9.6.1",
+    "xlsx": "^0.18.5"
+  }
+}

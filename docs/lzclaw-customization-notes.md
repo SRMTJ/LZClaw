@@ -1,8 +1,113 @@
 # LZClaw 定制修改说明
 
-更新时间：2026-05-13
+更新时间：2026-05-14
 
 本文记录 `LZClaw/src` 内针对 LZClaw 分支做过的定制修改，目的是让后续合并上游项目代码时，可以快速判断哪些改动属于本项目保留项。
+
+## CSM 技能从 32 合并为 8（2026-05-14）
+
+修改目的：
+
+- 减少技能数量，合并相似能力，保持内置 CSM 技能数量 `<= 10`。
+- 旧 32 个 CSM skill ID 直接下线，仅保留新 8 个 skill ID。
+
+涉及文件：
+
+- `D:/SRMTJ/LZClaw/agent-and-skill/csm-skill-manifest.json`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/skills.config.json`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-*/`
+- `D:/SRMTJ/LZClaw/LZService/app/http/controllers/csm_manifest_sync.go`
+- `D:/SRMTJ/LZClaw/LZService/scripts/build_csm_skill_zips.ps1`
+- `D:/SRMTJ/LZClaw/LZService/tests/feature/skill_store_test.go`
+- `D:/SRMTJ/LZClaw/LZService/tests/feature/agent_template_test.go`
+
+修改内容：
+
+- 将 CSM 技能清单改为 8 个合并技能：
+  - `csm-sales-insight`
+  - `csm-doc-export`
+  - `csm-self-expanded`
+  - `csm-health-risk`
+  - `csm-renew-opportunity`
+  - `csm-task-flow`
+  - `csm-data-audit`
+  - `csm-weekly-pipeline`
+- 每个新技能采用“单技能多子命令”入口（`main.js` / `main.py`）。
+- `skills.config.json` 默认启用项改为仅这 8 个 CSM 技能。
+- LZService 同步逻辑增加旧 32 ID 清理，仅清理历史 32 个 ID 的本地/市场技能记录。
+- zip 构建脚本增加陈旧 zip 清理，`public/skills/csm` 只保留 manifest 当前技能 zip。
+- 销售 Agent 自动同步的 `skillIds` 由 manifest 驱动，自动切换为“新 8 个 + web-search/docx/xlsx”。
+
+验证情况：
+
+- `LZClaw/SKILLs` 下仅保留 8 个 `csm-*` 技能目录。
+- 新技能脚本入口和子命令脚本均已就位。
+- `csm-skill-manifest.json` 已降为 8 条。
+
+## CSM 技能中文描述修复（2026-05-14）
+
+修改目的：
+
+- 修复新增 CSM 技能在技能市场显示“中文描述字段仍为英文”的问题。
+
+涉及文件：
+
+- `D:/SRMTJ/LZClaw/agent-and-skill/csm-skill-manifest.json`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-*/SKILL.md`
+- `D:/SRMTJ/LZClaw/LZService/scripts/build_csm_skill_zips.ps1`
+- `D:/SRMTJ/LZClaw/LZService/public/skills/csm/manifest.json`
+
+修改内容：
+
+- 将 CSM manifest 的 `nameZh` 与 `descriptionZh` 统一改为中文文案。
+- 将 32 个内置 `csm-*` 技能 `SKILL.md` 中描述改为中文。
+- 修复 `build_csm_skill_zips.ps1` 对 manifest 的读取编码，显式使用 `UTF8`，避免中文解析异常。
+
+验证情况：
+
+- 重新执行 `powershell -ExecutionPolicy Bypass -File D:/SRMTJ/LZClaw/LZService/scripts/build_csm_skill_zips.ps1` 成功生成 32 个技能 zip。
+- `go test ./tests/feature -run TestSkillStoreTestSuite -count=1` 通过。
+
+## CSM 技能版本字段补充（2026-05-14）
+
+修改目的：
+
+- 修复新增 `csm-*` 技能 `SKILL.md` 顶部元信息缺少 `version` 的问题。
+
+涉及文件：
+
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-*/SKILL.md`
+
+修改内容：
+
+- 为 32 个 `csm-*` 技能统一补充前置元数据字段：`version: 1.0.0`。
+
+验证情况：
+
+- 抽样检查多个 `csm-*` 的 `SKILL.md`，均包含 `version: 1.0.0`。
+- 全量统计命中 32/32。
+
+## CSM 技能读取路径改为当前工作目录（2026-05-14）
+
+修改目的：
+
+- 去除新增 `csm-*` 技能脚本中的固定绝对路径，统一从“当前工作目录”读取输入文件。
+
+涉及文件：
+
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-*/scripts/*`（本次共 19 个脚本）
+
+修改内容：
+
+- 将 `C:\Users\...`、`/Users/...`、`数据表/...` 等固定路径改为当前目录文件名（例如 `销售管理表.xlsx`、`客户成功总表.xlsx`、`销售管理系统 .xlsx`）。
+- `scan_headers.py` 的扫描目录由固定目录改为 `os.getcwd()`。
+- 同步将部分固定输出路径改为当前目录输出（如 `health_results.json`、`risk_results.json`、`renew_results.json`、`opportunity_results.json`、`task_results.json`、`详细客户分析_3.16-3.19.docx`）。
+
+验证情况：
+
+- 全量检索确认不再存在 `C:\Users\...`、`/Users/...`、`数据表/`、`生成结果/` 等固定路径引用。
+- 受影响 Python 脚本执行 `python -m py_compile` 通过。
+- 受影响 JS 脚本执行 `node --check` 通过。
 
 ## 修改原则
 
@@ -431,6 +536,79 @@ export const LZ_VISIBLE_IM_PLATFORMS = [
 - 初始化检查 `checkApiConfig` 失败时：静默处理（仅记录日志）；
 - 发起会话前检查 `checkApiConfig` 失败时：静默拦截并阻止本次发送（仅记录日志）；
 - 不再触发设置页弹窗，也不再显示配置不足 toast。
+
+## CSM 销售技能内置（32 子技能）
+
+已将 `agent-and-skill/csm-claw-skill/scripts` 现有 32 个脚本按“每脚本一个技能”方式内置到 `LZClaw/SKILLs`，技能 ID 统一使用 `csm-` 前缀。
+
+本次定制包含：
+
+- 新增统一技能清单：`/agent-and-skill/csm-skill-manifest.json`（作为 LZClaw/LZService 对齐来源）；
+- 在 `LZClaw/SKILLs` 新增 32 个 `csm-*` 技能目录（含 `SKILL.md` 与对应脚本入口）；
+- 对 JS 技能补充 `package.json`（`docx` + `xlsx` 依赖），保障安装版环境可运行；
+- 在 `LZClaw/SKILLs/skills.config.json` 中将 32 个 `csm-*` 技能加入 `defaults` 且默认启用；
+- 保持现有技能打包与首次同步链路不变（新增技能自动随安装包下发）。
+
+## CSM 预制技能中文展示名
+
+已将 8 个合并后的 CSM 预制技能展示名改为中文，便于在技能列表中直接识别业务含义：
+
+- `csm-sales-insight` → `销售洞察分析`
+- `csm-doc-export` → `报告导出与文档生成`
+- `csm-self-expanded` → `客户扩展分析`
+- `csm-health-risk` → `健康与风险识别`
+- `csm-renew-opportunity` → `续费与商机分析`
+- `csm-task-flow` → `任务流编排`
+- `csm-data-audit` → `数据审计`
+- `csm-weekly-pipeline` → `周度经营与漏斗分析`
+
+实现说明：
+
+- 调整 `SKILL.md` 的 `name`（展示字段）和文档标题；
+- 同步将 8 个 CSM 技能目录名与 `skillId` 去掉 `-py/-js` 后缀，并更新配置与接口对齐引用。
+
+## CSM 技能 ID 去后缀（2026-05-14）
+
+为统一命名，8 个 CSM 技能 ID 已从 `*-py/*-js` 形式调整为无运行时后缀：
+
+- `csm-sales-insight-js` → `csm-sales-insight`
+- `csm-doc-export-js` → `csm-doc-export`
+- `csm-self-expanded-py` → `csm-self-expanded`
+- `csm-health-risk-py` → `csm-health-risk`
+- `csm-renew-opportunity-py` → `csm-renew-opportunity`
+- `csm-task-flow-py` → `csm-task-flow`
+- `csm-data-audit-py` → `csm-data-audit`
+- `csm-weekly-pipeline-py` → `csm-weekly-pipeline`
+
+同步范围：
+
+- `LZClaw/SKILLs` 目录名、`skills.config.json`、`SKILL.md` 内路径与脚本日志标识；
+- `agent-and-skill/csm-skill-manifest.json`；
+- `LZService/public/skills/csm/manifest.json` 与静态 zip 文件名；
+- `LZService` 自动同步清理旧 32 ID 时，额外清理上述 8 个旧后缀 ID。
+
+## CSM 技能展示名增加 LZClaw 前缀（2026-05-14）
+
+8 个 CSM 合并技能的 `SKILL.md` 前置展示名已统一增加 `LZClaw-` 前缀：
+
+- `LZClaw-销售洞察分析`
+- `LZClaw-报告导出与文档生成`
+- `LZClaw-客户扩展分析`
+- `LZClaw-健康与风险识别`
+- `LZClaw-续费与商机分析`
+- `LZClaw-任务流编排`
+- `LZClaw-数据审计`
+- `LZClaw-周度经营与漏斗分析`
+
+实现范围：
+
+- 仅调整 `LZClaw/SKILLs/csm-*/SKILL.md` 的 frontmatter `name` 字段；
+- `skillId`、目录名、接口返回 ID、脚本入口均保持不变。
+
+补充（LZService 接口侧）：
+
+- `LZService` CSM 同步逻辑已增加 `LZClaw-` 前缀兜底，确保 `skill-store` 接口返回的 CSM 技能名称同样带此前缀；
+- `agent-and-skill/csm-skill-manifest.json` 与 `LZService/public/skills/csm/manifest.json` 的 `nameZh` 也同步为带前缀版本。
 
 ## 后续修改建议
 
