@@ -11,7 +11,7 @@ version: 1.0.0
 ## Usage
 
 ~~~bash
-node "$SKILLS_ROOT/csm-doc-export/main.js" md-to-docx
+python "$SKILLS_ROOT/csm-doc-export/main.py" md-to-docx
 ~~~
 
 ## Subcommands

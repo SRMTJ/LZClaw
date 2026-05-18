@@ -1,111 +1,66 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import zipfile, re, glob, os, sys
+from __future__ import annotations
 
-# 找到数据表目录下的xlsx文件
-path = os.getcwd()
-files = glob.glob(os.path.join(path, '*.xlsx'))
+import json
+from datetime import datetime
+from pathlib import Path
 
-# 找到包含"客户成功"或"增鑫"的文件
-fname = None
-for f in files:
+from crm_api import CrmApiClient, CrmApiError  # noqa: E402
+
+LEAD_REQUIRED = {
+    "lead_id",
+    "company_name",
+    "source",
+    "lead_status",
+    "created_at",
+}
+CUSTOMER_REQUIRED = {
+    "customer_id",
+    "company_name",
+    "customer_stage",
+    "customer_status",
+    "source",
+    "created_at",
+}
+
+
+def missing_fields(required: set[str], payload: dict) -> list[str]:
+    keys = set(payload.keys())
+    return sorted(item for item in required if item not in keys)
+
+
+def main() -> int:
     try:
-        with zipfile.ZipFile(f) as z:
-            wb = z.read('xl/workbook.xml').decode('utf-8')
-            if '增鑫' in wb or '客户成功' in wb:
-                fname = f
-                break
-    except:
-        pass
+        client = CrmApiClient.from_env()
+        leads = client.get_my_leads({"page_size": 1})
+        customers = client.get_my_customers({"page_size": 1})
+    except CrmApiError as error:
+        print(f"[csm-data-audit] CRM API 调用失败: {error}")
+        return 1
 
-if not fname:
-    print("未找到客户成功总表文件")
-    sys.exit(1)
+    lead_sample = leads[0] if leads else {}
+    customer_sample = customers[0] if customers else {}
 
-def get_shared_strings(z):
-    try:
-        xml = z.read('xl/sharedStrings.xml').decode('utf-8')
-        return re.findall(r'<t[^>]*>(.*?)</t>', xml, re.DOTALL)
-    except:
-        return []
+    print(f"[csm-data-audit] dataSource=crm_api scope=current_user generatedAt={datetime.now().isoformat(timespec='seconds')}")
+    print(f"[csm-data-audit] lead sample fields={len(lead_sample.keys())} customer sample fields={len(customer_sample.keys())}")
 
-def get_sheet_names(z):
-    rels = z.read('xl/_rels/workbook.xml.rels').decode()
-    rid_map = {}
-    for m in re.finditer(r'Id="(rId\d+)"[^>]*Target="([^"]+)"', rels):
-        rid_map[m.group(1)] = m.group(2)
-    wb = z.read('xl/workbook.xml').decode()
-    entries = re.findall(r'name="([^"]+)"[^>]+r:id="(rId\d+)"', wb)
-    result = {}
-    for name, rid in entries:
-        path = rid_map.get(rid, '').lstrip('/')
-        if not path.startswith('xl/'):
-            path = 'xl/' + path
-        result[name] = path
-    return result
+    missing_lead = missing_fields(LEAD_REQUIRED, lead_sample)
+    missing_customer = missing_fields(CUSTOMER_REQUIRED, customer_sample)
 
-def read_sheet(z, path, ss):
-    xml = z.read(path).decode('utf-8')
-    sd = re.search(r'<sheetData>(.*?)</sheetData>', xml, re.DOTALL)
-    if not sd:
-        return []
-    rows_data = []
-    rows = re.findall(r'<row r="(\d+)"[^>]*>(.*?)</row>', sd.group(1), re.DOTALL)
-    for row_num, row_content in rows:
-        cells = re.findall(r'<c r="([A-Z]+\d+)"([^>]*)>(.*?)</c>', row_content, re.DOTALL)
-        row_vals = {}
-        for ref, attrs, content in cells:
-            col = re.match(r'([A-Z]+)', ref).group(1)
-            t_type = re.search(r'\bt="([^"]+)"', attrs)
-            v_match = re.search(r'<v>(.*?)</v>', content)
-            t_match = re.search(r'<t[^>]*>(.*?)</t>', content)
-            if t_match:
-                val = t_match.group(1)
-            elif v_match:
-                if t_type and t_type.group(1) == 's':
-                    idx = int(v_match.group(1))
-                    val = ss[idx] if idx < len(ss) else ''
-                else:
-                    val = v_match.group(1)
-            else:
-                val = ''
-            row_vals[col] = val
-        rows_data.append((int(row_num), row_vals))
-    return rows_data
+    print("\n[lead] required fields missing:")
+    print(json.dumps(missing_lead, ensure_ascii=False))
+    print("[customer] required fields missing:")
+    print(json.dumps(missing_customer, ensure_ascii=False))
 
-with zipfile.ZipFile(fname) as z:
-    ss = get_shared_strings(z)
-    sheets = get_sheet_names(z)
-    
-    # 找到包含"增鑫"和"总表"的sheet
-    target_sheet = None
-    for sheet_name in sheets.keys():
-        if '增鑫' in sheet_name and '总表' in sheet_name:
-            target_sheet = sheet_name
-            break
-    
-    if not target_sheet:
-        print("可用sheet列表:")
-        for name in sheets.keys():
-            print(f"  - {name}")
-        sys.exit(1)
-    
-    rows = read_sheet(z, sheets[target_sheet], ss)
+    print("\n[lead] sample payload:")
+    print(json.dumps(lead_sample, ensure_ascii=False, indent=2))
+    print("\n[customer] sample payload:")
+    print(json.dumps(customer_sample, ensure_ascii=False, indent=2))
+    return 0
 
-# 打印表头行，找所有列名
-header_row = rows[0][1]
-print("所有列标题：")
-for col, val in sorted(header_row.items()):
-    if val.strip():
-        print(f"  {col}: {val}")
 
-# 再抽查前3条数据行，看续费相关字段的值
-print("\n前3条数据样本（关注续费/意向相关字段）：")
-keywords = ['续', '意向', '不续', '风险', '经营', '场景']
-for rn, rv in rows[1:4]:
-    name = rv.get('B', '')
-    print(f"\n  客户: {name}")
-    for col, val in sorted(rv.items()):
-        h = header_row.get(col, '')
-        if any(kw in h for kw in keywords) and val.strip():
-            print(f"    {col}({h}): {val}")
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+

@@ -11,7 +11,7 @@ version: 1.0.0
 ## Usage
 
 ~~~bash
-node "$SKILLS_ROOT/csm-sales-insight/main.js" analyze-conversion
+python "$SKILLS_ROOT/csm-sales-insight/main.py" analyze-conversion
 ~~~
 
 ## Subcommands

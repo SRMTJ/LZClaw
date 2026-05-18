@@ -1,26 +1,83 @@
-import pandas as pd, warnings
-warnings.filterwarnings('ignore')
-xl = pd.ExcelFile('销售管理表.xlsx')
-for p in ['李志远', '刘欣萌']:
-    for s in ['B', 'A', 'S']:
-        try:
-            df = xl.parse(f'{p}{s}')
-            df = df[df.iloc[:,0].notna() & ~df.iloc[:,0].astype(str).str.contains('多行文本|必填|文本|关联', na=False)]
-            if len(df) == 0:
-                continue
-            print(f'\n=== {p}{s} ({len(df)}行) ===')
-            for _, row in df.iterrows():
-                name = row.get('客户名称', '')
-                if not name and len(row) > 1:
-                    name = row.iloc[1]
-                ver = row.get('是否确认产品版本', '')
-                fee = row.get('是否确认费用', '')
-                stage_v = row.get('客户阶段', '')
-                follow = row.get('下次跟进日期★', '')
-                record = row.get('商务推进记录', '')
-                pay_time = row.get('付款时间', '')
-                print(f'  {name} | 版本:{ver} | 费用:{fee} | 阶段:{stage_v} | 跟进:{follow} | 付款:{pay_time}')
-                if pd.notna(record):
-                    print(f'    记录: {str(record)[:120]}')
-        except Exception as e:
-            print(f'  error {p}{s}: {e}')
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+from __future__ import annotations
+
+import json
+import re
+from datetime import datetime
+from pathlib import Path
+
+from crm_api import CrmApiClient, CrmApiError  # noqa: E402
+
+OUTPUT_FILE = Path("revenue_prediction_results.json")
+
+
+def to_number(value):
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    text = re.sub(r"[^\d\.-]", "", text)
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def collect_revenue_fields(record: dict) -> dict:
+    hints = ("amount", "price", "fee", "money", "revenue", "gmv", "contract")
+    extracted = {}
+    for key, value in record.items():
+        key_lower = str(key).lower()
+        if not any(hint in key_lower for hint in hints):
+            continue
+        numeric = to_number(value)
+        if numeric is None:
+            continue
+        extracted[key] = numeric
+    return extracted
+
+
+def main() -> int:
+    try:
+        client = CrmApiClient.from_env()
+        customers = client.get_my_customers()
+        leads = client.get_my_leads()
+    except CrmApiError as error:
+        print(f"[csm-renew-opportunity] CRM API 调用失败: {error}")
+        return 1
+
+    field_totals: dict[str, float] = {}
+    field_counts: dict[str, int] = {}
+    for record in [*customers, *leads]:
+        for key, amount in collect_revenue_fields(record).items():
+            field_totals[key] = field_totals.get(key, 0.0) + amount
+            field_counts[key] = field_counts.get(key, 0) + 1
+
+    observed = bool(field_totals)
+    output = {
+        "agent": "CSM_Revenue_Predictor API Edition",
+        "dataSource": "crm_api",
+        "scope": "current_user",
+        "generatedAt": datetime.now().isoformat(timespec="seconds"),
+        "observedRevenueField": observed,
+        "fieldTotals": {key: round(value, 2) for key, value in field_totals.items()},
+        "fieldCounts": field_counts,
+        "notice": "" if observed else "接口未提供可识别金额字段，无法输出金额预测。",
+    }
+
+    OUTPUT_FILE.write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"[csm-renew-opportunity] dataSource=crm_api revenue_fields={len(field_totals)}")
+    if not observed:
+        print("[csm-renew-opportunity] 接口未提供可识别金额字段，已输出提示。")
+    print(f"[csm-renew-opportunity] 输出文件: {OUTPUT_FILE.resolve()}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+

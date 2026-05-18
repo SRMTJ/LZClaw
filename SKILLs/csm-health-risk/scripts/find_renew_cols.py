@@ -1,73 +1,58 @@
-import zipfile, re, json
-from datetime import datetime, timedelta
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+from __future__ import annotations
 
-fname = '客户成功总表.xlsx'
+import json
+from pathlib import Path
 
-def get_shared_strings(z):
+from crm_api import CrmApiClient, CrmApiError  # noqa: E402
+
+
+def collect_keys(payload, prefix="") -> list[str]:
+    keys: list[str] = []
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            next_prefix = f"{prefix}.{key}" if prefix else key
+            keys.append(next_prefix)
+            keys.extend(collect_keys(value, next_prefix))
+    elif isinstance(payload, list):
+        for index, value in enumerate(payload[:2]):
+            next_prefix = f"{prefix}[{index}]"
+            keys.extend(collect_keys(value, next_prefix))
+    return keys
+
+
+def main() -> int:
     try:
-        xml = z.read('xl/sharedStrings.xml').decode('utf-8')
-    except KeyError:
-        try:
-            xml = z.read('xl/SharedStrings.xml').decode('utf-8')
-        except KeyError:
-            return []
-    return re.findall(r'<t[^>]*>(.*?)</t>', xml, re.DOTALL)
+        client = CrmApiClient.from_env()
+        customers = client.get_my_customers({"page_size": 1})
+        if not customers:
+            print("[csm-health-risk] 当前账号无客户数据")
+            return 0
+        customer = customers[0]
+        customer_id = customer.get("customer_id")
+        detail = client.get_customer_detail(customer_id) if customer_id is not None else {}
+    except CrmApiError as error:
+        print(f"[csm-health-risk] CRM API 调用失败: {error}")
+        return 1
 
-def get_sheet_path(z):
-    rels = z.read('xl/_rels/workbook.xml.rels').decode()
-    rid_map = {}
-    for m in re.finditer(r'Id="(rId\d+)"[^>]*Target="([^"]+)"', rels):
-        rid_map[m.group(1)] = m.group(2)
-    wb = z.read('xl/workbook.xml').decode()
-    entries = re.findall(r'name="([^"]+)"[^>]+r:id="(rId\d+)"', wb)
-    for name, rid in entries:
-        if '增鑫' in name and '总表' in name:
-            path = rid_map.get(rid, '').lstrip('/')
-            if not path.startswith('xl/'):
-                path = 'xl/' + path
-            return path
-    return None
+    merged = {"list_item": customer, "detail": detail}
+    keys = collect_keys(merged)
+    keywords = ("renew", "续费", "expire", "到期", "stage", "status", "risk", "标签")
+    matched = [key for key in keys if any(word.lower() in key.lower() for word in keywords)]
 
-def read_sheet_headers(z, path, ss):
-    xml = z.read(path).decode('utf-8')
-    sd = re.search(r'<sheetData>(.*?)</sheetData>', xml, re.DOTALL)
-    if not sd:
-        return {}
-    rows = re.findall(r'<row r="(\d+)"[^>]*>(.*?)</row>', sd.group(1), re.DOTALL)
-    if not rows:
-        return {}
-    _, row_content = rows[0]
-    cells = re.findall(r'<c r="([A-Z]+\d+)"([^>]*)>(.*?)</c>', row_content, re.DOTALL)
-    header = {}
-    for ref, attrs, content in cells:
-        col = re.match(r'([A-Z]+)', ref).group(1)
-        t_type = re.search(r'\bt="([^"]+)"', attrs)
-        v_match = re.search(r'<v>(.*?)</v>', content)
-        t_match = re.search(r'<t[^>]*>(.*?)</t>', content)
-        if t_match:
-            val = t_match.group(1)
-        elif v_match and t_type and t_type.group(1) == 's':
-            idx = int(v_match.group(1))
-            val = ss[idx] if idx < len(ss) else ''
-        elif v_match:
-            val = v_match.group(1)
-        else:
-            val = ''
-        header[col] = val
-    return header
+    print("[csm-health-risk] dataSource=crm_api scope=current_user")
+    print(f"[csm-health-risk] sample_customer_id={customer_id}")
+    print("[csm-health-risk] renew/risk 相关字段路径：")
+    for key in sorted(set(matched)):
+        print(f"  - {key}")
 
-with zipfile.ZipFile(fname) as z:
-    ss = get_shared_strings(z)
-    path = get_sheet_path(z)
-    header = read_sheet_headers(z, path, ss)
+    print("[csm-health-risk] 样本摘要：")
+    print(json.dumps(customer, ensure_ascii=False, indent=2))
+    return 0
 
-print("续费/到期相关字段：")
-keywords = ['到期', '续费日', '年费', '合同', '有效期', '截止', '服务期', '开始', '签约']
-for col, val in sorted(header.items()):
-    if any(kw in val for kw in keywords):
-        print(f"  {col}: {val}")
 
-print("\n已知续费相关列：")
-for col in ['BB','BC','BD','BE','BF','BK','CF','CG','CH','CI','CJ','CK']:
-    if col in header:
-        print(f"  {col}: {header[col]}")
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+

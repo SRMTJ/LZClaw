@@ -1,8 +1,239 @@
 # LZClaw 定制修改说明
 
-更新时间：2026-05-14
+更新时间：2026-05-16
 
 本文记录 `LZClaw/src` 内针对 LZClaw 分支做过的定制修改，目的是让后续合并上游项目代码时，可以快速判断哪些改动属于本项目保留项。
+
+## 8 个 CSM 技能去除外部 csm-common 依赖（2026-05-16）
+
+修改目的：
+
+- 8 个新 CSM 技能改为完全自包含，不再依赖外部目录 `SKILLs/csm-common`。
+
+修改内容：
+
+- 在以下 8 个技能各自 `scripts/` 内新增本地依赖文件：
+  - `crm_api.py`
+  - `csm_metrics.py`
+- 移除所有脚本中的外部依赖注入逻辑：
+  - 删除 `COMMON_DIR = Path(.../csm-common/python)` 及 `sys.path.append(...)`。
+  - 统一改为直接本地导入：`from crm_api import ...`、`from csm_metrics import ...`。
+
+影响技能：
+
+- `csm-sales-insight`
+- `csm-doc-export`
+- `csm-self-expanded`
+- `csm-health-risk`
+- `csm-renew-opportunity`
+- `csm-task-flow`
+- `csm-data-audit`
+- `csm-weekly-pipeline`
+
+验证情况：
+
+- 全量扫描确认 8 个技能目录内已无 `csm-common` / `COMMON_DIR` 引用。
+- `python -m py_compile` 覆盖 8 个技能全部 `.py` 文件通过。
+
+## 8 个 CSM 技能独立内置 crm_api.py（2026-05-16）
+
+修改目的：
+
+- 按技能维度内置 `crm_api.py`，避免 8 个 CSM 技能在运行时共享同一份 `csm-common/python/crm_api.py`。
+
+涉及文件：
+
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-sales-insight/scripts/crm_api.py`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-doc-export/scripts/crm_api.py`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-self-expanded/scripts/crm_api.py`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-health-risk/scripts/crm_api.py`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-renew-opportunity/scripts/crm_api.py`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-task-flow/scripts/crm_api.py`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-data-audit/scripts/crm_api.py`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-weekly-pipeline/scripts/crm_api.py`
+- 以下脚本中 `COMMON_DIR` 的加载顺序从 `sys.path.insert(0, ...)` 改为 `sys.path.append(...)`，确保优先加载各技能本地 `crm_api.py`：
+  - `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-sales-insight/scripts/sales_insight_api.py`
+  - `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-self-expanded/scripts/analyze_self_expanded_v3.py`
+  - `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-health-risk/scripts/csm_health.py`
+  - `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-health-risk/scripts/risk_agent.py`
+  - `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-health-risk/scripts/find_renew_cols.py`
+  - `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-renew-opportunity/scripts/renew_agent.py`
+  - `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-renew-opportunity/scripts/opportunity_agent.py`
+  - `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-renew-opportunity/scripts/predict_revenue3.py`
+  - `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-data-audit/scripts/scan_headers.py`
+  - `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-data-audit/scripts/wyw_check.py`
+  - `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-weekly-pipeline/scripts/analyze_weekly.py`
+
+验证情况：
+
+- `python -m py_compile` 覆盖 8 个新增 `crm_api.py` 与上述技能脚本，全部通过。
+
+## 模型输入输出调试日志（2026-05-15）
+
+修改目的：
+
+- 在控制台直接看到模型请求入参与模型返回结果，便于排查 `Tool not found`、空工具调用、上游返回异常等问题。
+
+涉及文件：
+
+- `D:/SRMTJ/LZClaw/LZClaw/src/main/libs/openclawTokenProxy.ts`
+
+修改内容：
+
+- 在 OpenClaw token proxy 增加模型输入日志：
+  - 请求 ID、模型 ID、路由来源（`direct`/`fallback`）、上游 URL、请求方法与路径；
+  - `messages` 数量、最后一条用户消息预览、system 消息预览、tools 列表、完整请求结构预览（截断）。
+- 增加模型输出日志：
+  - 非流式响应：输出 `id/model/usage/error`、首条回答预览、tool calls 预览、完整响应结构预览（截断）；
+  - 流式响应（SSE）：输出响应状态、字节数与前几 KB 输出预览（截断）。
+- 增加敏感字段脱敏：
+  - `apiKey/authorization/token/password/secret` 等字段按规则脱敏后再写日志。
+
+验证情况：
+
+- `npx vitest run src/main/libs/openclawTokenProxy.test.ts` 通过。
+- `npx tsc --project electron-tsconfig.json --noEmit` 通过。
+
+## 登录菜单新增 LZCRM 入口（2026-05-16）
+
+修改目的：
+
+- 在“我的”下拉菜单中，为“增值服务”下方新增 `LZCRM` 菜单项，点击后跳转 `http://lzcrm.srmtj.com`。
+
+涉及文件：
+
+- `D:/SRMTJ/LZClaw/LZClaw/src/renderer/components/LoginButton.tsx`
+- `D:/SRMTJ/LZClaw/LZClaw/src/renderer/services/i18n.ts`
+
+修改内容：
+
+- 在登录后用户菜单动作区新增按钮：
+  - 文案：`LZCRM`
+  - 位置：`增值服务` 下方、`退出登录` 上方
+  - 行为：调用 `window.electron.shell.openExternal('http://lzcrm.srmtj.com')`
+- 新增国际化键：
+  - `authLzCrm`（中文/英文均为 `LZCRM`）
+
+验证情况：
+
+- `npx eslint src/renderer/components/LoginButton.tsx src/renderer/services/i18n.ts` 通过。
+
+## 8 个 CSM 技能全量切换 CRM API 数据源（2026-05-16）
+
+修改目的：
+
+- 将 8 个 `csm-*` 技能从 Excel/本地表读取改为直连 CRM API。
+- 统计口径统一为“当前登录用户”。
+- 保持技能入口命令不变，保留关键 JSON 产物文件名（`health_results.json`、`risk_results.json`、`renew_results.json`、`opportunity_results.json`、`task_results.json`）。
+
+涉及文件：
+
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-common/python/crm_api.py`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-common/python/csm_metrics.py`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-common/node/crmApi.js`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-sales-insight/*`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-self-expanded/*`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-health-risk/*`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-renew-opportunity/*`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-task-flow/*`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-weekly-pipeline/*`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-data-audit/*`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-doc-export/*`
+
+修改内容：
+
+- 新增 CSM 通用 API 访问层（Python/Node）：
+  - 登录：`POST /auth/login`
+  - 列表分页：`page/page_size`（`page_size` 最大 100）
+  - 自动鉴权重试：`401` 或业务码 `40101` 时自动重登一次
+  - 统一环境变量：
+    - `CSM_CRM_BASE_URL`（默认 `http://127.0.0.1:8080/api/v1`）
+    - `CSM_CRM_USERNAME` / `CSM_CRM_MOBILE`（二选一）
+    - `CSM_CRM_PASSWORD`（必填）
+    - `CSM_CRM_PAGE_SIZE`（可选，默认 100）
+- 8 个技能全部改为 API 数据驱动：
+  - `csm-sales-insight`：改为 `/my-leads + /my-customers` 聚合分析；金额字段缺失时明确输出提示。
+  - `csm-self-expanded`：按日期窗口分析“自拓”线索与阶段推进。
+  - `csm-health-risk`：基于客户、跟进记录、状态重算健康分与风险客户。
+  - `csm-renew-opportunity`：基于阶段/状态/标签/跟进输出续费与经营机会。
+  - `csm-task-flow`：改为消费前序 JSON 产物，不再依赖 Excel。
+  - `csm-weekly-pipeline`：按时间窗口统计 L/D/C/B/S，S 支持“终态字典优先、缺失时回退 B”。
+  - `csm-data-audit`：改为 API 字段完整性与字典枚举一致性检查。
+  - `csm-doc-export`：改为从 `risk/renew/opportunity/task` JSON 生成报告，不再使用硬编码示例文本。
+- 兼容说明：
+  - 保持技能子命令入口不变（`main.py` / `main.js` 体系不变）。
+  - 旧“从当前工作目录读取 Excel”能力已被 CRM API 直连替代。
+
+验证情况：
+
+- Python 语法检查通过：
+  - `python -m py_compile`（覆盖 `csm-common` 与 8 个技能改造脚本）
+- Node 语法检查通过：
+  - `node --check`（覆盖 `csm-common`、`csm-sales-insight`、`csm-doc-export`）
+- 冒烟执行（无凭证）：
+  - 8 个技能可正常进入 CRM 鉴权流程，并在缺失 `CSM_CRM_PASSWORD` 时给出明确错误，不再出现 Excel 文件缺失错误。
+
+## CSM 技能语言统一为 Python（2026-05-16）
+
+修改目的：
+
+- 将 8 个 CSM 技能中的 JS 技能实现统一为 Python，减少双语言维护成本。
+
+涉及文件：
+
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-sales-insight/main.py`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-sales-insight/scripts/sales_insight_api.py`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-doc-export/main.py`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-doc-export/scripts/gen_detailed_analysis.py`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-doc-export/scripts/md_to_docx_ultimate.py`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-sales-insight/SKILL.md`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-doc-export/SKILL.md`
+
+修改内容：
+
+- `csm-sales-insight`：
+  - 删除 `main.js` 与全部 `scripts/*.js`；
+  - 新增 `main.py` + `sales_insight_api.py`，子命令与行为保持不变。
+- `csm-doc-export`：
+  - 删除 `main.js` 与全部 `scripts/*.js`；
+  - 新增 `main.py` + Python 版本报告生成/Markdown 转 DOCX；
+  - `md-to-docx` 改为 Python 原生最小 OpenXML 打包实现，不依赖 Node `docx`。
+- 两个技能 `SKILL.md` 使用示例统一改为 `python .../main.py ...`。
+- 删除两个技能目录中的 `package.json`，移除 Node 依赖入口。
+
+验证情况：
+
+- `python -m py_compile` 通过：
+  - `SKILLs/csm-sales-insight/main.py`
+  - `SKILLs/csm-sales-insight/scripts/sales_insight_api.py`
+  - `SKILLs/csm-doc-export/main.py`
+  - `SKILLs/csm-doc-export/scripts/gen_detailed_analysis.py`
+  - `SKILLs/csm-doc-export/scripts/md_to_docx_ultimate.py`
+- 冒烟：
+- `python SKILLs/csm-sales-insight/main.py`（无凭证时返回明确 CRM 鉴权错误）
+- `python SKILLs/csm-doc-export/main.py`（可生成 `csm_detailed_analysis.md`）
+
+## CSM Skill 内置 CRM 默认账号配置（2026-05-16）
+
+修改目的：
+
+- 先将 CRM 地址和演示账号密码直接内置到 skill 公共配置中，便于本地直接运行。
+
+涉及文件：
+
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-common/python/crm_api.py`
+
+修改内容：
+
+- `CrmConfig.from_env()` 默认值调整为：
+  - `CSM_CRM_BASE_URL` 默认：`http://lzcrm.srmtj.com/api/v1`
+  - `CSM_CRM_USERNAME` 默认：`demo_admin`
+  - `CSM_CRM_PASSWORD` 默认：`Passw0rd!`
+- 仍保留环境变量优先级：如果外部设置了 `CSM_CRM_*`，则优先使用外部值覆盖默认值。
+
+验证情况：
+
+- `python -m py_compile D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-common/python/crm_api.py` 通过。
 
 ## CSM 技能从 32 合并为 8（2026-05-14）
 
@@ -609,6 +840,115 @@ export const LZ_VISIBLE_IM_PLATFORMS = [
 
 - `LZService` CSM 同步逻辑已增加 `LZClaw-` 前缀兜底，确保 `skill-store` 接口返回的 CSM 技能名称同样带此前缀；
 - `agent-and-skill/csm-skill-manifest.json` 与 `LZService/public/skills/csm/manifest.json` 的 `nameZh` 也同步为带前缀版本。
+
+## CSM 技能空参数容错与当前目录文件识别（2026-05-15）
+
+修改目的：
+
+- 修复 agent 聊天触发技能时参数为空（`{}`）导致 `Tool execution failed`。
+- 将 `csm-health-risk` 输入文件读取改为“当前工作目录自动识别”，不再依赖固定文件名存在。
+
+涉及文件：
+
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-health-risk/main.py`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-health-risk/scripts/risk_agent.py`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-health-risk/scripts/csm_health.py`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-health-risk/scripts/find_renew_cols.py`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-data-audit/main.py`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-renew-opportunity/main.py`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-self-expanded/main.py`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-task-flow/main.py`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-weekly-pipeline/main.py`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-sales-insight/main.py`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-doc-export/main.py`
+
+修改内容：
+
+- 8 个 CSM 技能入口统一支持“无子命令时走默认子命令”，避免直接退出报错。
+- `csm-health-risk` 三个脚本支持：
+  - 从命令行参数或 `CSM_INPUT_XLSX` 指定输入文件；
+  - 自动扫描当前工作目录下 `.xlsx/.xlsm/.xls`；
+  - 自动选择总表 sheet（优先 `⭐增鑫客成-总表`，其次按“增鑫/总表”匹配）；
+  - 找不到可用文件或 sheet 时输出中文提示并安全返回，不再硬失败。
+
+验证情况：
+
+- `python -m py_compile` 校验通过（包含 5 个 `main.py` 与 3 个 `csm-health-risk` 脚本）。
+- `python -m py_compile` 校验通过（`csm-sales-insight/main.py`、`csm-doc-export/main.py`）。
+- `python D:/SRMTJ/LZClaw/LZClaw/SKILLs/csm-health-risk/main.py` 在无参数、无表格场景下返回 0，并输出“请放入当前工作目录”的提示。
+
+## Tool 失败诊断日志增强（2026-05-15）
+
+修改目的：
+
+- 当 agent 聊天出现 `Tool execution failed` 时，在控制台输出可定位的详细错误信息。
+- 特别针对 `read` 工具缺少 `path` 参数（`Validation failed for tool "read"`）提供明确诊断日志。
+
+涉及文件：
+
+- `D:/SRMTJ/LZClaw/LZClaw/src/main/libs/agentEngine/openclawRuntimeAdapter.ts`
+
+修改内容：
+
+- 在 `tool_result` 且 `isError=true` 分支新增统一错误日志：
+  - `sessionId/sessionKey/runId`
+  - `toolName/toolCallId`
+  - `toolInput`（工具参数）
+  - 校验错误关键行（如 `must have required property 'path'`）
+  - 结果文本预览和原始结果预览（截断）
+- 新增 `read` 工具专项日志：
+- 当识别到缺少 `path` 校验错误时，额外打印 `missing required "path" argument` 和参数键列表。
+- 增加 `toolCallId` 级别上下文回溯：
+  - 当 `result` 事件未携带 `toolName/args` 时，自动复用同一 `toolCallId` 在 `start/update` 阶段记录的工具名与参数；
+  - 错误日志新增 `dataKeys`、`possibleErrorFields`、`rawEventPreview`，用于定位“空 result 事件”问题。
+- 增加历史探针日志（history probe）：
+  - 对于 `phase=result` 仅带 `toolCallId + isError` 的空壳失败事件，自动查询一次 `chat.history`；
+  - 打印该 `toolCallId` 在历史中的 `toolResult`/`assistant.toolCall` 命中信息，定位是否网关缺字段或事件乱序。
+- 增加 backfill 结果预览：
+  - `incremental backfill` 与 `backfilled tool result` 日志新增 `preview`，便于快速判断大量短结果（如 `len=15`）的真实文本。
+
+验证情况：
+
+- `npx tsc --project electron-tsconfig.json --noEmit` 通过。
+- `npx eslint src/main/libs/agentEngine/openclawRuntimeAdapter.ts` 通过。
+
+## OpenClaw v2026.4.29 配置兼容修复（2026-05-16）
+
+问题现象：
+
+- OpenClaw 启动报错：
+  - `agents.defaults: Unrecognized key: "cwd"`
+  - `cron: Unrecognized key: "skipMissedJobs"`
+
+原因说明：
+
+- 当前 `v2026.4.29` 运行时 schema 不接受上述两个配置键；
+- LZClaw 生成的 `openclaw.json` 仍写入了这两个键，导致网关配置校验失败并中止启动。
+
+本次修改：
+
+- 停止在运行时配置中写入：
+  - `agents.defaults.cwd`
+  - `cron.skipMissedJobs`
+- 保留 `agents.list[].cwd`（按 Agent 级别）和其它 cron 配置不变。
+
+涉及文件：
+
+- `D:/SRMTJ/LZClaw/LZClaw/src/main/libs/openclawConfigSync.ts`
+- `D:/SRMTJ/LZClaw/LZClaw/src/main/libs/openclawConfigSync.runtime.test.ts`
+
+额外处理（本地立即生效）：
+
+- 已清理当前用户态配置文件中的历史不兼容键：
+  - `C:/Users/Administrator/AppData/Roaming/LZClaw/openclaw/state/openclaw.json`
+  - 删除 `agents.defaults.cwd` 与 `cron.skipMissedJobs`
+
+验证情况：
+
+- `npx vitest run src/main/libs/openclawConfigSync.runtime.test.ts` 通过（12/12）。
+- `npm run compile:electron` 通过。
+- `npm run build` 通过（已更新 `dist-electron/main.js`，不再写上述两个键）。
+- `npm run openclaw:runtime:host` 通过。
 
 ## 后续修改建议
 

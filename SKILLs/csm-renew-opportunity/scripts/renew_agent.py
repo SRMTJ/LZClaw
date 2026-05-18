@@ -1,253 +1,152 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-CSM Claw · 续费预测Agent  V1.0
-================================
-Agent 名称：CSM_Renew_Predictor
-职责：基于客户盘点表字段，判断每位客户未来 30/60/90 天的续费概率，
-      输出高/中/低续费风险分级，供任务 Agent 和主管驾驶舱使用。
+from __future__ import annotations
 
-判断维度：
-  1. 到期距今天数（urgency_score）
-  2. 续费意向字段（intent_score）
-  3. 续费状态字段（status_score）
-  4. 服务阶段（stage_score）
-  5. 风险标签（risk_score）
-  6. 最近沟通时间（contact_score）
-
-续费概率区间：
-  ≥ 70%   → 高续费概率（建议确认付款）
-  40-69%  → 中续费概率（建议深度跟进）
-  < 40%   → 低续费概率（需重点干预）
-"""
-
-import pandas as pd
 import json
-from datetime import datetime, date
+from datetime import date, datetime
+from pathlib import Path
 
-# ── 常量 ───────────────────────────────────────────────────────────────
-EXCEL_FILE  = '客户成功总表.xlsx'
-SHEET_NAME  = '⭐增鑫客成-总表'
-OUTPUT_FILE = 'renew_results.json'
-TODAY       = date.today()
+from crm_api import CrmApiClient, CrmApiError, split_tokens  # noqa: E402
+from csm_metrics import (  # noqa: E402
+    contains_risk_keywords,
+    customer_name,
+    customer_owner,
+    is_final_stage,
+    parse_days_since,
+    parse_days_until,
+    safe_text,
+    stage_label,
+)
 
-# 续费意向 → 分数
-INTENT_SCORE = {
-    '大机会':       90,
-    '可转化':       70,
-    '已合作':       80,
-    '待确定':       45,
-    '未做跟进预估': 35,
-    '流失风险':     15,
-    '死单':          5,
-}
-
-# 续费状态 → 分数
-STATUS_SCORE = {
-    '提前3月以上': 95,
-    '提前2月':     85,
-    '提前1月':     75,
-    '当月续费':    65,
-    '断约':        10,
-}
-
-# 服务阶段 → 分数
-STAGE_SCORE = {
-    '活跃期':             60,
-    '场景交付期中':       55,
-    '场景交付延期-卡点':  40,
-    '基础交付中':         50,
-    '基础交付延期-有卡点':35,
-    '断约':               10,
-    '续费期':             70,
-}
-
-# 风险标签 → 扣分
-RISK_DEDUCT = {
-    '断约风险':    -30,
-    '流失风险':    -35,
-    '准备关店':    -40,
-    '准备换系统':  -40,
-    '需要2次建联': -10,
-    '正常建联':     0,
-    '新签交付中':   0,
-}
+OUTPUT_FILE = Path("renew_results.json")
 
 
-def days_to_expire(expire_val):
-    """将到期日期转换为"距今天数"（负数=已逾期）"""
-    if pd.isna(expire_val):
-        return None
-    try:
-        if isinstance(expire_val, (datetime, pd.Timestamp)):
-            return (expire_val.date() - TODAY).days
-        if isinstance(expire_val, date):
-            return (expire_val - TODAY).days
-        # 数字 Excel 序列号
-        ts = pd.to_datetime(expire_val, errors='coerce')
-        if pd.isna(ts):
-            return None
-        return (ts.date() - TODAY).days
-    except Exception:
-        return None
+def predict_customer(customer: dict) -> dict:
+    stage = stage_label(customer)
+    status = safe_text(customer.get("customer_status"))
+    tags = split_tokens(customer.get("customer_tags"))
+    pain = safe_text(customer.get("business_pain_points"))
 
+    score = 50
+    if "续费" in stage:
+        score += 15
+    if is_final_stage(stage):
+        score += 10
+    if "owned" in status or "活跃" in status:
+        score += 5
+    if "流失" in status or "断约" in stage:
+        score -= 30
+    if any(contains_risk_keywords(tag) for tag in tags) or contains_risk_keywords(pain):
+        score -= 20
 
-def calc_renew_score(row) -> dict:
-    """计算单客户续费预测分数，返回结果字典"""
-    score = 50  # 基础分
+    last_follow = customer.get("latest_follow_up_time") or customer.get("last_follow_up_time")
+    days_since_follow = parse_days_since(last_follow)
+    if days_since_follow is None:
+        score -= 15
+    elif days_since_follow > 60:
+        score -= 20
+    elif days_since_follow > 30:
+        score -= 10
+    elif days_since_follow <= 7:
+        score += 5
 
-    # 1. 到期紧迫度
-    days = days_to_expire(row.get('最新到期时间'))
-    if days is None:
-        days = days_to_expire(row.get('26年到期时间'))
-    urgency_tag = '无到期信息'
-    horizon = None
-    if days is not None:
-        if days < 0:
-            urgency_tag = '已逾期'
-            score -= 25
-            horizon = '逾期'
-        elif days <= 30:
-            urgency_tag = f'{days}天内到期'
-            score += 10  # 紧迫 = 机会
-            horizon = '30天内'
-        elif days <= 60:
-            urgency_tag = f'{days}天内到期'
-            score += 5
-            horizon = '60天内'
-        elif days <= 90:
-            urgency_tag = f'{days}天内到期'
-            horizon = '90天内'
+    next_follow = customer.get("next_follow_up_time")
+    days_left = parse_days_until(next_follow)
+    horizon = "无到期信息"
+    if days_left is not None:
+        if days_left < 0:
+            horizon = "逾期"
+            score -= 10
+        elif days_left <= 30:
+            horizon = "30天内"
+            score += 8
+        elif days_left <= 60:
+            horizon = "60天内"
+            score += 4
+        elif days_left <= 90:
+            horizon = "90天内"
         else:
-            urgency_tag = f'{days}天后到期'
-            score -= 5
-            horizon = '90天以上'
-
-    # 2. 续费意向
-    intent = str(row.get('预估续费意向') or '').strip()
-    if not intent or intent == 'nan':
-        intent = str(row.get('25年续费意向') or '').strip()
-    score += INTENT_SCORE.get(intent, 35) - 50  # 相对基准50调整
-
-    # 3. 续费状态
-    status = str(row.get('续费状态') or '').strip()
-    if status and status != 'nan':
-        score += STATUS_SCORE.get(status, 40) - 50
-
-    # 4. 服务阶段
-    stage = str(row.get('服务阶段') or '').strip()
-    score += STAGE_SCORE.get(stage, 45) - 50
-
-    # 5. 风险标签扣分
-    label = str(row.get('盘点后客户标签') or '').strip()
-    score += RISK_DEDUCT.get(label, 0)
-
-    # 6. 最近沟通时间
-    last_contact = row.get('最近跟进时间') or row.get('最近跟进日期')
-    contact_days = None
-    if not pd.isna(last_contact) if pd.api.types.is_scalar(last_contact) else False:
-        try:
-            lc = pd.to_datetime(last_contact, errors='coerce')
-            if not pd.isna(lc):
-                contact_days = (TODAY - lc.date()).days
-                if contact_days > 60:
-                    score -= 15
-                elif contact_days > 30:
-                    score -= 8
-                elif contact_days <= 14:
-                    score += 5
-        except Exception:
-            pass
+            horizon = "90天以上"
 
     score = max(0, min(100, score))
-
     if score >= 70:
-        prob_level = '高'
-        prob_label = '[健康] 高续费概率'
-        action     = '确认付款时间 / 推进签单'
+        prob_level = "高"
+        prob_label = "[健康] 高续费概率"
+        action = "确认续费窗口并推动签约"
     elif score >= 40:
-        prob_level = '中'
-        prob_label = '[成长] 中续费概率'
-        action     = '深度沟通意向 / 解除顾虑'
+        prob_level = "中"
+        prob_label = "[成长] 中续费概率"
+        action = "安排深度沟通，排除续费阻碍"
     else:
-        prob_level = '低'
-        prob_label = '[流失] 低续费概率'
-        action     = '紧急介入 / 挽回沟通'
+        prob_level = "低"
+        prob_label = "[流失] 低续费概率"
+        action = "升级保客预警，启动挽回动作"
 
     return {
-        'name':        str(row.get('客户名称', '') or '').strip(),
-        'csm':         str(row.get('负责CSM', '') or row.get('CSM', '') or '').strip(),
-        'stage':       stage,
-        'expire_date': str(row.get('最新到期时间', '') or ''),
-        'days_left':   days,
-        'urgency_tag': urgency_tag,
-        'horizon':     horizon,
-        'intent':      intent if intent and intent != 'nan' else '未填写',
-        'status':      status if status and status != 'nan' else '未填写',
-        'renew_score': score,
-        'prob_level':  prob_level,
-        'prob_label':  prob_label,
-        'action':      action,
+        "customer_id": customer.get("customer_id"),
+        "name": customer_name(customer),
+        "csm": customer_owner(customer),
+        "stage": stage,
+        "status": status or "未知",
+        "expire_date": safe_text(next_follow),
+        "days_left": days_left,
+        "horizon": horizon,
+        "intent": safe_text(customer.get("recommendation_reason")) or "未提供",
+        "renew_score": score,
+        "prob_level": prob_level,
+        "prob_label": prob_label,
+        "action": action,
+        "data_source": "crm_api",
+        "scope": "current_user",
     }
 
 
-def main():
-    print(f'[CSM_Renew_Predictor V1.0]  开始续费预测分析...')
-    df = pd.read_excel(EXCEL_FILE, sheet_name=SHEET_NAME, header=0)
-    print(f'  读取客户总数：{len(df)} 家')
+def main() -> int:
+    try:
+        client = CrmApiClient.from_env()
+        customers = client.get_my_customers()
+    except CrmApiError as error:
+        print(f"[csm-renew-opportunity] CRM API 调用失败: {error}")
+        return 1
 
-    results = []
-    for _, row in df.iterrows():
-        r = calc_renew_score(row)
-        # 过滤断约且无到期信息的客户
-        if r['stage'] == '断约' and r['days_left'] is None:
-            continue
-        results.append(r)
+    results = [predict_customer(customer) for customer in customers]
+    results.sort(key=lambda item: item["renew_score"], reverse=True)
 
-    # 按分数降序（高续费优先）
-    results.sort(key=lambda x: -x['renew_score'])
-
-    high = [r for r in results if r['prob_level'] == '高']
-    mid  = [r for r in results if r['prob_level'] == '中']
-    low  = [r for r in results if r['prob_level'] == '低']
-
-    # 按 horizon 分桶
-    h30  = [r for r in results if r['horizon'] == '30天内']
-    h60  = [r for r in results if r['horizon'] == '60天内']
-    h90  = [r for r in results if r['horizon'] == '90天内']
-    overdue = [r for r in results if r['horizon'] == '逾期']
+    high = [item for item in results if item["prob_level"] == "高"]
+    mid = [item for item in results if item["prob_level"] == "中"]
+    low = [item for item in results if item["prob_level"] == "低"]
 
     summary = {
-        'total':        len(results),
-        'high_prob':    len(high),
-        'mid_prob':     len(mid),
-        'low_prob':     len(low),
-        'expire_30d':   len(h30),
-        'expire_60d':   len(h60),
-        'expire_90d':   len(h90),
-        'overdue':      len(overdue),
+        "total": len(results),
+        "high_prob": len(high),
+        "mid_prob": len(mid),
+        "low_prob": len(low),
+        "expire_30d": sum(1 for item in results if item["horizon"] == "30天内"),
+        "expire_60d": sum(1 for item in results if item["horizon"] == "60天内"),
+        "expire_90d": sum(1 for item in results if item["horizon"] == "90天内"),
+        "overdue": sum(1 for item in results if item["horizon"] == "逾期"),
     }
 
     output = {
-        'date':     str(TODAY),
-        'agent':    'CSM_Renew_Predictor V1.0',
-        'summary':  summary,
-        'high_prob_clients': high,
-        'mid_prob_clients':  mid,
-        'low_prob_clients':  low,
-        'all_clients':       results,
+        "date": str(date.today()),
+        "agent": "CSM_Renew_Predictor API Edition",
+        "dataSource": "crm_api",
+        "scope": "current_user",
+        "generatedAt": datetime.now().isoformat(timespec="seconds"),
+        "summary": summary,
+        "high_prob_clients": high,
+        "mid_prob_clients": mid,
+        "low_prob_clients": low,
+        "all_clients": results,
     }
 
-    with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
-        json.dump(output, f, ensure_ascii=False, indent=2, default=str)
-
-    print(f'  分析完成：{len(results)} 家有效续费客户')
-    print(f'  [健康] 高续费概率（≥70分）：{len(high)} 家')
-    print(f'  [成长] 中续费概率（40-69）：{len(mid)} 家')
-    print(f'  [流失] 低续费概率（<40分） ：{len(low)} 家')
-    print(f'  [日期] 30天内到期：{len(h30)}  60天内：{len(h60)}  90天内：{len(h90)}  已逾期：{len(overdue)}')
-    print(f'  → 结果已保存至 {OUTPUT_FILE}')
+    OUTPUT_FILE.write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"[csm-renew-opportunity] dataSource=crm_api scope=current_user total={summary['total']} high={summary['high_prob']} mid={summary['mid_prob']} low={summary['low_prob']}")
+    print(f"[csm-renew-opportunity] 输出文件: {OUTPUT_FILE.resolve()}")
+    return 0
 
 
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+

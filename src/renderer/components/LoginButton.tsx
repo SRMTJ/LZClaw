@@ -121,6 +121,11 @@ const UserMenu: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     onClose();
   };
 
+  const handleOpenLzCrm = async () => {
+    await window.electron.shell.openExternal('http://lzcrm.srmtj.com');
+    onClose();
+  };
+
   const phoneSuffix = user?.phone ? user.phone.slice(-4) : '';
 
   const totalCredits = profileSummary?.totalCreditsRemaining ?? 0;
@@ -205,6 +210,13 @@ const UserMenu: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           className="w-full px-4 py-2 text-left text-sm text-foreground hover:bg-surface-raised transition-colors cursor-pointer"
         >
           {i18nService.t('authValueAddedServices')}
+        </button>
+        <button
+          type="button"
+          onClick={handleOpenLzCrm}
+          className="w-full px-4 py-2 text-left text-sm text-foreground hover:bg-surface-raised transition-colors cursor-pointer"
+        >
+          {i18nService.t('authLzCrm')}
         </button>
         <button
           type="button"

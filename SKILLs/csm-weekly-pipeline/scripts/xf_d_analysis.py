@@ -1,42 +1,39 @@
-import pandas as pd, warnings
-warnings.filterwarnings('ignore')
-xl = pd.ExcelFile('销售管理系统 .xlsx')
-df = xl.parse('肖芳D')
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+from __future__ import annotations
 
-# 过滤有效行
-df = df[df['客户名称'].notna()]
-df = df[~df['客户名称'].astype(str).str.contains('多行文本|必填|文本', na=False)]
-df = df[df['客户名称'].astype(str).str.strip() != 'nan']
-df = df.reset_index(drop=True)
+import json
+from pathlib import Path
 
-print(f'肖芳 D阶段有效客户数：{len(df)}\n')
+RESULT_FILE = Path("weekly_pipeline_results.json")
 
-for i, row in df.iterrows():
-    name   = str(row.get('客户名称','')).strip()
-    wechat = str(row.get('是否已加微信','')).strip()
-    kp     = str(row.get('KP姓名','')).strip()
-    phone  = str(row.get('KP联系方式','')).strip()
-    pain   = str(row.get('核心痛点★','')).strip()
-    action = str(row.get('短期动作建议★','')).strip()
-    risk   = str(row.get('转化风险★','')).strip()
-    stay   = row.get('阶段停留天数', 0)
-    next_d = row.get('下次跟进日期★', None)
-    status = str(row.get('跟进状态★','')).strip()
-    result = str(row.get('跟进结果','')).strip()
-    enter  = row.get('进入 D 日期★', None)
-    solution = str(row.get('有赞解决方案匹配★','')).strip()
 
-    nd_str = str(next_d).split(' ')[0] if pd.notna(next_d) else '未设置'
-    ed_str = str(enter).split(' ')[0] if pd.notna(enter) else '未知'
+def main() -> int:
+    if not RESULT_FILE.exists():
+        print("[csm-weekly-pipeline] 未找到 weekly_pipeline_results.json，请先执行 weekly 子命令。")
+        return 1
 
-    def v(s): return s if s not in ('nan','NaN','') else '未填'
+    payload = json.loads(RESULT_FILE.read_text(encoding="utf-8"))
+    summary = payload.get("summary", {})
+    details = payload.get("details", {})
 
-    print(f"【{i+1}】{name}")
-    print(f"  微信：{wechat} | KP：{v(kp)} | 电话：{v(phone)}")
-    print(f"  进入D：{ed_str} | 停留：{stay}天 | 下次跟进：{nd_str}")
-    print(f"  跟进状态：{v(status)} | 跟进结果：{v(result)}")
-    print(f"  核心痛点：{v(pain)}")
-    print(f"  解决方案：{v(solution)}")
-    print(f"  短期动作：{v(action)}")
-    print(f"  转化风险：{v(risk)}")
-    print()
+    d_records = details.get("D", [])
+    print("[csm-weekly-pipeline] D 阶段专项分析")
+    print(f"  D 新增: {summary.get('D', 0)}")
+    print(f"  C 新增: {summary.get('C', 0)}")
+    print(f"  D->C 转化率: {(summary.get('C', 0) / summary.get('D', 1) * 100):.1f}%" if summary.get("D", 0) else "  D->C 转化率: 0.0%")
+
+    if not d_records:
+        print("  本周无 D 阶段变更记录")
+        return 0
+
+    print("  最近 D 阶段客户（最多 20 条）：")
+    for row in d_records[:20]:
+        print(f"    - {row.get('name', '')} | {row.get('changed_at', '')}")
+    if len(d_records) > 20:
+        print(f"    ... 还有 {len(d_records) - 20} 条")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

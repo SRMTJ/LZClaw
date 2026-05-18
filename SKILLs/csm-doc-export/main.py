@@ -1,18 +1,23 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+from __future__ import annotations
+
 import os
 import subprocess
 import sys
 
 COMMAND_MAP = {
-    'analyze': 'analyze_self_expanded_v3.py',
+    "detailed-analysis": "gen_detailed_analysis.py",
+    "md-to-docx": "md_to_docx_ultimate.py",
 }
-DEFAULT_SUBCOMMAND = 'analyze'
+DEFAULT_SUBCOMMAND = "detailed-analysis"
 
 
 def print_usage() -> None:
-    commands = ', '.join(COMMAND_MAP.keys())
-    print('[csm-self-expanded] missing or invalid subcommand, fallback to default', file=sys.stderr)
-    print(f'[csm-self-expanded] default subcommand: {DEFAULT_SUBCOMMAND}', file=sys.stderr)
-    print(f'[csm-self-expanded] supported subcommands: {commands}', file=sys.stderr)
+    commands = ", ".join(COMMAND_MAP.keys())
+    print("[csm-doc-export] missing or invalid subcommand, fallback to default", file=sys.stderr)
+    print(f"[csm-doc-export] default subcommand: {DEFAULT_SUBCOMMAND}", file=sys.stderr)
+    print(f"[csm-doc-export] supported subcommands: {commands}", file=sys.stderr)
 
 
 def resolve_invocation(argv: list[str]) -> tuple[str, list[str]]:
@@ -31,12 +36,13 @@ def main() -> int:
         print_usage()
         return 1
 
-    script_path = os.path.join(os.path.dirname(__file__), 'scripts', script_name)
+    script_path = os.path.join(os.path.dirname(__file__), "scripts", script_name)
     if len(sys.argv) < 2 or sys.argv[1].strip() not in COMMAND_MAP:
         print_usage()
     result = subprocess.run([sys.executable, script_path, *passthrough_args], check=False)
     return result.returncode
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     raise SystemExit(main())
+
