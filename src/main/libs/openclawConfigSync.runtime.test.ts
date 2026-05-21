@@ -1093,6 +1093,18 @@ describe('OpenClawConfigSync runtime config output', () => {
       getAgents: () => [],
     } as never);
 
+    fs.writeFileSync(configPath, JSON.stringify({
+      gateway: { mode: 'local' },
+      tools: {
+        web: {
+          fetch: {
+            enabled: true,
+            useEnvProxy: true,
+          },
+        },
+      },
+    }, null, 2));
+
     const result = sync.sync('browser-web-access');
     expect(result.ok).toBe(true);
 
@@ -1117,12 +1129,12 @@ describe('OpenClawConfigSync runtime config output', () => {
     expect(config.tools.web.fetch).toMatchObject({
       enabled: true,
       readability: false,
-      useEnvProxy: true,
       timeoutSeconds: 25,
       maxRedirects: 4,
       maxChars: 12000,
       userAgent: 'LobsterAI Test',
       ssrfPolicy: { allowRfc2544BenchmarkRange: true },
     });
+    expect(config.tools.web.fetch.useEnvProxy).toBeUndefined();
   });
 });

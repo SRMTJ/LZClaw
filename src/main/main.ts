@@ -2194,8 +2194,10 @@ if (!gotTheLock) {
         return;
       }
 
-      if (actionDecision.impact !== OpenClawConfigImpact.None) {
-        const syncResult = await syncOpenClawConfig({
+      const shouldSyncOpenClawConfig = actionDecision.impact !== OpenClawConfigImpact.None || browserWebAccessChanged;
+      let syncResult: Awaited<ReturnType<typeof syncOpenClawConfig>> | null = null;
+      if (shouldSyncOpenClawConfig) {
+        syncResult = await syncOpenClawConfig({
           reason: 'app-config-change',
           restartGatewayIfRunning: actionDecision.impact === OpenClawConfigImpact.Restart,
         });
@@ -2203,7 +2205,7 @@ if (!gotTheLock) {
           console.error('[OpenClaw] Failed to sync config after app_config update:', syncResult.error);
         }
       }
-      if (syncResult.success && browserWebAccessChanged && !systemProxyChanged) {
+      if (syncResult?.success && browserWebAccessChanged && !systemProxyChanged && actionDecision.impact !== OpenClawConfigImpact.Restart) {
         const engineStatus = getOpenClawEngineManager().getStatus();
         if (engineStatus.phase === 'running') {
           console.log(`${gwDiagTs()} browser access settings changed, restarting gateway`);

@@ -1145,7 +1145,6 @@ export class OpenClawConfigSync {
     const fetchConfig = {
       enabled: fetch.enabled,
       readability: fetch.readability,
-      useEnvProxy: fetch.followGlobalProxy && isSystemProxyEnabled(),
       ...(fetch.timeoutSeconds ? { timeoutSeconds: fetch.timeoutSeconds } : {}),
       ...(fetch.maxRedirects ? { maxRedirects: fetch.maxRedirects } : {}),
       ...(fetch.maxChars ? { maxChars: fetch.maxChars } : {}),
