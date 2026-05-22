@@ -8,6 +8,7 @@ export interface UserProfile {
   userId?: string;         // exchange endpoint only (string "6")
   id?: number;             // profile endpoint only (number 6)
   status?: number;         // profile endpoint only
+  crmUrl?: string | null;  // enterprise crm url
 }
 
 export interface UserQuota {

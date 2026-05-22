@@ -7,6 +7,19 @@ import { RootState } from '../store';
 import type { CreditItem } from '../store/slices/authSlice';
 import UserAvatarIcon from './icons/UserAvatarIcon';
 
+const DEFAULT_LZ_CRM_URL = 'http://lzcrm.srmtj.com';
+
+const resolveLzCrmUrl = (value?: string | null): string => {
+  const normalized = (value || '').trim();
+  if (!normalized) {
+    return DEFAULT_LZ_CRM_URL;
+  }
+  if (/^https?:\/\//i.test(normalized)) {
+    return normalized;
+  }
+  return `http://${normalized}`;
+};
+
 const getSubscriptionBadge = (label: string) => {
   // Determine badge style based on label
   const isStandard = /标准|Standard/i.test(label);
@@ -122,7 +135,7 @@ const UserMenu: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   };
 
   const handleOpenLzCrm = async () => {
-    await window.electron.shell.openExternal('http://lzcrm.srmtj.com');
+    await window.electron.shell.openExternal(resolveLzCrmUrl(user?.crmUrl));
     onClose();
   };
 
