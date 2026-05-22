@@ -5,6 +5,8 @@ import remarkGfm from 'remark-gfm';
 
 import { i18nService } from '../../services/i18n';
 import type { SubagentSessionSummary } from '../../types/cowork';
+import ComposeIcon from '../icons/ComposeIcon';
+import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 
 interface SubTaskMessage {
   role: string;
@@ -14,9 +16,14 @@ interface SubTaskMessage {
 interface SubagentSessionDetailProps {
   subagent: SubagentSessionSummary;
   onBack: () => void;
+  isSidebarCollapsed?: boolean;
+  onToggleSidebar?: () => void;
+  onNewChat?: () => void;
+  updateBadge?: React.ReactNode;
 }
 
-const SubagentSessionDetail: React.FC<SubagentSessionDetailProps> = ({ subagent, onBack }) => {
+const SubagentSessionDetail: React.FC<SubagentSessionDetailProps> = ({ subagent, onBack, isSidebarCollapsed, onToggleSidebar, onNewChat, updateBadge }) => {
+  const isMac = window.electron.platform === 'darwin';
   const [messages, setMessages] = useState<SubTaskMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState<'running' | 'done' | 'error'>(subagent.status);
@@ -99,15 +106,36 @@ const SubagentSessionDetail: React.FC<SubagentSessionDetailProps> = ({ subagent,
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
-      <div className="flex items-center gap-3 border-b border-border px-4 py-3">
-        <button
-          type="button"
-          onClick={onBack}
-          className="inline-flex h-7 w-7 items-center justify-center rounded-md text-foreground/60 transition-colors hover:bg-black/[0.05] hover:text-foreground dark:hover:bg-white/[0.05]"
-          aria-label={i18nService.t('back') || 'Back'}
-        >
-          <ArrowLeftIcon className="h-4 w-4" />
-        </button>
+      <div className="draggable flex h-12 items-center gap-3 border-b border-border px-4 bg-background shrink-0">
+        <div className="non-draggable flex items-center gap-2">
+          {isSidebarCollapsed && (
+            <div className={`flex items-center gap-1 mr-1 ${isMac ? 'pl-[68px]' : ''}`}>
+              <button
+                type="button"
+                onClick={onToggleSidebar}
+                className="h-8 w-8 inline-flex items-center justify-center rounded-lg text-secondary hover:bg-surface-raised transition-colors"
+              >
+                <SidebarToggleIcon className="h-4 w-4" isCollapsed={true} />
+              </button>
+              <button
+                type="button"
+                onClick={onNewChat}
+                className="h-8 w-8 inline-flex items-center justify-center rounded-lg text-secondary hover:bg-surface-raised transition-colors"
+              >
+                <ComposeIcon className="h-4 w-4" />
+              </button>
+              {updateBadge}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={onBack}
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-foreground/60 transition-colors hover:bg-black/[0.05] hover:text-foreground dark:hover:bg-white/[0.05]"
+            aria-label={i18nService.t('back') || 'Back'}
+          >
+            <ArrowLeftIcon className="h-4 w-4" />
+          </button>
+        </div>
 
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <span

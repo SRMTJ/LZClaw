@@ -540,6 +540,10 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
         <SubagentSessionDetail
           subagent={viewingSubagent}
           onBack={() => setViewingSubagent(null)}
+          isSidebarCollapsed={isSidebarCollapsed}
+          onToggleSidebar={onToggleSidebar}
+          onNewChat={onNewChat}
+          updateBadge={updateBadge}
         />
       </div>
     );
