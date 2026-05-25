@@ -5,8 +5,8 @@ import { createPortal } from 'react-dom';
 import { useDispatch } from 'react-redux';
 
 import { i18nService } from '@/services/i18n';
-import { selectArtifact } from '@/store/slices/artifactSlice';
-import type { Artifact, ArtifactType } from '@/types/artifact';
+import { openArtifactPreviewTab } from '@/store/slices/artifactSlice';
+import { type Artifact, type ArtifactType, ArtifactTypeValue } from '@/types/artifact';
 
 const t = (key: string) => i18nService.t(key);
 
@@ -86,6 +86,7 @@ const TYPE_ICON_MAP: Record<ArtifactType, React.FC<{ className?: string }>> = {
   markdown: MarkdownIcon,
   text: TextIcon,
   document: DocumentIcon,
+  'local-service': GlobeIcon,
 };
 
 const SUPPORTS_OPEN_DROPDOWN: ReadonlySet<ArtifactType> = new Set(['document', 'markdown']);
@@ -99,6 +100,7 @@ const TYPE_LABEL_KEY: Record<ArtifactType, string> = {
   markdown: 'artifactTypeMarkdown',
   text: 'artifactTypeText',
   document: 'artifactTypeDocument',
+  'local-service': 'artifactTypeHtml',
 };
 
 function normalizeFilePath(filePath: string): string {
@@ -269,15 +271,20 @@ const OpenDropdown: React.FC<OpenDropdownProps> = ({ anchorRef, filePath, onClos
 
 interface ArtifactPreviewCardProps {
   artifact: Artifact;
+  onOpenLocalService?: (artifact: Artifact) => void;
 }
 
-const ArtifactPreviewCard: React.FC<ArtifactPreviewCardProps> = ({ artifact }) => {
+const ArtifactPreviewCard: React.FC<ArtifactPreviewCardProps> = ({ artifact, onOpenLocalService }) => {
   const dispatch = useDispatch();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownAnchorRef = useRef<HTMLButtonElement>(null);
 
   const handleClick = () => {
-    dispatch(selectArtifact(artifact.id));
+    if (artifact.type === ArtifactTypeValue.LocalService && onOpenLocalService) {
+      onOpenLocalService(artifact);
+      return;
+    }
+    dispatch(openArtifactPreviewTab({ sessionId: artifact.sessionId, artifactId: artifact.id }));
   };
 
   const IconComponent = TYPE_ICON_MAP[artifact.type];

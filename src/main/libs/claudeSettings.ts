@@ -9,6 +9,7 @@ import {
   type OpenAICompatProxyTarget,
 } from './coworkOpenAICompatProxy';
 import { readOpenAICodexAuthFile } from './openaiCodexAuth';
+import { getOpenClawTokenProxyPort } from './openclawTokenProxy';
 
 type LocalProviderConfig = Omit<ProviderConfig, 'apiFormat'> & { apiFormat?: ApiFormat | 'native' };
 
@@ -33,12 +34,16 @@ type ProviderModelConfig = {
   id: string;
   name: string;
   supportsImage?: boolean;
+  contextWindow?: number;
+  customParams?: Record<string, unknown>;
 };
 
 type ProviderModelInputConfig = {
   id: string;
   name?: string;
   supportsImage?: boolean;
+  contextWindow?: number;
+  customParams?: Record<string, unknown>;
 };
 
 export type ServerModelMetadata = {
@@ -47,6 +52,7 @@ export type ServerModelMetadata = {
   provider?: string;
   apiFormat?: string;
   supportsImage?: boolean;
+  contextWindow?: number;
   apiBaseUrl?: string;
   apiKey?: string;
 };
@@ -60,6 +66,7 @@ export type ApiConfigResolution = {
     codingPlanEnabled: boolean;
     supportsImage?: boolean;
     modelName?: string;
+    contextWindow?: number;
   };
 };
 
@@ -100,6 +107,7 @@ const serializeServerModelMetadata = (
       supportsImage: model.supportsImage,
       apiBaseUrl: model.apiBaseUrl,
       apiKey: model.apiKey,
+      contextWindow: model.contextWindow,
     }))
     .sort((a, b) => a.modelId.localeCompare(b.modelId)),
 );
@@ -113,6 +121,7 @@ export function updateServerModelMetadata(models: ServerModelMetadata[]): boolea
     supportsImage: m.supportsImage,
     apiBaseUrl: m.apiBaseUrl,
     apiKey: m.apiKey,
+    contextWindow: m.contextWindow,
   }]));
   const next = serializeServerModelMetadata(Array.from(nextCache.entries()).map(([modelId, meta]) => ({
     modelId,
@@ -122,6 +131,7 @@ export function updateServerModelMetadata(models: ServerModelMetadata[]): boolea
     supportsImage: meta.supportsImage,
     apiBaseUrl: meta.apiBaseUrl,
     apiKey: meta.apiKey,
+    contextWindow: meta.contextWindow,
   })));
   serverModelMetadataCache = nextCache;
   return previous !== next;
@@ -140,6 +150,7 @@ export function getAllServerModelMetadata(): ServerModelMetadata[] {
     supportsImage: meta.supportsImage,
     apiBaseUrl: meta.apiBaseUrl,
     apiKey: meta.apiKey,
+    contextWindow: meta.contextWindow,
   }));
 }
 
@@ -191,6 +202,7 @@ type MatchedProvider = {
   baseURL: string;
   supportsImage?: boolean;
   modelName?: string;
+  contextWindow?: number;
 };
 
 function getEffectiveProviderApiFormat(providerName: string, apiFormat: unknown): AnthropicApiFormat {
@@ -372,6 +384,7 @@ function resolveMatchedProvider(appConfig: AppConfig): { matched: MatchedProvide
       baseURL,
       supportsImage: matchedModel?.supportsImage,
       modelName: matchedModel?.name,
+      contextWindow: matchedModel?.contextWindow,
     },
   };
 }
@@ -529,60 +542,62 @@ export function resolveRawApiConfig(): ApiConfigResolution {
       codingPlanEnabled: !!matched.providerConfig.codingPlanEnabled,
       supportsImage: matched.supportsImage,
       modelName: matched.modelName,
+      contextWindow: matched.contextWindow,
     },
   };
 }
 
-  /**
-   * Collect apiKeys for ALL configured providers (not just the currently selected one).
-   * Used by OpenClaw config sync to pre-register all apiKeys as env vars at gateway
-   * startup, so switching between providers doesn't require a process restart.
-   *
-   * Returns a map of env-var-safe provider name → apiKey.
-   */
+/**
+ * Collect apiKeys for ALL configured providers (not just the currently selected one).
+ * Used by OpenClaw config sync to pre-register all apiKeys as env vars at gateway
+ * startup, so switching between providers doesn't require a process restart.
+ *
+ * Returns a map of env-var-safe provider name → apiKey.
+ */
 export function resolveAllProviderApiKeys(): Record<string, string> {
   const result: Record<string, string> = {};
 
   // lobsterai-server token is now managed by the token proxy
   // (openclawTokenProxy.ts) — no longer injected as an env var.
-
-    // lobsterai-server: uses auth accessToken
+  const shouldInjectServerToken = !getOpenClawTokenProxyPort();
+  if (shouldInjectServerToken) {
     const tokens = authTokensGetter?.();
     const serverBaseUrl = serverBaseUrlGetter?.();
     if (tokens?.accessToken && serverBaseUrl) {
       result.SERVER = tokens.accessToken;
     }
-
-    // All configured custom providers
-    const sqliteStore = getStore();
-    if (!sqliteStore) return result;
-    const appConfig = sqliteStore.get<AppConfig>('app_config');
-    if (!appConfig?.providers) return result;
-
-    for (const [providerName, providerConfig] of Object.entries(appConfig.providers)) {
-      if (!providerConfig?.enabled) continue;
-      if (shouldUseOpenAICodexOAuth(providerName, providerConfig)) {
-        continue;
-      }
-      // For MiniMax OAuth, inject oauthAccessToken instead of apiKey
-      let apiKey = providerConfig.apiKey?.trim();
-      if (providerName === ProviderName.Minimax && (providerConfig as any).authType === 'oauth') {
-        const oauthToken = (providerConfig as any).oauthAccessToken?.trim();
-        if (!oauthToken) continue; // OAuth not completed, skip
-        apiKey = oauthToken;
-      } else if (!apiKey && providerRequiresApiKey(providerName)) {
-        continue;
-      }
-      const envName = providerName.toUpperCase().replace(/[^A-Z0-9]/g, '_');
-      result[envName] = apiKey || 'sk-lobsterai-local';
-    }
-
-    const D = gwDiagTs;
-    console.log(`${D()} resolveAllProviderApiKeys: hasServer=${!!result.SERVER} providers=[${Object.keys(result).filter(k => k !== 'SERVER').join(',')}]`);
-
-    return result;
   }
-  
+
+  // All configured custom providers
+  const sqliteStore = getStore();
+  if (!sqliteStore) return result;
+  const appConfig = sqliteStore.get<AppConfig>('app_config');
+  if (!appConfig?.providers) return result;
+
+  for (const [providerName, providerConfig] of Object.entries(appConfig.providers)) {
+    if (!providerConfig?.enabled) continue;
+    if (shouldUseOpenAICodexOAuth(providerName, providerConfig)) {
+      continue;
+    }
+    // For MiniMax OAuth, inject oauthAccessToken instead of apiKey
+    let apiKey = providerConfig.apiKey?.trim();
+    if (providerName === ProviderName.Minimax && (providerConfig as any).authType === 'oauth') {
+      const oauthToken = (providerConfig as any).oauthAccessToken?.trim();
+      if (!oauthToken) continue; // OAuth not completed, skip
+      apiKey = oauthToken;
+    } else if (!apiKey && providerRequiresApiKey(providerName)) {
+      continue;
+    }
+    const envName = providerName.toUpperCase().replace(/[^A-Z0-9]/g, '_');
+    result[envName] = apiKey || 'sk-lobsterai-local';
+  }
+
+  const D = gwDiagTs;
+  console.log(`${D()} resolveAllProviderApiKeys: hasServer=${!!result.SERVER} providers=[${Object.keys(result).filter(k => k !== 'SERVER').join(',')}]`);
+
+  return result;
+}
+
 
 export function buildEnvForConfig(config: CoworkApiConfig): Record<string, string> {
   const baseEnv = { ...process.env } as Record<string, string>;
