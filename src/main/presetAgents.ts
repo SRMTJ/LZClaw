@@ -394,6 +394,8 @@ export const normalizePresetAgent = (value: unknown): PresetAgent | null => {
     id,
     name,
     nameEn: getStringField(record, 'nameEn'),
+    identity: getStringField(record, 'identity'),
+    identityEn: getStringField(record, 'identityEn'),
     icon: normalizeAgentAvatarIcon(getStringField(record, 'icon')),
     description,
     descriptionEn: getStringField(record, 'descriptionEn'),
