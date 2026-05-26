@@ -1371,6 +1371,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   };
 
   private static readonly CONTEXT_USAGE_LIST_LIMIT = 120;
+  private static readonly CONTEXT_USAGE_TARGETED_TIMEOUT_MS = 2_000;
   private static readonly CONTEXT_USAGE_LIST_TIMEOUT_MS = 5_000;
   private static readonly GATEWAY_RPC_DEGRADED_MS = 30_000;
   private static readonly SESSION_MODEL_PATCH_CONFIRMED_TTL_MS = 10 * 60_000;
@@ -1697,6 +1698,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     activeMinutes?: number;
     limit?: number;
     search?: string;
+    timeoutMs?: number;
   } = {}): Promise<Record<string, unknown>[]> {
     const client = this.gatewayClient;
     if (!client) return [];
@@ -1713,7 +1715,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (options.search?.trim()) {
       params.search = options.search.trim();
     }
-    const inFlightKey = JSON.stringify(params);
+    const timeoutMs = options.timeoutMs ?? OpenClawRuntimeAdapter.CONTEXT_USAGE_LIST_TIMEOUT_MS;
+    const inFlightKey = JSON.stringify({ ...params, timeoutMs });
     const existing = this.contextUsageListInFlight.get(inFlightKey);
     if (existing) {
       return existing;
@@ -1721,7 +1724,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     let request: Promise<Record<string, unknown>[]>;
     request = client.request<{ sessions?: unknown[] }>('sessions.list', {
       ...params,
-    }, { timeoutMs: OpenClawRuntimeAdapter.CONTEXT_USAGE_LIST_TIMEOUT_MS })
+    }, { timeoutMs })
       .then((result) => {
         this.markGatewayRpcSuccess();
         const sessions = result?.sessions;
@@ -1802,44 +1805,23 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     for (const key of keys) {
       try {
-        const rows = await this.listGatewaySessionsForUsage({ search: key, limit: 5 });
+        const rows = await this.listGatewaySessionsForUsage({
+          search: key,
+          limit: 5,
+          timeoutMs: OpenClawRuntimeAdapter.CONTEXT_USAGE_TARGETED_TIMEOUT_MS,
+        });
         const row = rows.find(item => item.key === key);
         if (row) {
           console.log(`[OpenClawRuntime] context usage was resolved by targeted lookup for session ${sessionId} in ${Date.now() - startedAt}ms.`);
           return this.buildContextUsageFromSessionRow(sessionId, row);
         }
       } catch (error) {
-        console.warn(`[OpenClawRuntime] targeted context usage refresh failed for session ${sessionId}:`, error);
+        console.warn(`[OpenClawRuntime] context usage lookup failed for session ${sessionId}; returning no usage.`, error);
+        return null;
       }
     }
-
-    try {
-      const rows = await this.listGatewaySessionsForUsage({ activeMinutes: 120 });
-      for (const key of keys) {
-        const row = rows.find(item => item.key === key);
-        if (row) {
-          console.log(`[OpenClawRuntime] context usage was resolved by recent session lookup for session ${sessionId} in ${Date.now() - startedAt}ms.`);
-          return this.buildContextUsageFromSessionRow(sessionId, row);
-        }
-      }
-    } catch (error) {
-      console.warn(`[OpenClawRuntime] recent context usage refresh failed for session ${sessionId}:`, error);
-    }
-
-    const session = this.store.getSession(sessionId);
-    const sessionKey = keys[0];
-    const model = session?.modelOverride || this.store.getAgent(session?.agentId || 'main')?.model || '';
-    const contextTokens = this.sessionContextTokensCache.get(sessionKey)
-      ?? this.getContextWindowForModel(model);
-    console.log(`[OpenClawRuntime] context usage fell back to an unknown token count for session ${sessionId} after ${Date.now() - startedAt}ms.`);
-    return {
-      sessionId,
-      sessionKey,
-      ...(contextTokens ? { contextTokens } : {}),
-      ...(model ? { model } : {}),
-      status: 'unknown',
-      updatedAt: Date.now(),
-    };
+    console.debug(`[OpenClawRuntime] context usage was unavailable for session ${sessionId} after ${Date.now() - startedAt}ms.`);
+    return null;
   }
 
   async compactContext(sessionId: string): Promise<{ compacted: boolean; reason?: string; usage?: CoworkContextUsage | null }> {

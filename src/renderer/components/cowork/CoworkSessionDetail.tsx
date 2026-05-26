@@ -533,11 +533,6 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   }, [sessionId]);
 
   useEffect(() => {
-    if (!sessionId) return;
-    coworkService.refreshContextUsageForSessionEntry(sessionId);
-  }, [sessionId]);
-
-  useEffect(() => {
     setShowCompactConfirm(false);
   }, [sessionId]);
 

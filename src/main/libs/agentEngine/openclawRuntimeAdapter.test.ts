@@ -165,6 +165,46 @@ test('context usage resolves historical sessions with targeted lookup', async ()
   expect(requests[0].params).not.toHaveProperty('activeMinutes');
 });
 
+test('context usage does not fall back to recent session lookup when targeted lookup misses', async () => {
+  const session = {
+    id: 'missing-session',
+    title: 'Missing Session',
+    claudeSessionId: null,
+    status: 'completed',
+    pinned: false,
+    cwd: '',
+    systemPrompt: '',
+    modelOverride: '',
+    executionMode: 'local',
+    activeSkillIds: [],
+    agentId: 'main',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1,
+  };
+  const sessionKey = `agent:main:lobsterai:${session.id}`;
+  const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+  const adapter = new OpenClawRuntimeAdapter({
+    getSession: (sessionId: string) => (sessionId === session.id ? session : null),
+  } as never, {} as never);
+  adapter.gatewayClient = {
+    request: async (method: string, params?: unknown) => {
+      requests.push({ method, params: params as Record<string, unknown> });
+      return { sessions: [] };
+    },
+  } as never;
+
+  const usage = await adapter.getContextUsage(session.id);
+
+  expect(usage).toBeNull();
+  expect(requests).toHaveLength(1);
+  expect(requests[0]).toMatchObject({
+    method: 'sessions.list',
+    params: { search: sessionKey, limit: 5 },
+  });
+  expect(requests[0].params).not.toHaveProperty('activeMinutes');
+});
+
 test('context usage coalesces concurrent refreshes for the same session', async () => {
   const session = {
     id: 'session-1',

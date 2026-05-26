@@ -22,7 +22,13 @@ import {
   normalizeBrowserWebAccessConfig,
 } from '../shared/browserWebAccess/constants';
 import { ClipboardIpc } from '../shared/clipboard/constants';
-import { COWORK_MESSAGE_PAGE_SIZE, COWORK_SESSION_PAGE_SIZE, CoworkIpcChannel } from '../shared/cowork/constants';
+import {
+  COWORK_MESSAGE_PAGE_SIZE,
+  COWORK_SESSION_PAGE_SIZE,
+  CoworkContextUsageFailureReason,
+  CoworkContextUsageSource,
+  CoworkIpcChannel,
+} from '../shared/cowork/constants';
 import { DialogIpc } from '../shared/dialog/constants';
 import { type ListLocalWebServicesOptions, type LocalWebService, LocalWebServicesIpc } from '../shared/localWebServices/constants';
 import { PlatformRegistry } from '../shared/platform';
@@ -4647,11 +4653,16 @@ if (!gotTheLock) {
   ipcMain.handle('cowork:session:contextUsage', async (_event, sessionId: string) => {
     try {
       const usage = await getCoworkEngineRouter().getContextUsage(sessionId);
-      return { success: true, usage };
+      return {
+        success: true,
+        usage,
+        source: usage ? CoworkContextUsageSource.Live : CoworkContextUsageSource.Unavailable,
+      };
     } catch (error) {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to get context usage',
+        reason: CoworkContextUsageFailureReason.GatewayError,
       };
     }
   });

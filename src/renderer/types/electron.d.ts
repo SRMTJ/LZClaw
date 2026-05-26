@@ -4,6 +4,10 @@ import type {
   BrowserDiagnosticResult,
   BrowserRuntimeProfile,
 } from '../../shared/browserWebAccess/constants';
+import type {
+  CoworkContextUsageFailureReason,
+  CoworkContextUsageSource,
+} from '../../shared/cowork/constants';
 import type { ListLocalWebServicesOptions, LocalWebService } from '../../shared/localWebServices/constants';
 interface ApiResponse {
   ok: boolean;
@@ -494,7 +498,13 @@ interface IElectronAPI {
     }>;
     getContextUsage: (
       sessionId: string,
-    ) => Promise<{ success: boolean; usage?: CoworkContextUsage | null; error?: string }>;
+    ) => Promise<{
+      success: boolean;
+      usage?: CoworkContextUsage | null;
+      source?: CoworkContextUsageSource;
+      reason?: CoworkContextUsageFailureReason;
+      error?: string;
+    }>;
     compactContext: (
       sessionId: string,
     ) => Promise<{ success: boolean; compacted?: boolean; reason?: string; usage?: CoworkContextUsage | null; error?: string }>;
