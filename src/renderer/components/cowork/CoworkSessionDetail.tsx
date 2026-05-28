@@ -6,7 +6,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo,useRef, useStat
 import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
 
-import { normalizeFilePathForDedup, normalizeLocalServiceUrlForDedup, parseFileLinksFromMessage, parseFilePathsFromText, parseLocalServiceUrlsFromText, parseMediaTokensFromText, parseRemoteImageArtifactsFromText, parseToolArtifact, parseToolResultMediaArtifacts, stripFileLinksFromText } from '../../services/artifactParser';
+import { normalizeFilePathForDedup, normalizeLocalServiceUrlForDedup, parseFileLinksFromMessage, parseFilePathsFromText, parseLocalServiceUrlsFromText, parseMediaTokensFromText, parseRemoteImageArtifactsFromText, parseToolArtifact, parseToolResultMediaArtifacts, shouldParseFilePathsFromToolResult, stripFileLinksFromText } from '../../services/artifactParser';
 import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
 import { RootState } from '../../store';
@@ -1166,12 +1166,25 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
               detected.push(ma);
             }
           }
-          const pathArtifacts = parseFilePathsFromText(msg.content, msg.id, sessionId, 'artifact-toolresult');
-          for (const pa of pathArtifacts) {
-            const normalized = pa.filePath ? normalizeFilePathForDedup(pa.filePath) : '';
-            if (pa.filePath && !seenFilePaths.has(normalized)) {
-              seenFilePaths.add(normalized);
-              detected.push(pa);
+
+          // Only parse bare file paths from tool results of image generation tools.
+          // Other tools (e.g. Bash running `find`) may output many file paths in their
+          // results that should NOT become artifacts.
+          const toolUseId = msg.metadata?.toolUseId;
+          const pairedToolUse = toolUseId
+            ? messages.find(m => m.type === 'tool_use' && m.metadata?.toolUseId === toolUseId)
+            : undefined;
+          const toolName = pairedToolUse?.metadata?.toolName
+            ? String(pairedToolUse.metadata.toolName)
+            : '';
+          if (shouldParseFilePathsFromToolResult(toolName)) {
+            const pathArtifacts = parseFilePathsFromText(msg.content, msg.id, sessionId, 'artifact-toolresult');
+            for (const pa of pathArtifacts) {
+              const normalized = pa.filePath ? normalizeFilePathForDedup(pa.filePath) : '';
+              if (pa.filePath && !seenFilePaths.has(normalized)) {
+                seenFilePaths.add(normalized);
+                detected.push(pa);
+              }
             }
           }
           detected.push(...parseRemoteImageArtifactsFromText(msg.content, msg.id, sessionId, 'artifact-remote-toolresult'));

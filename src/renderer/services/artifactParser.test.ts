@@ -8,6 +8,7 @@ import {
   parseFilePathsFromText, parseLocalServiceUrlsFromText, parseMediaTokensFromText,
   parseToolArtifact,
   parseToolResultMediaArtifacts,
+  shouldParseFilePathsFromToolResult,
 } from './artifactParser';
 
 describe('normalizeFilePathForDedup', () => {
@@ -485,5 +486,65 @@ describe('parseToolArtifact', () => {
 
     expect(normalizeFilePathForDedup(toolPath))
       .toBe(normalizeFilePathForDedup(linkArtifacts[0].filePath!));
+  });
+});
+
+describe('shouldParseFilePathsFromToolResult', () => {
+  test('returns true for image_generate tool', () => {
+    expect(shouldParseFilePathsFromToolResult('image_generate')).toBe(true);
+  });
+
+  test('returns true for lobsterai_image_generate tool', () => {
+    expect(shouldParseFilePathsFromToolResult('lobsterai_image_generate')).toBe(true);
+  });
+
+  test('is case-insensitive', () => {
+    expect(shouldParseFilePathsFromToolResult('Image_Generate')).toBe(true);
+    expect(shouldParseFilePathsFromToolResult('LOBSTERAI_IMAGE_GENERATE')).toBe(true);
+  });
+
+  test('returns false for Bash tool (find/ls output should not become artifacts)', () => {
+    expect(shouldParseFilePathsFromToolResult('Bash')).toBe(false);
+  });
+
+  test('returns false for other command execution tools', () => {
+    expect(shouldParseFilePathsFromToolResult('execute_command')).toBe(false);
+    expect(shouldParseFilePathsFromToolResult('run_terminal_command')).toBe(false);
+    expect(shouldParseFilePathsFromToolResult('shell')).toBe(false);
+  });
+
+  test('returns false for null/undefined/empty', () => {
+    expect(shouldParseFilePathsFromToolResult(null)).toBe(false);
+    expect(shouldParseFilePathsFromToolResult(undefined)).toBe(false);
+    expect(shouldParseFilePathsFromToolResult('')).toBe(false);
+  });
+
+  test('returns false for file tools (Read, Write, Edit)', () => {
+    expect(shouldParseFilePathsFromToolResult('Read')).toBe(false);
+    expect(shouldParseFilePathsFromToolResult('Write')).toBe(false);
+    expect(shouldParseFilePathsFromToolResult('Edit')).toBe(false);
+  });
+});
+
+describe('parseFilePathsFromText — find command output scenario', () => {
+  test('regex matches paths from find output (demonstrating the bug vector)', () => {
+    // Simulates `find . -name "*.png"` output on macOS
+    const findOutput = [
+      './B-01-seedream.png',
+      './B-02-chart.png',
+      './subfolder/凡人修仙传女性角色群像全身照.png',
+      './black_huaqiang_bao_shu_reference.png',
+    ].join('\n');
+
+    const artifacts = parseFilePathsFromText(findOutput, 'msg1', 'sess1');
+    // These paths all have a `/` so they match BARE_FILE_PATH_RE
+    expect(artifacts.length).toBeGreaterThanOrEqual(3);
+  });
+
+  test('bare filenames without directory separator do NOT match', () => {
+    // Simulates output from `ls *.png` (no path prefix)
+    const content = 'B-01-seedream.png\nB-02-chart.png';
+    const artifacts = parseFilePathsFromText(content, 'msg1', 'sess1');
+    expect(artifacts).toHaveLength(0);
   });
 });
