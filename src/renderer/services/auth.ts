@@ -67,6 +67,9 @@ class AuthService {
         }
       }
     });
+
+    // Recover persisted login state (or clear loading state) on app startup.
+    await this.refreshAuthState({ clearOnFailure: true });
   }
 
   /**
