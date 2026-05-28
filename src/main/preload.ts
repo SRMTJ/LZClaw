@@ -623,6 +623,8 @@ contextBridge.exposeInMainWorld('electron', {
       toggles?: Array<{ pluginId: string; enabled: boolean }>;
       configs?: Array<{ pluginId: string; config: Record<string, unknown> }>;
     }) => ipcRenderer.invoke('plugins:batch-save', changes),
+    checkUpdates: (pluginIds?: string[]) => ipcRenderer.invoke('plugins:check-updates', pluginIds),
+    update: (pluginId: string) => ipcRenderer.invoke('plugins:update', pluginId),
     onInstallLog: (callback: (line: string) => void) => {
       const handler = (_event: any, line: string) => callback(line);
       ipcRenderer.on('plugins:install-log', handler);

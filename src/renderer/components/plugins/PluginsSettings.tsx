@@ -1,4 +1,4 @@
-import { ArrowPathIcon, Cog6ToothIcon,PlusIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon, ArrowUpCircleIcon, Cog6ToothIcon,PlusIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { useCallback, useEffect, useImperativeHandle, useRef,useState } from 'react';
 
 import { i18nService } from '../../services/i18n';
@@ -14,6 +14,14 @@ interface PluginListItem {
   enabled: boolean;
   canUninstall: boolean;
   hasConfig: boolean;
+}
+
+interface PluginUpdateInfo {
+  pluginId: string;
+  currentVersion: string | null;
+  latestVersion: string | null;
+  hasUpdate: boolean;
+  error?: string;
 }
 
 interface InstallForm {
@@ -62,6 +70,14 @@ export default function PluginsSettings({ handleRef }: PluginsSettingsProps) {
     registry: '',
     version: '',
   });
+
+  // --- Update checking state ---
+  const [checking, setChecking] = useState(false);
+  const [updateInfos, setUpdateInfos] = useState<Map<string, PluginUpdateInfo>>(new Map());
+  const [confirmUpdate, setConfirmUpdate] = useState<PluginUpdateInfo | null>(null);
+  const [updating, setUpdating] = useState(false);
+  const [updateLog, setUpdateLog] = useState<string>('');
+  const updateLogRef = useRef<HTMLPreElement>(null);
 
   // --- Deferred save: track initial state and pending changes ---
   const initialPluginsRef = useRef<Map<string, boolean>>(new Map());
@@ -197,6 +213,18 @@ export default function PluginsSettings({ handleRef }: PluginsSettingsProps) {
     return cleanup;
   }, [installing]);
 
+  // Listen for update log events (reuses the same install-log channel)
+  useEffect(() => {
+    if (!updating) return;
+    const cleanup = window.electron?.plugins.onInstallLog((line: string) => {
+      setUpdateLog(prev => prev + line);
+      if (updateLogRef.current) {
+        updateLogRef.current.scrollTop = updateLogRef.current.scrollHeight;
+      }
+    });
+    return cleanup;
+  }, [updating]);
+
   const handleToggle = (pluginId: string, enabled: boolean) => {
     // Only update local state — do NOT call IPC
     setPlugins(prev =>
@@ -282,6 +310,38 @@ export default function PluginsSettings({ handleRef }: PluginsSettingsProps) {
     }
   }, []);
 
+  const handleCheckUpdates = useCallback(async () => {
+    setChecking(true);
+    try {
+      const result = await window.electron?.plugins.checkUpdates();
+      if (result?.success && result.updates) {
+        const map = new Map<string, PluginUpdateInfo>();
+        for (const info of result.updates) {
+          map.set(info.pluginId, info);
+        }
+        setUpdateInfos(map);
+      }
+    } finally {
+      setChecking(false);
+    }
+  }, []);
+
+  const handleUpdate = useCallback(async (pluginId: string) => {
+    setUpdating(true);
+    setUpdateLog('');
+    const result = await window.electron?.plugins.update(pluginId);
+    setUpdating(false);
+    if (result?.ok) {
+      setConfirmUpdate(null);
+      setUpdateInfos(prev => {
+        const next = new Map(prev);
+        next.delete(pluginId);
+        return next;
+      });
+      loadPlugins();
+    }
+  }, [loadPlugins]);
+
   const sourceLabel = (source: PluginSource | 'bundled') => {
     switch (source) {
       case 'npm': return i18nService.t('pluginsSourceNpm');
@@ -366,14 +426,25 @@ export default function PluginsSettings({ handleRef }: PluginsSettingsProps) {
             {i18nService.t('pluginsDesc')}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => { setShowInstallModal(true); setInstallLog(''); setInstallError(null); setDiscoverResult(null); }}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
-        >
-          <PlusIcon className="h-4 w-4" />
-          {i18nService.t('pluginsInstall')}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleCheckUpdates}
+            disabled={checking}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-foreground hover:bg-surface-raised transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <ArrowPathIcon className={`h-4 w-4 ${checking ? 'animate-spin' : ''}`} />
+            {checking ? i18nService.t('pluginsChecking') : i18nService.t('pluginsCheckUpdates')}
+          </button>
+          <button
+            type="button"
+            onClick={() => { setShowInstallModal(true); setInstallLog(''); setInstallError(null); setDiscoverResult(null); }}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+          >
+            <PlusIcon className="h-4 w-4" />
+            {i18nService.t('pluginsInstall')}
+          </button>
+        </div>
       </div>
 
       {/* Plugin List */}
@@ -404,6 +475,11 @@ export default function PluginsSettings({ handleRef }: PluginsSettingsProps) {
                   {plugin.version && (
                     <span className="text-xs text-muted-foreground">v{plugin.version}</span>
                   )}
+                  {updateInfos.get(plugin.pluginId)?.hasUpdate && (
+                    <span className="text-xs text-primary font-medium">
+                      → v{updateInfos.get(plugin.pluginId)!.latestVersion}
+                    </span>
+                  )}
                   <span className="text-xs px-1.5 py-0.5 rounded bg-surface-raised text-muted-foreground">
                     {sourceLabel(plugin.source)}
                   </span>
@@ -415,6 +491,16 @@ export default function PluginsSettings({ handleRef }: PluginsSettingsProps) {
                 )}
               </div>
               <div className="flex items-center gap-2 ml-4">
+                {updateInfos.get(plugin.pluginId)?.hasUpdate && (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmUpdate(updateInfos.get(plugin.pluginId)!)}
+                    className="p-1 rounded text-primary hover:text-primary hover:bg-primary/10 transition-colors"
+                    title={i18nService.t('pluginsUpdate')}
+                  >
+                    <ArrowUpCircleIcon className="h-4 w-4" />
+                  </button>
+                )}
                 {plugin.hasConfig && (
                   <button
                     type="button"
@@ -720,6 +806,46 @@ export default function PluginsSettings({ handleRef }: PluginsSettingsProps) {
                 className="px-4 py-2 text-sm rounded-md bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {uninstalling ? i18nService.t('pluginsUninstalling') : i18nService.t('pluginsUninstall')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Update Confirmation Modal */}
+      {confirmUpdate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-background border border-border rounded-xl shadow-lg w-full max-w-md p-6">
+            <h3 className="text-base font-semibold text-foreground mb-2">
+              {i18nService.t('pluginsUpdateConfirm')}
+            </h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              {confirmUpdate.pluginId}: v{confirmUpdate.currentVersion || '?'} → v{confirmUpdate.latestVersion}
+            </p>
+            {updateLog && (
+              <pre
+                ref={updateLogRef}
+                className="text-xs font-mono bg-surface-raised border border-border rounded-md p-2 max-h-40 overflow-y-auto mb-4 whitespace-pre-wrap"
+              >
+                {updateLog}
+              </pre>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => { setConfirmUpdate(null); setUpdateLog(''); }}
+                disabled={updating}
+                className="px-4 py-2 text-sm rounded-md border border-border text-foreground hover:bg-surface-raised transition-colors disabled:opacity-50"
+              >
+                {i18nService.t('cancel')}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleUpdate(confirmUpdate.pluginId)}
+                disabled={updating}
+                className="px-4 py-2 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {updating ? i18nService.t('pluginsUpdating') : i18nService.t('pluginsUpdate')}
               </button>
             </div>
           </div>

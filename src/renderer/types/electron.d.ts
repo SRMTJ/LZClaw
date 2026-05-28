@@ -905,6 +905,18 @@ interface IElectronAPI {
     }) => Promise<{ ok: boolean; error?: string }>;
     detect: () => Promise<{ plugins: string[]; error?: string }>;
     sync: () => Promise<{ synced: string[]; error?: string }>;
+    checkUpdates: (pluginIds?: string[]) => Promise<{
+      success: boolean;
+      updates?: Array<{
+        pluginId: string;
+        currentVersion: string | null;
+        latestVersion: string | null;
+        hasUpdate: boolean;
+        error?: string;
+      }>;
+      error?: string;
+    }>;
+    update: (pluginId: string) => Promise<{ ok: boolean; version?: string; error?: string }>;
     onInstallLog: (callback: (line: string) => void) => () => void;
   };
   im: {

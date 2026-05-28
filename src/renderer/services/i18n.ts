@@ -1413,6 +1413,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     pluginsUnsavedMessage: '插件设置的修改将丢失，确认离开吗？',
     pluginsUnsavedStay: '继续编辑',
     pluginsUnsavedDiscard: '放弃更改',
+    pluginsCheckUpdates: '检查更新',
+    pluginsChecking: '检查中...',
+    pluginsUpdate: '更新',
+    pluginsUpdating: '更新中...',
+    pluginsUpdateConfirm: '确认更新插件',
 
     // IM Bot
     imBot: 'IM 机器人',
@@ -3704,6 +3709,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     pluginsUnsavedMessage: 'Plugin setting changes will be lost. Leave anyway?',
     pluginsUnsavedStay: 'Keep Editing',
     pluginsUnsavedDiscard: 'Discard Changes',
+    pluginsCheckUpdates: 'Check Updates',
+    pluginsChecking: 'Checking...',
+    pluginsUpdate: 'Update',
+    pluginsUpdating: 'Updating...',
+    pluginsUpdateConfirm: 'Confirm Plugin Update',
 
     // IM Bot
     imBot: 'IM Bot',
