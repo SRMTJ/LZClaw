@@ -10,10 +10,15 @@ export interface Model {
   providerKey?: string; // 模型所属的提供商 key（用于唯一标识）
   openClawProviderId?: string; // OpenClaw runtime provider id
   supportsImage?: boolean;
+  supportsThinking?: boolean;
   isServerModel?: boolean; // 是否为服务端套餐模型
   serverApiFormat?: string; // 服务端模型的 API 格式 ("openai" | "anthropic")
   serverApiBaseUrl?: string; // 服务端模型指定的直连 base URL（可选）
   serverApiKey?: string; // 服务端模型指定的直连 API Key（可选）
+  description?: string; // 模型能力简介
+  costMultiplier?: number; // 积分消耗倍率 (1.0=标准)
+  accessible?: boolean; // false = 模型可见但用户无权使用（置灰）
+  restrictionHint?: string; // 限制提示（如 "订阅套餐/购买加油包可用"）
 }
 
 export function getModelIdentityKey(model: Pick<Model, 'id' | 'providerKey'>): string {
@@ -153,13 +158,14 @@ const modelSlice = createSlice({
       const userModels = state.availableModels.filter(m => !m.isServerModel);
       state.availableModels = [...action.payload, ...userModels];
       availableModels = state.availableModels;
-      // 同步 defaultSelectedModel
+      // 同步 defaultSelectedModel（优先选择 accessible 的模型）
       if (state.availableModels.length > 0) {
         const matchedModel = state.availableModels.find(m => isSameModelIdentity(m, state.defaultSelectedModel));
-        if (matchedModel) {
+        if (matchedModel && matchedModel.accessible !== false) {
           state.defaultSelectedModel = matchedModel;
         } else {
-          state.defaultSelectedModel = state.availableModels[0];
+          const firstAccessible = state.availableModels.find(m => m.accessible !== false);
+          state.defaultSelectedModel = firstAccessible ?? state.availableModels[0];
         }
       }
       // 同步 per-agent 选中模型

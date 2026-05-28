@@ -52,6 +52,7 @@ export type ServerModelMetadata = {
   provider?: string;
   apiFormat?: string;
   supportsImage?: boolean;
+  supportsThinking?: boolean;
   contextWindow?: number;
   apiBaseUrl?: string;
   apiKey?: string;
@@ -105,6 +106,7 @@ const serializeServerModelMetadata = (
       provider: model.provider,
       apiFormat: model.apiFormat,
       supportsImage: model.supportsImage,
+      supportsThinking: model.supportsThinking,
       apiBaseUrl: model.apiBaseUrl,
       apiKey: model.apiKey,
       contextWindow: model.contextWindow,
@@ -119,6 +121,7 @@ export function updateServerModelMetadata(models: ServerModelMetadata[]): boolea
     provider: m.provider,
     apiFormat: m.apiFormat,
     supportsImage: m.supportsImage,
+    supportsThinking: m.supportsThinking,
     apiBaseUrl: m.apiBaseUrl,
     apiKey: m.apiKey,
     contextWindow: m.contextWindow,
@@ -129,6 +132,7 @@ export function updateServerModelMetadata(models: ServerModelMetadata[]): boolea
     provider: meta.provider,
     apiFormat: meta.apiFormat,
     supportsImage: meta.supportsImage,
+    supportsThinking: meta.supportsThinking,
     apiBaseUrl: meta.apiBaseUrl,
     apiKey: meta.apiKey,
     contextWindow: meta.contextWindow,
@@ -148,6 +152,7 @@ export function getAllServerModelMetadata(): ServerModelMetadata[] {
     provider: meta.provider,
     apiFormat: meta.apiFormat,
     supportsImage: meta.supportsImage,
+    supportsThinking: meta.supportsThinking,
     apiBaseUrl: meta.apiBaseUrl,
     apiKey: meta.apiKey,
     contextWindow: meta.contextWindow,
@@ -216,7 +221,9 @@ function getEffectiveProviderApiFormat(providerName: string, apiFormat: unknown)
 }
 
 function providerRequiresApiKey(providerName: string): boolean {
-  return providerName !== ProviderName.Ollama && providerName !== ProviderName.LmStudio;
+  return providerName !== ProviderName.Ollama
+    && providerName !== ProviderName.LmStudio
+    && providerName !== ProviderName.Copilot;
 }
 
 function shouldUseOpenAICodexOAuth(providerName: string, providerConfig: LocalProviderConfig): boolean {

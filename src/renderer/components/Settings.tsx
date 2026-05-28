@@ -8,7 +8,7 @@ import {
   defaultBrowserWebAccessConfig,
   normalizeBrowserWebAccessConfig,
 } from '../../shared/browserWebAccess/constants';
-import { ProviderRegistry, resolveCodingPlanBaseUrl } from '../../shared/providers';
+import { ProviderAuthType, ProviderName, ProviderRegistry, resolveCodingPlanBaseUrl } from '../../shared/providers';
 import { type AppConfig, defaultConfig, getProviderDisplayName, getVisibleProviders } from '../config';
 import { APP_ID, EXPORT_FORMAT_TYPE, EXPORT_PASSWORD } from '../constants/app';
 import { apiService } from '../services/api';
@@ -989,6 +989,9 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
                 {
                   ...providerConfig,
                   apiFormat: getEffectiveApiFormat(providerKey, (providerConfig as ProviderConfig).apiFormat),
+                  ...(providerKey === ProviderName.Copilot && providerConfig.apiKey?.trim()
+                    ? { authType: ProviderAuthType.OAuth, apiKey: '' }
+                    : {}),
                   models,
                 },
               ];
@@ -1600,7 +1603,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
     const hasValidAuth = hasProviderAuthConfigured(provider, providerConfig);
 
     // GitHub Copilot requires device code auth — redirect to sign-in flow
-    if (provider === 'github-copilot' && isEnabling && !providerConfig.apiKey.trim()) {
+    if (provider === ProviderName.Copilot && isEnabling && !hasValidAuth) {
       handleCopilotSignIn();
       return;
     }
@@ -1660,13 +1663,19 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
         setCopilotGithubUser(result.githubUser || '');
         setCopilotAuthStatus('authenticated');
 
-        // Store the Copilot API token in the provider's apiKey field
-        handleProviderConfigChange('github-copilot', 'apiKey', result.token);
-        if (result.baseUrl) {
-          handleProviderConfigChange('github-copilot', 'baseUrl', result.baseUrl);
-        }
-        // Auto-enable the provider
-        enableProvider('github-copilot');
+        apiService.setProviderRuntimeCredential(ProviderName.Copilot, {
+          apiKey: result.token,
+          ...(result.baseUrl ? { baseUrl: result.baseUrl } : {}),
+        });
+        setProviders(prev => ({
+          ...prev,
+          [ProviderName.Copilot]: {
+            ...prev[ProviderName.Copilot],
+            enabled: true,
+            authType: ProviderAuthType.OAuth,
+            apiKey: '',
+          },
+        }));
       } else {
         setCopilotError(result.error || 'Authentication failed');
         setCopilotAuthStatus('error');
@@ -1684,12 +1693,15 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
       setCopilotGithubUser('');
       setCopilotUserCode('');
       setCopilotError(null);
-      // Clear the token from provider config
-      handleProviderConfigChange('github-copilot', 'apiKey', '');
-      // Disable the provider
+      apiService.setProviderRuntimeCredential(ProviderName.Copilot, null);
       setProviders(prev => ({
         ...prev,
-        'github-copilot': { ...prev['github-copilot'], enabled: false },
+        [ProviderName.Copilot]: {
+          ...prev[ProviderName.Copilot],
+          enabled: false,
+          authType: ProviderAuthType.ApiKey,
+          apiKey: '',
+        },
       }));
     } catch (error) {
       console.error('[Settings] GitHub Copilot sign-out failed:', error);
@@ -1723,6 +1735,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
               ...providerConfig,
               enabled: providerConfig.enabled && hasValidAuth,
               apiFormat,
+              ...(providerKey === ProviderName.Copilot ? { apiKey: '' } : {}),
               baseUrl: resolveBaseUrl(providerKey as ProviderType, providerConfig.baseUrl, apiFormat),
             },
           ];
@@ -2104,6 +2117,26 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
       // Determine effective API key
       let effectiveApiKey = providerConfig.apiKey;
 
+      if (testingProvider === ProviderName.Copilot) {
+        const result = await window.electron.githubCopilot.refreshToken();
+        if (!result.success || !result.token) {
+          showTestResultModal({
+            success: false,
+            message: result.error || i18nService.t('apiKeyRequired'),
+          }, testingProvider);
+          return;
+        }
+        effectiveApiKey = result.token;
+        if (result.baseUrl) {
+          effectiveBaseUrl = result.baseUrl;
+          normalizedBaseUrl = effectiveBaseUrl.replace(/\/+$/, '');
+        }
+        apiService.setProviderRuntimeCredential(ProviderName.Copilot, {
+          apiKey: result.token,
+          ...(result.baseUrl ? { baseUrl: result.baseUrl } : {}),
+        });
+      }
+
       if (testingProvider === 'qwen') {
         // Use regular API Key mode
         effectiveApiKey = providerConfig.apiKey;
@@ -2152,12 +2185,12 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
         if (effectiveApiKey) {
           headers.Authorization = `Bearer ${effectiveApiKey}`;
         }
-        if (testingProvider === 'github-copilot') {
-                  headers['Copilot-Integration-Id'] = 'vscode-chat';
-                  headers['Editor-Version'] = 'vscode/1.96.2';
-                  headers['Editor-Plugin-Version'] = 'copilot-chat/0.26.7';
-                  headers['User-Agent'] = 'GitHubCopilotChat/0.26.7';
-                  headers['Openai-Intent'] = 'conversation-panel';
+        if (testingProvider === ProviderName.Copilot) {
+          headers['Copilot-Integration-Id'] = 'vscode-chat';
+          headers['Editor-Version'] = 'vscode/1.96.2';
+          headers['Editor-Plugin-Version'] = 'copilot-chat/0.26.7';
+          headers['User-Agent'] = 'GitHubCopilotChat/0.26.7';
+          headers['Openai-Intent'] = 'conversation-panel';
         }
         const openAIRequestBody: Record<string, unknown> = useResponsesApi
           ? {
@@ -3135,9 +3168,9 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
 
             {/* Info Card */}
             <div className="w-full mt-8 rounded-xl border border-border overflow-hidden">
-              <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-                <span className="text-sm text-foreground">{i18nService.t('aboutVersion')}</span>
-                <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 border-b border-border">
+                <span className="shrink-0 text-sm text-foreground">{i18nService.t('aboutVersion')}</span>
+                <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
                   <span className="text-sm text-secondary">{appVersion}</span>
                   {!enterpriseConfig?.disableUpdate && (
                   <button
@@ -3160,8 +3193,8 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
                 </div>
               </div>
               {testModeUnlocked && (
-                <div className="flex items-center justify-between px-4 py-3">
-                  <span className="text-sm text-foreground">{i18nService.t('testMode')}</span>
+                <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
+                  <span className="shrink-0 text-sm text-foreground">{i18nService.t('testMode')}</span>
                   <button
                     type="button"
                     role="switch"
@@ -3189,9 +3222,13 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
   };
 
   return (
-    <Modal onClose={onClose} overlayClassName="fixed inset-0 z-50 modal-backdrop flex items-center justify-center">
+    <Modal
+      onClose={onClose}
+      overlayClassName="fixed inset-0 z-50 modal-backdrop flex items-center justify-center p-3 sm:p-4"
+      className="w-[calc(100vw-1.5rem)] max-w-[900px] min-w-0 sm:w-[calc(100vw-2rem)]"
+    >
       <div
-        className="relative flex w-[900px] h-[80vh] rounded-2xl border-border border shadow-modal overflow-hidden modal-content"
+        className="relative flex h-[80vh] max-h-[calc(100vh-2rem)] w-full min-w-0 rounded-2xl border-border border shadow-modal overflow-hidden modal-content"
         onClick={handleSettingsClick}
       >
         {/* Left sidebar */}
@@ -3210,8 +3247,8 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
                     : 'text-secondary hover:text-foreground hover:bg-surface-raised'
                 }`}
               >
-                {tab.icon}
-                <span>{tab.label}</span>
+                <span className="shrink-0">{tab.icon}</span>
+                <span className="min-w-0 truncate">{tab.label}</span>
               </button>
             ))}
           </nav>
@@ -3220,8 +3257,8 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
         {/* Right content */}
         <div className="relative flex-1 flex flex-col min-w-0 overflow-hidden bg-background rounded-r-2xl">
           {/* Content header */}
-          <div className="flex justify-between items-center px-6 pt-5 pb-3 shrink-0">
-            <h3 className="text-lg font-semibold text-foreground">{activeTabLabel}</h3>
+          <div className="flex justify-between items-center gap-3 px-6 pt-5 pb-3 shrink-0">
+            <h3 className="min-w-0 truncate text-lg font-semibold text-foreground">{activeTabLabel}</h3>
             <button
               onClick={onClose}
               className="text-secondary hover:text-foreground p-1.5 hover:bg-surface-raised rounded-lg transition-colors"

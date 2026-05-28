@@ -1,5 +1,6 @@
 import { app } from 'electron';
 
+import { HtmlSharePublicRoute } from '../../shared/htmlShare/constants';
 import {
   buildLzServiceEndpoints,
   getLzServiceDefaultBaseUrl,
@@ -23,7 +24,7 @@ export function refreshEndpointsTestMode(store: SqliteStore): void {
  * Whether the app is in test mode.
  * Uses cached value after init; falls back to !app.isPackaged before init.
  */
-const isTestMode = (): boolean => {
+export const isTestModeEnabled = (): boolean => {
   return cachedTestMode ?? !app.isPackaged;
 };
 
@@ -35,7 +36,7 @@ const getLzServiceBaseUrl = (): string => (
 );
 
 const getLzServiceEnvironment = () => (
-  isTestMode() ? LZ_SERVICE_ENVIRONMENTS.Test : LZ_SERVICE_ENVIRONMENTS.Prod
+  isTestModeEnabled() ? LZ_SERVICE_ENVIRONMENTS.Test : LZ_SERVICE_ENVIRONMENTS.Prod
 );
 
 const getLzServiceEndpoints = () => (
@@ -50,6 +51,10 @@ export const getServerApiBaseUrl = (): string => {
   return getLzServiceEndpoints().serverApiBaseUrl;
 };
 
+export const getHtmlSharePublicBaseUrl = (): string => {
+  return `${getServerApiBaseUrl()}${HtmlSharePublicRoute.Root}`;
+};
+
 export const getUpdateCheckUrl = (): string => (
   getLzServiceEndpoints().updateUrl
 );
@@ -59,7 +64,7 @@ export const getManualUpdateCheckUrl = (): string => (
 );
 
 export const getFallbackDownloadUrl = (): string => (
-  isTestMode()
+  isTestModeEnabled()
     ? 'https://lobsterai.inner.youdao.com/#/download-list'
     : 'https://lobsterai.youdao.com/#/download-list'
 );
@@ -75,3 +80,11 @@ export const getAgentTemplateUrl = (): string => (
 export const getLoginUrlEndpoint = (): string => (
   getLzServiceEndpoints().loginUrl
 );
+
+// Portal 页面
+const PORTAL_BASE_TEST = 'https://c.youdao.com/dict/hardware/cowork/lobsterai-portal.html#';
+const PORTAL_BASE_PROD = 'https://c.youdao.com/dict/hardware/octopus/lobsterai-portal.html#';
+
+const getPortalBase = (): string => isTestModeEnabled() ? PORTAL_BASE_TEST : PORTAL_BASE_PROD;
+
+export const getPortalTasksUrl = (): string => `${getPortalBase()}/profile/detail?tab=tasks`;

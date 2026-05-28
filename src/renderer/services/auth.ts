@@ -1,7 +1,25 @@
 import { store } from '../store';
-import { setAuthLoading, setLoggedIn, setLoggedOut, setProfileSummary, updateQuota } from '../store/slices/authSlice';
+import {
+  setAuthLoading,
+  setLoggedIn,
+  setLoggedOut,
+  setProfileSummary,
+  updateQuota,
+  type UserProfile,
+  type UserQuota,
+} from '../store/slices/authSlice';
 import type { Model } from '../store/slices/modelSlice';
-import { clearServerModels, setDefaultSelectedModel, setServerModels } from '../store/slices/modelSlice';
+import {
+  clearServerModels,
+  setDefaultSelectedModel,
+  setServerModels,
+} from '../store/slices/modelSlice';
+
+interface AuthStateRefreshResult {
+  isLoggedIn: boolean;
+  user: UserProfile | null;
+  quota: UserQuota | null;
+}
 
 class AuthService {
   private unsubCallback: (() => void) | null = null;
@@ -32,18 +50,6 @@ class AuthService {
     }
 
     store.dispatch(setAuthLoading(true));
-    try {
-      const result = await window.electron.auth.getUser();
-      if (result.success && result.user) {
-        store.dispatch(setLoggedIn({ user: result.user, quota: result.quota }));
-        await this.loadServerModels();
-      } else {
-        store.dispatch(setLoggedOut());
-      }
-    } catch {
-      store.dispatch(setLoggedOut());
-    }
-
     // Listen for quota changes (e.g. after cowork session using server model)
     this.unsubQuotaChanged = window.electron.auth.onQuotaChanged(() => {
       this.refreshQuota();
@@ -73,18 +79,51 @@ class AuthService {
   /**
    * Handle OAuth callback with auth code.
    */
-  async handleCallback(code: string) {
+  async handleCallback(code: string): Promise<boolean> {
     try {
       const result = await window.electron.auth.exchange(code);
       if (result.success) {
         store.dispatch(setLoggedIn({ user: result.user, quota: result.quota }));
         await this.loadServerModels({ forceDefaultServerModel: true });
+        this.refreshQuota();
+        return true;
       } else {
         console.error('Auth callback exchange failed:', result.error);
       }
     } catch (e) {
       console.error('Auth callback failed:', e);
     }
+    return false;
+  }
+
+  /**
+   * Refresh the full auth snapshot from persisted tokens.
+   */
+  async refreshAuthState(
+    options: { clearOnFailure?: boolean } = {},
+  ): Promise<AuthStateRefreshResult> {
+    try {
+      const result = await window.electron.auth.getUser();
+      if (result.success && result.user) {
+        store.dispatch(setLoggedIn({ user: result.user, quota: result.quota }));
+        await this.loadServerModels();
+        return { isLoggedIn: true, user: result.user, quota: result.quota ?? null };
+      }
+    } catch {
+      // handled below
+    }
+
+    if (options.clearOnFailure) {
+      store.dispatch(setLoggedOut());
+      store.dispatch(clearServerModels());
+    }
+
+    const current = store.getState().auth;
+    return {
+      isLoggedIn: current.isLoggedIn,
+      user: current.user,
+      quota: current.quota,
+    };
   }
 
   /**
@@ -157,6 +196,11 @@ class AuthService {
           provider: string;
           apiFormat: string;
           supportsImage?: boolean;
+          supportsThinking?: boolean;
+          costMultiplier?: number;
+          description?: string;
+          accessible?: boolean;
+          restrictionHint?: string;
           apiBaseUrl?: string;
           apiKey?: string;
         }) => ({
@@ -169,6 +213,11 @@ class AuthService {
           supportsImage: m.supportsImage ?? false,
           serverApiBaseUrl: m.apiBaseUrl,
           serverApiKey: m.apiKey,
+          supportsThinking: m.supportsThinking ?? false,
+          description: m.description,
+          costMultiplier: m.costMultiplier,
+          accessible: m.accessible ?? true,
+          restrictionHint: m.restrictionHint ?? undefined,
         }));
         store.dispatch(setServerModels(serverModels));
         if (options?.forceDefaultServerModel && serverModels.length > 0) {
