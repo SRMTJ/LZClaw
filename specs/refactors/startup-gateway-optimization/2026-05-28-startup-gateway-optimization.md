@@ -1,4 +1,4 @@
-# 启动阶段 OpenClaw Config Sync 优化
+# 启动阶段 OpenClaw Gateway 综合优化
 
 ## 1. 概述
 
@@ -191,6 +191,30 @@ function getPackagedNpmBinDir(): string | undefined {
 | 渲染进程 `checkApiConfig` | 2 | 2（正常路径） |
 | **合计** | ~15 | ~6 |
 
+### 6.4 Fix 5：dev 模式下 npm shim 路径修复
+
+**问题**：`moltbot-popo` 插件启动时调用 `execFileSync("npm", ["install", "-g", "@fabric/cli", ...])` 安装 fabric-cli。Gateway 进程通过 npm.cmd shim 执行 npm，shim 内部引用 `%LOBSTERAI_NPM_BIN_DIR%\npm-cli.js`。但 dev 模式下 `npmBinDir` 为 `undefined`，导致 env var 为空字符串，路径解析为 `D:\npm-cli.js`（cwd 盘符根），报 `Cannot find module 'D:\npm-cli.js'`。
+
+**根因**：`fee342d0` 引入 gateway node/npm shim 注入时，`npmBinDir` 仅在 `app.isPackaged` 时赋值，dev 模式遗漏。
+
+**改动**：
+
+文件：`src/main/libs/openclawEngineManager.ts`
+
+```typescript
+// Before
+const npmBinDir = app.isPackaged
+  ? path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'npm', 'bin')
+  : undefined;
+
+// After
+const npmBinDir = app.isPackaged
+  ? path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'npm', 'bin')
+  : path.join(app.getAppPath(), 'node_modules', 'npm', 'bin');
+```
+
+**验证**：启动后 gateway 日志中 `fabric-cli installed successfully` 取代此前的 `fabric-cli install failed: Cannot find module 'D:\npm-cli.js'`。
+
 ## 7. 验证计划
 
 1. **正常启动**：观察 `main-*.log` 中 `syncOpenClawConfig START`，启动阶段不应出现 `media-entitlement-changed` 或 `server-models-updated`
@@ -200,3 +224,4 @@ function getPackagedNpmBinDir(): string | undefined {
 5. **登出/登入**：entitlement 变化仍正确同步（不影响运行时 sync 逻辑）
 6. **MCP server 正常启动**：3 个 stdio MCP server（Context7、Tavily、Playwright）仍正确解析 npx 命令
 7. **Fallback 日志减少**：启动期间 `lobsterai-server fallback activated` 日志从 ~15 次降至 ~6 次
+8. **fabric-cli 安装**：dev 模式启动后 gateway 日志显示 `fabric-cli installed successfully`（或 `fabric-cli detected`）
