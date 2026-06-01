@@ -9,6 +9,11 @@ import { ClipboardIpc } from '../shared/clipboard/constants';
 import { CoworkIpcChannel } from '../shared/cowork/constants';
 import { DialogIpc } from '../shared/dialog/constants';
 import { type HtmlShareAccessMode, HtmlShareIpc } from '../shared/htmlShare/constants';
+import type {
+  KitReference,
+  KitSkillMetadata,
+  ResolvedKitCapabilities,
+} from '../shared/kit/constants';
 import {
   type ListLocalWebServicesOptions,
   type LocalWebService,
@@ -63,6 +68,21 @@ contextBridge.exposeInMainWorld('electron', {
     setEnabled: (options: { id: string; enabled: boolean }) =>
       ipcRenderer.invoke('mcp:setEnabled', options),
     fetchMarketplace: () => ipcRenderer.invoke('mcp:fetchMarketplace'),
+  },
+  kits: {
+    fetchStore: () => ipcRenderer.invoke('kits:fetchStore'),
+    install: (params: {
+      kitId: string;
+      bundleUrl: string;
+      version: string;
+      skillListIds: string[];
+      skillList?: KitSkillMetadata[];
+      mcpServers?: unknown[] | null;
+      connectors?: unknown[] | null;
+    }) =>
+      ipcRenderer.invoke('kits:install', params),
+    uninstall: (kitId: string) => ipcRenderer.invoke('kits:uninstall', kitId),
+    listInstalled: () => ipcRenderer.invoke('kits:listInstalled'),
   },
   permissions: {
     checkCalendar: () => ipcRenderer.invoke('permissions:checkCalendar'),
@@ -269,6 +289,10 @@ contextBridge.exposeInMainWorld('electron', {
       systemPrompt?: string;
       title?: string;
       activeSkillIds?: string[];
+      runtimeSkillIds?: string[];
+      kitIds?: string[];
+      kitReferences?: KitReference[];
+      resolvedKitCapabilities?: ResolvedKitCapabilities;
       agentId?: string;
       modelOverride?: string;
       imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
@@ -279,6 +303,10 @@ contextBridge.exposeInMainWorld('electron', {
       prompt: string;
       systemPrompt?: string;
       activeSkillIds?: string[];
+      runtimeSkillIds?: string[];
+      kitIds?: string[];
+      kitReferences?: KitReference[];
+      resolvedKitCapabilities?: ResolvedKitCapabilities;
       imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
       mediaSelection?: { mode: string; modelId?: string; modelName?: string; imageModelId?: string; videoModelId?: string };
       mediaReferences?: Array<{
@@ -301,6 +329,11 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('cowork:session:pin', options),
     renameSession: (options: { sessionId: string; title: string }) =>
       ipcRenderer.invoke('cowork:session:rename', options),
+    forkSession: (options: {
+      sessionId: string;
+      forkedFromMessageId?: string | null;
+      title?: string;
+    }) => ipcRenderer.invoke(CoworkIpcChannel.ForkSession, options),
     getSession: (sessionId: string) => ipcRenderer.invoke('cowork:session:get', sessionId),
     remoteManaged: (sessionId: string) =>
       ipcRenderer.invoke('cowork:session:remoteManaged', sessionId),
@@ -332,9 +365,11 @@ contextBridge.exposeInMainWorld('electron', {
       parentSessionId: string;
       agentId: string;
       sessionKey?: string;
-    }) => ipcRenderer.invoke('cowork:subTask:history', options),
+    }) => ipcRenderer.invoke(CoworkIpcChannel.SubTaskHistory, options),
     listSubagentSessions: (parentSessionId: string) =>
-      ipcRenderer.invoke('cowork:subagent:list', { parentSessionId }),
+      ipcRenderer.invoke(CoworkIpcChannel.SubagentList, { parentSessionId }),
+    deleteSubagentSession: (options: { parentSessionId: string; runId: string }) =>
+      ipcRenderer.invoke(CoworkIpcChannel.SubagentDelete, options),
 
     // Media task management
     cancelMediaTask: (taskId: string) =>
@@ -612,6 +647,12 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('plugins:get-config-schema', pluginId),
     saveConfig: (pluginId: string, config: Record<string, unknown>) =>
       ipcRenderer.invoke('plugins:save-config', pluginId, config),
+    batchSave: (changes: {
+      toggles?: Array<{ pluginId: string; enabled: boolean }>;
+      configs?: Array<{ pluginId: string; config: Record<string, unknown> }>;
+    }) => ipcRenderer.invoke('plugins:batch-save', changes),
+    checkUpdates: (pluginIds?: string[]) => ipcRenderer.invoke('plugins:check-updates', pluginIds),
+    update: (pluginId: string) => ipcRenderer.invoke('plugins:update', pluginId),
     onInstallLog: (callback: (line: string) => void) => {
       const handler = (_event: any, line: string) => callback(line);
       ipcRenderer.on('plugins:install-log', handler);

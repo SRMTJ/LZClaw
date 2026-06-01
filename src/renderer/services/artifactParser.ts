@@ -532,6 +532,21 @@ export function parseToolResultMediaArtifacts(
 
 const WRITE_TOOL_NAMES = new Set(['write', 'writefile', 'write_file']);
 
+/**
+ * Tool names whose tool_result content may contain bare file paths that should
+ * be detected as artifacts. Other tools (e.g. Bash running `find` / `ls`) can
+ * produce file listings in their output which should NOT become artifacts.
+ */
+const IMAGE_GEN_TOOL_NAMES_FOR_PATH_DETECTION = new Set([
+  'image_generate',
+  'lobsterai_image_generate',
+]);
+
+export function shouldParseFilePathsFromToolResult(toolName: string | undefined | null): boolean {
+  if (!toolName) return false;
+  return IMAGE_GEN_TOOL_NAMES_FOR_PATH_DETECTION.has(toolName.toLowerCase());
+}
+
 function normalizeToolName(name: string): string {
   return name.toLowerCase().replace(/[_\s]/g, '');
 }

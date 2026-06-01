@@ -496,6 +496,16 @@ describe('OpenClawConfigSync runtime config output', () => {
     expect(result.ok).toBe(true);
 
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.models.providers.deepseek.models).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'deepseek-v4-flash',
+        contextWindow: 1_000_000,
+      }),
+      expect.objectContaining({
+        id: 'deepseek-v4-pro',
+        contextWindow: 1_000_000,
+      }),
+    ]));
     const modelDefaults = config.agents.defaults.models;
 
     expect(modelDefaults).toEqual(expect.objectContaining({
@@ -560,7 +570,7 @@ describe('OpenClawConfigSync runtime config output', () => {
     expect(config.tools.deny).not.toContain('video_generate');
   });
 
-  test('does not configure media generation plugin without media entitlement', async () => {
+  test('keeps media generation plugin configured without media entitlement', async () => {
     const sync = await createSync({
       canUseMediaGeneration: () => false,
       getMediaCallbackUrl: () => 'http://127.0.0.1:5175/media-callback',
@@ -570,7 +580,14 @@ describe('OpenClawConfigSync runtime config output', () => {
     expect(result.ok).toBe(true);
 
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(config.plugins.entries['lobster-media-generation']).toEqual({ enabled: false });
+    expect(config.plugins.entries['lobster-media-generation']).toEqual({
+      enabled: true,
+      config: {
+        callbackUrl: 'http://127.0.0.1:5175/media-callback',
+        secret: '${LOBSTER_MCP_BRIDGE_SECRET}',
+        requestTimeoutMs: 120000,
+      },
+    });
     expect(config.tools.deny).not.toContain('image_generate');
     expect(config.tools.deny).not.toContain('video_generate');
   });

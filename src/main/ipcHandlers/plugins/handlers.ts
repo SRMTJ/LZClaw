@@ -142,4 +142,89 @@ export function registerPluginHandlers(deps: PluginHandlerDeps): void {
       return { ok: false, error: error instanceof Error ? error.message : 'Failed to save plugin config' };
     }
   });
+
+  ipcMain.handle('plugins:batch-save', async (_event, changes: {
+    toggles?: Array<{ pluginId: string; enabled: boolean }>;
+    configs?: Array<{ pluginId: string; config: Record<string, unknown> }>;
+  }) => {
+    try {
+      const { PluginManager } = await import('../../libs/pluginManager');
+      const manager = new PluginManager(getCoworkStore());
+      for (const { pluginId, enabled } of changes.toggles ?? []) {
+        manager.setPluginEnabled(pluginId, enabled);
+      }
+      for (const { pluginId, config } of changes.configs ?? []) {
+        manager.savePluginConfig(pluginId, config);
+      }
+      const hasChanges = (changes.toggles?.length ?? 0) > 0 || (changes.configs?.length ?? 0) > 0;
+      if (hasChanges) {
+        await syncOpenClawConfig({
+          reason: 'plugin-batch-save',
+          restartGatewayIfRunning: true,
+        });
+      }
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : 'Failed to batch save plugin changes' };
+    }
+  });
+
+  ipcMain.handle('plugins:check-updates', async (_event, pluginIds?: string[]) => {
+    try {
+      const { PluginManager } = await import('../../libs/pluginManager');
+      const manager = new PluginManager(getCoworkStore());
+      const updates = await manager.checkPluginUpdates(pluginIds);
+      return { success: true, updates };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : 'Failed to check plugin updates' };
+    }
+  });
+
+  ipcMain.handle('plugins:update', async (event, pluginId: string) => {
+    try {
+      const { PluginManager } = await import('../../libs/pluginManager');
+      const manager = new PluginManager(getCoworkStore());
+
+      // Find plugin info to determine source/spec/registry
+      const plugins = getCoworkStore().listUserPlugins();
+      const plugin = plugins.find(p => p.pluginId === pluginId);
+      if (!plugin) {
+        return { ok: false, error: `Plugin "${pluginId}" not found` };
+      }
+      if (plugin.source !== 'npm' && plugin.source !== 'clawhub') {
+        return { ok: false, error: `Update not supported for source "${plugin.source}"` };
+      }
+
+      const previousEnabled = plugin.enabled;
+
+      const sender = event.sender;
+      const sendLog = (line: string) => {
+        try { sender.send('plugins:install-log', line); } catch { /* window closed */ }
+      };
+
+      // Reinstall without version constraint to get latest
+      const result = await manager.installPlugin({
+        source: plugin.source,
+        spec: plugin.spec,
+        registry: plugin.registry,
+      }, sendLog);
+
+      if (result.ok) {
+        // Restore previous enabled state (installPlugin always sets enabled=true)
+        if (!previousEnabled) {
+          manager.setPluginEnabled(pluginId, false);
+        }
+        sendLog('Syncing gateway config...\n');
+        const impactDecision = classifyPluginConfigChange(OpenClawPluginChangeAction.Install);
+        await syncOpenClawConfig({
+          reason: 'plugin-update',
+          restartGatewayIfRunning: impactDecision.impact === OpenClawConfigImpact.Restart,
+        });
+        sendLog('Gateway config synced.\n');
+      }
+      return result;
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : 'Failed to update plugin' };
+    }
+  });
 }

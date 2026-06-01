@@ -1,4 +1,8 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
+
+vi.mock('electron', () => ({
+  BrowserWindow: { getAllWindows: () => [] },
+}));
 
 import {
   DeliveryMode,

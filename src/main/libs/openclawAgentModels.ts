@@ -10,7 +10,7 @@ type BuildManagedAgentEntriesInput = {
   availableProviders?: ProviderModelCatalog;
 };
 
-type ProviderModelCatalog = Record<string, { models: Array<{ id: string }> }>;
+export type ProviderModelCatalog = Record<string, { models: Array<{ id: string }> }>;
 
 export type ManagedSessionModelTarget = {
   providerId: string;
@@ -213,4 +213,64 @@ export function buildManagedAgentEntries({
       ? { workspace: path.join(stateDir, `workspace-${agent.id}`), availableProviders }
       : { availableProviders },
     ));
+}
+
+// Provider IDs that were renamed in past refactors. Any stored agent model ref
+// using an old ID is rewritten to the current ID on startup.
+const RENAMED_PROVIDER_IDS: Record<string, string> = {
+  'github-copilot': 'lobsterai-copilot',
+};
+
+/**
+ * Migrate unqualified or renamed agent model refs to fully-qualified form.
+ * Returns the number of agents whose model binding was updated.
+ */
+export function migrateAgentModelRefs(options: {
+  defaultModelRef: string;
+  availableProviders: ProviderModelCatalog;
+  agents: Agent[];
+  updateAgent: (id: string, patch: { model: string }) => void;
+}): number {
+  const { defaultModelRef, availableProviders, agents, updateAgent } = options;
+  if (!defaultModelRef) return 0;
+
+  let changed = 0;
+
+  for (const agent of agents) {
+    let normalizedModel = agent.model.trim();
+    if (!normalizedModel) continue;
+
+    // Apply explicit provider rename map before qualification so that renamed
+    // provider IDs (e.g. 'github-copilot' → 'lobsterai-copilot') are corrected
+    // even though resolveQualifiedAgentModelRef treats any slash-ref as valid.
+    const slashIdx = normalizedModel.indexOf('/');
+    if (slashIdx > 0) {
+      const storedProviderId = normalizedModel.slice(0, slashIdx);
+      const renamedId = RENAMED_PROVIDER_IDS[storedProviderId];
+      if (renamedId) {
+        normalizedModel = `${renamedId}${normalizedModel.slice(slashIdx)}`;
+      }
+    }
+
+    const qualification = resolveQualifiedAgentModelRef({
+      agentModel: normalizedModel,
+      availableProviders,
+    });
+
+    if (qualification.status === 'ambiguous') {
+      console.warn(
+        `[Main] Skipped ambiguous agent model migration for "${agent.id}" because "${qualification.modelId}" matches multiple providers: ${qualification.providerIds.join(', ')}`,
+      );
+      continue;
+    }
+
+    if (qualification.status !== 'qualified' || qualification.primaryModel === agent.model.trim()) {
+      continue;
+    }
+
+    updateAgent(agent.id, { model: qualification.primaryModel });
+    changed += 1;
+  }
+
+  return changed;
 }

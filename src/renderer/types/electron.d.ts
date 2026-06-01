@@ -10,9 +10,16 @@ import type {
 } from '../../shared/cowork/constants';
 import type { HtmlShareAccessMode, HtmlShareStatus } from '../../shared/htmlShare/constants';
 import type {
+  InstalledKitRecord,
+  KitReference,
+  KitSkillMetadata,
+  ResolvedKitCapabilities,
+} from '../../shared/kit/constants';
+import type {
   ListLocalWebServicesOptions,
   LocalWebService,
 } from '../../shared/localWebServices/constants';
+import type { ShellOpenFailureReason } from '../../shared/shell/constants';
 interface ApiResponse {
   ok: boolean;
   status: number;
@@ -27,6 +34,12 @@ interface ApiStreamResponse {
   status: number;
   statusText: string;
   error?: string;
+}
+
+interface ShellActionResponse {
+  success: boolean;
+  error?: string;
+  reason?: ShellOpenFailureReason;
 }
 
 // Cowork types for IPC
@@ -46,6 +59,13 @@ interface CoworkSession {
   messages: CoworkMessage[];
   messagesOffset: number;
   totalMessages: number;
+  parentSessionId?: string | null;
+  forkedFromMessageId?: string | null;
+  forkedAt?: number | null;
+  forkMode?: 'none' | 'conversation' | 'worktree';
+  forkWorkspacePath?: string | null;
+  forkGitBranch?: string | null;
+  forkGitBaseRef?: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -65,6 +85,9 @@ interface CoworkSessionSummary {
   pinned: boolean;
   pinOrder?: number | null;
   agentId?: string;
+  parentSessionId?: string | null;
+  forkedAt?: number | null;
+  forkMode?: 'none' | 'conversation' | 'worktree';
   createdAt: number;
   updatedAt: number;
 }
@@ -384,6 +407,24 @@ interface IElectronAPI {
       error?: string;
     }>;
   };
+  kits: {
+    fetchStore: () => Promise<{ success: boolean; data?: string; error?: string }>;
+    install: (params: {
+      kitId: string;
+      bundleUrl: string;
+      version: string;
+      skillListIds: string[];
+      skillList?: KitSkillMetadata[];
+      mcpServers?: unknown[] | null;
+      connectors?: unknown[] | null;
+    }) => Promise<{ success: boolean; skillIds?: string[]; error?: string }>;
+    uninstall: (kitId: string) => Promise<{ success: boolean; error?: string }>;
+    listInstalled: () => Promise<{
+      success: boolean;
+      installed?: Record<string, InstalledKitRecord>;
+      error?: string;
+    }>;
+  };
   agents: {
     list: () => Promise<Agent[]>;
     get: (id: string) => Promise<Agent | null>;
@@ -505,6 +546,10 @@ interface IElectronAPI {
       systemPrompt?: string;
       title?: string;
       activeSkillIds?: string[];
+      runtimeSkillIds?: string[];
+      kitIds?: string[];
+      kitReferences?: KitReference[];
+      resolvedKitCapabilities?: ResolvedKitCapabilities;
       agentId?: string;
       imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
       mediaSelection?: { mode: string; modelId?: string; modelName?: string; imageModelId?: string; videoModelId?: string };
@@ -521,6 +566,10 @@ interface IElectronAPI {
       prompt: string;
       systemPrompt?: string;
       activeSkillIds?: string[];
+      runtimeSkillIds?: string[];
+      kitIds?: string[];
+      kitReferences?: KitReference[];
+      resolvedKitCapabilities?: ResolvedKitCapabilities;
       imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
       mediaSelection?: { mode: string; modelId?: string; modelName?: string; imageModelId?: string; videoModelId?: string };
       mediaReferences?: Array<{ token: string; mediaType: string; index: number; fileId: string; fileName: string; mimeType: string; localPath?: string; remoteUrl?: string; dataUrl?: string; role?: string }>;
@@ -542,6 +591,11 @@ interface IElectronAPI {
       sessionId: string;
       title: string;
     }) => Promise<{ success: boolean; error?: string }>;
+    forkSession: (options: {
+      sessionId: string;
+      forkedFromMessageId?: string | null;
+      title?: string;
+    }) => Promise<{ success: boolean; session?: CoworkSession; error?: string }>;
     getSession: (
       sessionId: string,
     ) => Promise<{ success: boolean; session?: CoworkSession; error?: string }>;
@@ -641,6 +695,10 @@ interface IElectronAPI {
       }>;
       error?: string;
     }>;
+    deleteSubagentSession: (options: {
+      parentSessionId: string;
+      runId: string;
+    }) => Promise<{ success: boolean; deleted?: boolean; error?: string }>;
     respondToPermission: (options: {
       requestId: string;
       result: CoworkPermissionResult;
@@ -743,8 +801,8 @@ interface IElectronAPI {
     }) => Promise<{ response: number }>;
   };
   shell: {
-    openPath: (filePath: string) => Promise<{ success: boolean; error?: string }>;
-    showItemInFolder: (filePath: string) => Promise<{ success: boolean; error?: string }>;
+    openPath: (filePath: string) => Promise<ShellActionResponse>;
+    showItemInFolder: (filePath: string) => Promise<ShellActionResponse>;
     openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
     openHtmlInBrowser: (htmlContent: string) => Promise<{ success: boolean; error?: string }>;
     getAppsForFile: (
@@ -757,7 +815,7 @@ interface IElectronAPI {
     openPathWithApp: (
       filePath: string,
       appPath: string,
-    ) => Promise<{ success: boolean; error?: string }>;
+    ) => Promise<ShellActionResponse>;
   };
   clipboard: {
     writeImageFromFile: (filePath: string) => Promise<{ success: boolean; error?: string }>;
@@ -884,8 +942,24 @@ interface IElectronAPI {
       pluginId: string,
       config: Record<string, unknown>,
     ) => Promise<{ ok: boolean; error?: string }>;
+    batchSave: (changes: {
+      toggles?: Array<{ pluginId: string; enabled: boolean }>;
+      configs?: Array<{ pluginId: string; config: Record<string, unknown> }>;
+    }) => Promise<{ ok: boolean; error?: string }>;
     detect: () => Promise<{ plugins: string[]; error?: string }>;
     sync: () => Promise<{ synced: string[]; error?: string }>;
+    checkUpdates: (pluginIds?: string[]) => Promise<{
+      success: boolean;
+      updates?: Array<{
+        pluginId: string;
+        currentVersion: string | null;
+        latestVersion: string | null;
+        hasUpdate: boolean;
+        error?: string;
+      }>;
+      error?: string;
+    }>;
+    update: (pluginId: string) => Promise<{ ok: boolean; version?: string; error?: string }>;
     onInstallLog: (callback: (line: string) => void) => () => void;
   };
   im: {
