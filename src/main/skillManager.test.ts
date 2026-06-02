@@ -6,6 +6,8 @@ vi.mock('electron', () => ({
   session: { defaultSession: { webRequest: { onBeforeSendHeaders: vi.fn() } } },
 }));
 
+import skillsConfig from '../../SKILLs/skills.config.json';
+import { CLAW_SALES_SKILL_IDS } from './clawSalesPresetAgents';
 import { __skillManagerTestUtils } from './skillManager';
 
 const { parseFrontmatter, isTruthy, extractDescription } = __skillManagerTestUtils;
@@ -22,7 +24,8 @@ test('parseFrontmatter: simple key-value pairs', () => {
 });
 
 test('parseFrontmatter: block scalar with pipe (|)', () => {
-  const raw = '---\nname: demo\ndescription: |\n  A multi-line description.\n  Second line.\n---\n# Content\n';
+  const raw =
+    '---\nname: demo\ndescription: |\n  A multi-line description.\n  Second line.\n---\n# Content\n';
   const { frontmatter, content } = parseFrontmatter(raw);
   expect(frontmatter.name).toBe('demo');
   expect(frontmatter.description).toBe('A multi-line description.\nSecond line.\n');
@@ -44,7 +47,8 @@ test('parseFrontmatter: quoted strings', () => {
 });
 
 test('parseFrontmatter: nested objects', () => {
-  const raw = '---\nname: demo\nmetadata:\n  short-description: A short desc\n  version: 2\n---\n# Content\n';
+  const raw =
+    '---\nname: demo\nmetadata:\n  short-description: A short desc\n  version: 2\n---\n# Content\n';
   const { frontmatter } = parseFrontmatter(raw);
   expect(frontmatter.name).toBe('demo');
   expect(frontmatter.metadata).toEqual({ 'short-description': 'A short desc', version: 2 });
@@ -206,7 +210,9 @@ test('integration: skill with block scalar description', () => {
 
   const { frontmatter, content } = parseFrontmatter(raw);
   expect(frontmatter.name).toBe('demo');
-  expect(String(frontmatter.description || '').trim()).toBe('A multi-line description.\nSecond line.');
+  expect(String(frontmatter.description || '').trim()).toBe(
+    'A multi-line description.\nSecond line.',
+  );
   expect(content).toMatch(/# Demo Skill/);
 });
 
@@ -259,7 +265,9 @@ test('clawhub: /{owner}/{name} with www prefix', () => {
 });
 
 test('clawhub: /{owner}/{name} with trailing slash', () => {
-  expect(parseClawhubUrl('https://clawhub.ai/anthropic/web-search/')).toEqual({ name: 'web-search' });
+  expect(parseClawhubUrl('https://clawhub.ai/anthropic/web-search/')).toEqual({
+    name: 'web-search',
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -271,7 +279,9 @@ test('clawhub: /skills/{owner}/{name} extracts skill name', () => {
 });
 
 test('clawhub: /skills/{owner}/{name} with trailing slash', () => {
-  expect(parseClawhubUrl('https://clawhub.ai/skills/anthropic/web-search/')).toEqual({ name: 'web-search' });
+  expect(parseClawhubUrl('https://clawhub.ai/skills/anthropic/web-search/')).toEqual({
+    name: 'web-search',
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -304,4 +314,13 @@ test('clawhub: invalid URL returns null', () => {
 
 test('clawhub: empty string returns null', () => {
   expect(parseClawhubUrl('')).toBeNull();
+});
+
+test('skills.config enables all bundled claw sales skills by default', () => {
+  expect(CLAW_SALES_SKILL_IDS).toHaveLength(48);
+
+  for (const skillId of CLAW_SALES_SKILL_IDS) {
+    expect(skillsConfig.defaults[skillId]).toBeDefined();
+    expect(skillsConfig.defaults[skillId].enabled).toBe(true);
+  }
 });

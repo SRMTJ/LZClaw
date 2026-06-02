@@ -1,8 +1,74 @@
 # LZClaw 定制修改说明
 
-更新时间：2026-05-16
+更新时间：2026-06-01
 
 本文记录 `LZClaw/src` 内针对 LZClaw 分支做过的定制修改，目的是让后续合并上游项目代码时，可以快速判断哪些改动属于本项目保留项。
+
+## 9 个销售 Agent 模板与 48 个 claw 技能内置（2026-06-01）
+
+修改目的：
+
+- 将“完成的agent”中的 9 个销售 Agent 模板与其关联的 48 个 `claw-*` 技能一次性并入 LZClaw / LZService。
+- 保证两条路径返回同一批模板与技能：
+  - `LZService` 在线时，LZClaw 优先读取服务端公开接口。
+  - `LZService` 不可用时，LZClaw 回退到本地内置模板与 bundled skill。
+
+涉及文件：
+
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/claw-*/`
+- `D:/SRMTJ/LZClaw/LZClaw/SKILLs/skills.config.json`
+- `D:/SRMTJ/LZClaw/LZClaw/src/main/clawSalesPresetAgents.ts`
+- `D:/SRMTJ/LZClaw/LZClaw/src/main/presetAgents.ts`
+- `D:/SRMTJ/LZClaw/LZClaw/src/main/presetAgents.test.ts`
+- `D:/SRMTJ/LZClaw/LZClaw/src/main/skillManager.test.ts`
+- `D:/SRMTJ/LZClaw/LZService/internal/service/claw_sales_sync.go`
+- `D:/SRMTJ/LZClaw/LZService/internal/service/skill_store.go`
+- `D:/SRMTJ/LZClaw/LZService/internal/service/agent_templates.go`
+- `D:/SRMTJ/LZClaw/LZService/public/skill_store_test.json`
+- `D:/SRMTJ/LZClaw/LZService/public/skill_store_prod.json`
+- `D:/SRMTJ/LZClaw/LZService/public/agent_templates_test.json`
+- `D:/SRMTJ/LZClaw/LZService/public/agent_templates_prod.json`
+
+修改内容：
+
+- 将 48 个 `claw-*` 技能目录原样加入 `LZClaw/SKILLs`，保留每个技能的 `main.py`、`SKILL.md`、`scripts/` 结构。
+- 在 `skills.config.json` 中将全部 48 个 `claw-*` 技能注册为 bundled / default-enabled 项，顺序排在现有 `csm-*` 之后。
+- 新增本地模板清单 `src/main/clawSalesPresetAgents.ts`，内置 9 个销售模板，并在 `src/main/presetAgents.ts` 中并入 `PRESET_AGENTS`。
+- `normalizePresetAgent(...)` 增加 `identity` 回退逻辑：当服务端模板未显式下发 `identity` 时，使用 `systemPrompt` 首句 `你是...` 自动补齐，避免远端路径出现空身份描述。
+- LZService 启动时新增 Claw 销售模板/技能的 boot-time upsert：
+  - `upsertClawSalesLocalSkills(...)` 从 `public/skill_store_{env}.json` 读取 `claw-*` 本地技能并幂等写入数据库；
+  - `upsertClawSalesAgentTemplates(...)` 从 `public/agent_templates_{env}.json` 读取 `claw-agent-*` 模板并幂等写入数据库；
+  - 不创建新的 marketplace ZIP，也不为这批内置技能伪造下载地址。
+- `public/skill_store_{test|prod}.json` 与 `public/agent_templates_{test|prod}.json` 已同步补齐这 48 个本地技能与 9 个模板，保证“空库首次 seed”和“数据库已有数据后的启动补齐”一致。
+
+9 个模板 ID 与图标映射：
+
+- `claw-agent-01-prospect`：`灵犀探客`，图标 `Tag`
+- `claw-agent-02-icebreak`：`破冰建联官许开`，图标 `Heart`
+- `claw-agent-03-customer-diagnosis`：`客情诊断师闻策`，图标 `Diagnosis`
+- `claw-agent-04-solution-advance`：`方案推进顾问沈案`，图标 `Briefcase`
+- `claw-agent-05-deal-conversion`：`成交转化官顾成`，图标 `Lightning`
+- `claw-agent-06-contract-collection`：`合同催收专员陆款`，图标 `Scales`
+- `claw-agent-07-training-review`：`培训复盘教练陶练`，图标 `GraduationCap`
+- `claw-agent-08-sales-supervision`：`销售主管周督`，图标 `Brain`
+- `claw-agent-09-executive-dashboard`：`老板驾驶舱秦略`，图标 `Data`
+
+双落点说明：
+
+- 服务端优先：
+  - `/openapi/get/luna/hardware/lobsterai/{env}/skill-store`
+  - `/openapi/get/luna/hardware/lobsterai/{env}/agent-template`
+- 本地回退：
+  - `src/main/clawSalesPresetAgents.ts`
+  - `src/main/presetAgents.ts`
+  - `SKILLs/claw-*`
+  - `SKILLs/skills.config.json`
+
+验证情况：
+
+- `src/main/presetAgents.test.ts` 覆盖 9 个模板、图标映射和远端 `identity` 回退。
+- `src/main/skillManager.test.ts` 断言 48 个 `claw-*` bundled skill 全部存在且默认启用。
+- `LZService` 合约测试已覆盖 `skill-store` / `agent-template` 返回的代表性 `claw-*` skill ID 与 `claw-agent-*` template ID。
 
 ## 8 个 CSM 技能去除外部 csm-common 依赖（2026-05-16）
 
@@ -640,12 +706,7 @@ LZClaw 行为：
 白名单配置：
 
 ```ts
-export const LZ_VISIBLE_IM_PLATFORMS = [
-  'weixin',
-  'dingtalk',
-  'feishu',
-  'wecom',
-];
+export const LZ_VISIBLE_IM_PLATFORMS = ['weixin', 'dingtalk', 'feishu', 'wecom'];
 ```
 
 平台显示统一从 `getVisibleIMPlatforms` 过滤，因此设置页、Agent 创建页、Agent 绑定页会保持同一套可见平台规则。
