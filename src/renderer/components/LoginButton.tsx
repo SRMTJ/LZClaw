@@ -1,19 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 
-import inviteCreditsIconUrl from '../assets/icons/invite-credits.svg';
 import logoutIconUrl from '../assets/icons/logout.svg';
 import rechargeIconUrl from '../assets/icons/recharge.svg';
-import usageOverviewIconUrl from '../assets/icons/usage-overview.svg';
 import { authService } from '../services/auth';
 import {
-  getPortalInvitationUrl,
-  getPortalProfileUrl,
+  getPortalPricingUrl,
   getPortalRechargeUrl,
 } from '../services/endpoints';
 import { i18nService } from '../services/i18n';
 import { RootState } from '../store';
 import type { CreditItem } from '../store/slices/authSlice';
+import ChartBarIcon from './icons/ChartBarIcon';
 import UserAvatarIcon from './icons/UserAvatarIcon';
 
 const DEFAULT_LZ_CRM_URL = 'http://lzcrm.srmtj.com';
@@ -155,6 +153,10 @@ const PortalMenuIcon: React.FC<{ src: string; darkInvert?: boolean }> = ({
   />
 );
 
+const LzCrmIcon: React.FC = () => (
+  <ChartBarIcon className="h-4 w-4 shrink-0 text-secondary" />
+);
+
 const UserMenu: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const user = useSelector((state: RootState) => state.auth.user);
   const profileSummary = useSelector((state: RootState) => state.auth.profileSummary);
@@ -175,26 +177,13 @@ const UserMenu: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     onClose();
   };
 
-  const handleSubscribe = async () => {
-    await authService.login();
-    onClose();
-  };
-
   const handleOpenLzCrm = async () => {
     await window.electron.shell.openExternal(resolveLzCrmUrl(user?.crmUrl));
     onClose();
   };
 
-  const handleUsageOverview = async () => {
-    await openPortalUrl(getPortalProfileUrl());
-  };
-
   const handleRecharge = async () => {
-    await openPortalUrl(getPortalRechargeUrl());
-  };
-
-  const handleInvite = async () => {
-    await openPortalUrl(getPortalInvitationUrl());
+    await openPortalUrl(getPortalPricingUrl() || getPortalRechargeUrl());
   };
 
   const phoneSuffix = user?.phone ? user.phone.slice(-4) : '';
@@ -268,34 +257,11 @@ const UserMenu: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
       {/* Actions */}
       <div className="py-1">
-        <button
-          type="button"
-          onClick={handleSubscribe}
-          className="w-full px-4 py-2 text-left text-sm text-foreground hover:bg-surface-raised transition-colors cursor-pointer"
-        >
-          {i18nService.t('authValueAddedServices')}
-        </button>
-        <button
-          type="button"
+        {/* Temporarily hidden per product request: 增值服务 / 用量概览 / 邀请好友赚积分 */}
+        <AccountMenuAction
+          icon={<LzCrmIcon />}
+          label={i18nService.t('authLzCrm')}
           onClick={handleOpenLzCrm}
-          className="w-full px-4 py-2 text-left text-sm text-foreground hover:bg-surface-raised transition-colors cursor-pointer"
-        >
-          {i18nService.t('authLzCrm')}
-        </button>
-        <AccountMenuAction
-          icon={<PortalMenuIcon src={usageOverviewIconUrl} darkInvert />}
-          label={i18nService.t('authUsageOverview')}
-          onClick={handleUsageOverview}
-        />
-        <AccountMenuAction
-          icon={<PortalMenuIcon src={rechargeIconUrl} darkInvert />}
-          label={i18nService.t('authGoRecharge')}
-          onClick={handleRecharge}
-        />
-        <AccountMenuAction
-          icon={<PortalMenuIcon src={inviteCreditsIconUrl} darkInvert />}
-          label={i18nService.t('authInviteFriendsForCredits')}
-          onClick={handleInvite}
         />
         <AccountMenuAction
           icon={<PortalMenuIcon src={logoutIconUrl} darkInvert />}
