@@ -217,7 +217,7 @@ import {
   setSystemProxyEnabled,
 } from './libs/systemProxy';
 import { getLogFilePath, getRecentMainLogEntries, initLogger } from './logger';
-import { type AskUserResponse, McpRuntime } from './mcpRuntime';
+import { type AskUserResponse, McpRuntime } from './mcp/mcpRuntime';
 import {
   MediaGenerationGateReason,
   MediaGenerationTool,

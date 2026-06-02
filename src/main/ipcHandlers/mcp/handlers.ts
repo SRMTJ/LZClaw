@@ -2,8 +2,8 @@ import { app, ipcMain } from 'electron';
 import https from 'https';
 
 import { McpIpcChannel } from '../../../shared/mcp/constants';
-import type { McpRuntime } from '../../mcpRuntime';
-import type { McpServerFormData } from '../../mcpStore';
+import type { McpRuntime } from '../../mcp/mcpRuntime';
+import type { McpServerFormData } from '../../mcp/mcpStore';
 
 export interface McpHandlerDeps {
   getMcpRuntime: () => McpRuntime;

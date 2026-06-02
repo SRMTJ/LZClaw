@@ -3,8 +3,8 @@ import { app } from 'electron';
 import fs from 'fs';
 import path from 'path';
 
-import { getElectronNodeRuntimePath } from './libs/coworkUtil';
-import { findSystemNodePath } from './libs/resolveStdioCommand';
+import { getElectronNodeRuntimePath } from '../libs/coworkUtil';
+import { findSystemNodePath } from '../libs/resolveStdioCommand';
 import {
   createMcpLaunchSourceFingerprint,
   isNpxMcpServer,

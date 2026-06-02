@@ -2,21 +2,21 @@ import crypto from 'crypto';
 import { app, BrowserWindow } from 'electron';
 import path from 'path';
 
-import { McpIpcChannel } from '../shared/mcp/constants';
-import { getElectronNodeRuntimePath } from './libs/coworkUtil';
+import { McpIpcChannel } from '../../shared/mcp/constants';
+import { getElectronNodeRuntimePath } from '../libs/coworkUtil';
 import {
   type AskUserRequest,
   type AskUserResponse,
   McpBridgeServer,
   type MediaGenerationRequest,
   type MediaGenerationResponse,
-} from './libs/mcpBridgeServer';
-import type { ResolvedMcpServer } from './libs/openclawConfigSync';
-import { resolveStdioCommand } from './libs/resolveStdioCommand';
+} from '../libs/mcpBridgeServer';
+import type { ResolvedMcpServer } from '../libs/openclawConfigSync';
+import { resolveStdioCommand } from '../libs/resolveStdioCommand';
+import type { SqliteStore } from '../sqliteStore';
 import { createMcpLaunchSourceFingerprint, McpLaunchResolutionStatus } from './mcpLaunchResolution';
 import { McpLaunchResolverManager } from './mcpLaunchResolverManager';
 import { McpStore } from './mcpStore';
-import type { SqliteStore } from './sqliteStore';
 
 export type { AskUserResponse, MediaGenerationRequest, MediaGenerationResponse };
 
