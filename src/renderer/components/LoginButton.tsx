@@ -2,14 +2,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 
 import logoutIconUrl from '../assets/icons/logout.svg';
-import rechargeIconUrl from '../assets/icons/recharge.svg';
 import { authService } from '../services/auth';
-import {
-  getPortalPricingUrl,
-  getPortalRechargeUrl,
-} from '../services/endpoints';
 import { i18nService } from '../services/i18n';
-import { RootState } from '../store';
+import type { RootState } from '../store';
 import type { CreditItem } from '../store/slices/authSlice';
 import ChartBarIcon from './icons/ChartBarIcon';
 import UserAvatarIcon from './icons/UserAvatarIcon';
@@ -167,11 +162,6 @@ const UserMenu: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     authService.fetchProfileSummary();
   }, []);
 
-  const openPortalUrl = async (url: string) => {
-    await window.electron.shell.openExternal(url);
-    onClose();
-  };
-
   const handleLogout = async () => {
     await authService.logout();
     onClose();
@@ -180,10 +170,6 @@ const UserMenu: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const handleOpenLzCrm = async () => {
     await window.electron.shell.openExternal(resolveLzCrmUrl(user?.crmUrl));
     onClose();
-  };
-
-  const handleRecharge = async () => {
-    await openPortalUrl(getPortalPricingUrl() || getPortalRechargeUrl());
   };
 
   const phoneSuffix = user?.phone ? user.phone.slice(-4) : '';

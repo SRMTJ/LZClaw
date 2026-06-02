@@ -734,6 +734,7 @@ export const LZ_VISIBLE_IM_PLATFORMS = ['weixin', 'dingtalk', 'feishu', 'wecom']
 相关文件：
 
 - `electron-builder.json`
+- `scripts/electron-builder-config.cjs`
 - `package.json`
 - `package-lock.json`
 - `scripts/nsis-installer.nsh`
