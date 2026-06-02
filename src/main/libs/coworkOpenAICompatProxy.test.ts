@@ -1,5 +1,9 @@
 import type http from 'http';
-import { describe,expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
+
+vi.mock('electron', () => ({
+  session: { defaultSession: { webRequest: { onBeforeSendHeaders: vi.fn() } } },
+}));
 
 import { __openAICompatProxyTestUtils, isAllowedProxyHost } from './coworkOpenAICompatProxy';
 

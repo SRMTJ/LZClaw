@@ -48,6 +48,14 @@ export interface PluginListItem {
   hasConfig: boolean;
 }
 
+export interface PluginUpdateInfo {
+  pluginId: string;
+  currentVersion: string | null;
+  latestVersion: string | null;
+  hasUpdate: boolean;
+  error?: string;
+}
+
 interface PluginManifest {
   id?: string;
   name?: string;
@@ -728,6 +736,118 @@ export class PluginManager {
     }
 
     return { synced };
+  }
+
+  /**
+   * Check for available updates for installed plugins (npm and clawhub sources).
+   */
+  async checkPluginUpdates(pluginIds?: string[]): Promise<PluginUpdateInfo[]> {
+    const userPlugins = this.store.listUserPlugins();
+    const candidates = userPlugins.filter(p => {
+      if (p.source !== 'npm' && p.source !== 'clawhub') return false;
+      if (pluginIds && pluginIds.length > 0 && !pluginIds.includes(p.pluginId)) return false;
+      return true;
+    });
+
+    if (candidates.length === 0) return [];
+
+    const results = await Promise.allSettled(
+      candidates.map(async (plugin): Promise<PluginUpdateInfo> => {
+        const currentVersion = plugin.version || null;
+        try {
+          let latestVersion: string | null = null;
+          if (plugin.source === 'npm') {
+            latestVersion = await this.checkNpmLatestVersion(plugin.spec, plugin.registry);
+          } else if (plugin.source === 'clawhub') {
+            latestVersion = await this.checkClawHubLatestVersion(plugin.spec);
+          }
+
+          const hasUpdate = latestVersion !== null
+            && (currentVersion === null || currentVersion !== latestVersion);
+
+          return {
+            pluginId: plugin.pluginId,
+            currentVersion,
+            latestVersion,
+            hasUpdate,
+          };
+        } catch (err) {
+          return {
+            pluginId: plugin.pluginId,
+            currentVersion,
+            latestVersion: null,
+            hasUpdate: false,
+            error: err instanceof Error ? err.message : String(err),
+          };
+        }
+      }),
+    );
+
+    return results.map(r => r.status === 'fulfilled'
+      ? r.value
+      : { pluginId: '', currentVersion: null, latestVersion: null, hasUpdate: false, error: 'Unknown error' },
+    ).filter(r => r.pluginId !== '');
+  }
+
+  private async checkNpmLatestVersion(spec: string, registry?: string): Promise<string> {
+    const npm = resolveNpmCommand();
+    const args = [...npm.baseArgs, 'view', spec, 'version', '--json'];
+    if (registry) {
+      args.push(`--registry=${registry}`);
+    }
+
+    const result = await runAsync(npm.command, args, {
+      env: npm.env,
+      timeout: 30_000,
+      shell: npm.shell,
+    });
+
+    if (result.code !== 0) {
+      throw new Error(`npm view failed: ${result.stderr || `exit code ${result.code}`}`);
+    }
+
+    // npm view --json returns version as a JSON string (e.g. "2.2.0")
+    const output = result.stdout.trim();
+    try {
+      const parsed = JSON.parse(output);
+      if (typeof parsed === 'string') return parsed;
+      // In case of multiple versions (dist-tags), take the first
+      if (Array.isArray(parsed)) return parsed[0];
+      return output.replace(/"/g, '');
+    } catch {
+      // Fallback: raw output without quotes
+      return output.replace(/"/g, '');
+    }
+  }
+
+  private async checkClawHubLatestVersion(spec: string): Promise<string> {
+    const baseUrl = process.env.OPENCLAW_CLAWHUB_URL || 'https://clawhub.ai';
+    const url = `${baseUrl}/api/v1/packages/${encodeURIComponent(spec)}`;
+
+    const data = await new Promise<string>((resolve, reject) => {
+      const protocol = url.startsWith('https') ? require('https') : require('http');
+      const req = protocol.get(url, { timeout: 30_000 }, (res: any) => {
+        if (res.statusCode !== 200) {
+          res.resume();
+          reject(new Error(`ClawHub API returned HTTP ${res.statusCode}`));
+          return;
+        }
+        let body = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk: string) => { body += chunk; });
+        res.on('end', () => resolve(body));
+        res.on('error', reject);
+      });
+      req.on('error', reject);
+      req.on('timeout', () => { req.destroy(); reject(new Error('ClawHub request timeout')); });
+    });
+
+    const detail = JSON.parse(data);
+    const latestVersion = detail?.package?.latestVersion ?? detail?.package?.tags?.latest ?? null;
+    if (!latestVersion) {
+      throw new Error(`No latest version found for ClawHub package "${spec}"`);
+    }
+    return latestVersion;
   }
 }
 

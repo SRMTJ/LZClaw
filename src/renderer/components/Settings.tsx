@@ -37,7 +37,7 @@ import BrainIcon from './icons/BrainIcon';
 import PlugIcon from './icons/PlugIcon';
 import PlusCircleIcon from './icons/PlusCircleIcon';
 import IMSettings from './im/IMSettings';
-import PluginsSettings from './plugins/PluginsSettings';
+import PluginsSettings, { type PluginsSettingsHandle } from './plugins/PluginsSettings';
 import BrowserWebAccessSettings from './settings/BrowserWebAccessSettings';
 import {
   buildOpenAICompatibleChatCompletionsUrl,
@@ -464,6 +464,9 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
   const initialThemeIdRef = useRef<string>(themeService.getThemeId());
   const initialLanguageRef = useRef<LanguageType>(i18nService.getLanguage());
   const didSaveRef = useRef(false);
+
+  // Plugin settings handle (deferred save)
+  const pluginsSettingsRef = useRef<PluginsSettingsHandle>(null);
 
   // Add state for active provider
   const [activeProvider, setActiveProvider] = useState<ProviderType>(getDefaultActiveProvider());
@@ -1818,6 +1821,15 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
         throw new Error(i18nService.t('settingsSavedButOpenClawSyncFailed'));
       }
 
+      // Batch save plugin changes (toggles + configs) if any pending
+      if (activeTab === 'plugins' && pluginsSettingsRef.current) {
+        const pendingChanges = pluginsSettingsRef.current.getPendingChanges();
+        if (pendingChanges) {
+          await window.electron?.plugins.batchSave(pendingChanges);
+          pluginsSettingsRef.current.resetDirty();
+        }
+      }
+
       didSaveRef.current = true;
       onClose();
     } catch (error) {
@@ -1828,7 +1840,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
   };
 
   // 标签页切换处理
-  const handleTabChange = (tab: TabType) => {
+  const doTabChange = (tab: TabType) => {
     if (tab !== 'model') {
       setIsAddingModel(false);
       setIsEditingModel(false);
@@ -1840,6 +1852,21 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
     }
     setActiveTab(tab);
   };
+
+  const handleTabChange = (tab: TabType) => {
+    if (activeTab === 'plugins' && pluginsSettingsRef.current?.guardLeave(() => doTabChange(tab))) {
+      return;
+    }
+    doTabChange(tab);
+  };
+
+  // Guarded close: check plugin dirty state before closing
+  const guardedClose = useCallback(() => {
+    if (activeTab === 'plugins' && pluginsSettingsRef.current?.guardLeave(() => onClose())) {
+      return;
+    }
+    onClose();
+  }, [activeTab, onClose]);
 
   // Mapping from shortcut key to i18n label key for conflict messages
   const shortcutLabelMap: Record<string, string> = {
@@ -3108,7 +3135,11 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
         return <IMSettings />;
 
       case 'plugins':
-        return <PluginsSettings />;
+        return (
+          <PluginsSettings
+            handleRef={pluginsSettingsRef}
+          />
+        );
 
       case 'about':
         return (
@@ -3186,7 +3217,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
 
   return (
     <Modal
-      onClose={onClose}
+      onClose={guardedClose}
       overlayClassName="fixed inset-0 z-50 modal-backdrop flex items-center justify-center p-3 sm:p-4"
       className="w-[calc(100vw-1.5rem)] max-w-[900px] min-w-0 sm:w-[calc(100vw-2rem)]"
     >
@@ -3223,7 +3254,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
           <div className="flex justify-between items-center gap-3 px-6 pt-5 pb-3 shrink-0">
             <h3 className="min-w-0 truncate text-lg font-semibold text-foreground">{activeTabLabel}</h3>
             <button
-              onClick={onClose}
+              onClick={guardedClose}
               className="text-secondary hover:text-foreground p-1.5 hover:bg-surface-raised rounded-lg transition-colors"
             >
               <XMarkIcon className="h-5 w-5" />
@@ -3262,7 +3293,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
             <div className="flex justify-end space-x-4 p-4 border-border border-t bg-background shrink-0">
               <button
                 type="button"
-                onClick={onClose}
+                onClick={guardedClose}
                 className="px-4 py-2 rounded-xl transition-colors text-sm font-medium border border-border text-foreground hover:bg-surface-raised active:scale-[0.98]"
               >
                 {i18nService.t('cancel')}
@@ -3354,6 +3385,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, notice
               </div>
             </div>
           )}
+
       </div>
     </Modal>
   );

@@ -1,16 +1,22 @@
-import { test, expect } from 'vitest';
+import { expect, test, vi } from 'vitest';
+
+vi.mock('electron', () => ({
+  app: { getAppPath: () => process.cwd(), getPath: () => '/tmp' },
+}));
+
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+
 import {
-  parseMemoryMd,
-  serializeMemoryMd,
-  resolveMemoryFilePath,
   addMemoryEntry,
-  updateMemoryEntry,
   deleteMemoryEntry,
-  searchMemoryEntries,
   migrateSqliteToMemoryMd,
+  parseMemoryMd,
+  resolveMemoryFilePath,
+  searchMemoryEntries,
+  serializeMemoryMd,
+  updateMemoryEntry,
 } from './openclawMemoryFile';
 
 // ---- helpers ----------------------------------------------------------------

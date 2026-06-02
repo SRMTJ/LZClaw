@@ -14,6 +14,7 @@ import { CoworkView } from './components/cowork';
 import CoworkPermissionModal from './components/cowork/CoworkPermissionModal';
 import CoworkQuestionWizard from './components/cowork/CoworkQuestionWizard';
 import EngineStartupOverlay from './components/cowork/EngineStartupOverlay';
+import KitsView from './components/kits/KitsView';
 import { McpView } from './components/mcp';
 import { ScheduledTasksView } from './components/scheduledTasks';
 import Settings, { type SettingsOpenOptions } from './components/Settings';
@@ -39,7 +40,8 @@ import {
   selectCurrentSessionId,
   selectFirstPendingPermission,
 } from './store/selectors/coworkSelectors';
-import { setDraftPrompt } from './store/slices/coworkSlice';
+import { setDraftKitIds, setDraftPrompt } from './store/slices/coworkSlice';
+import { setActiveKitIds } from './store/slices/kitSlice';
 import { setAvailableModels, setDefaultSelectedModel } from './store/slices/modelSlice';
 import { clearSelection } from './store/slices/quickActionSlice';
 import type { CoworkPermissionResult } from './types/cowork';
@@ -61,7 +63,7 @@ const INIT_STEP_TIMEOUT_MS_DEFAULT = 16_000;
 const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsOptions, setSettingsOptions] = useState<SettingsOpenOptions>({});
-  const [mainView, setMainView] = useState<'cowork' | 'skills' | 'scheduledTasks' | 'mcp'>('cowork');
+  const [mainView, setMainView] = useState<'cowork' | 'skills' | 'scheduledTasks' | 'kits' | 'mcp'>('cowork');
   const [isInitialized, setIsInitialized] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -311,6 +313,26 @@ const App: React.FC = () => {
   const handleShowMcp = useCallback(() => {
     setMainView('mcp');
   }, []);
+
+  const handleShowKits = useCallback(() => {
+    setMainView('kits');
+  }, []);
+
+  const handleKitTryAsking = useCallback((text: string, kitId: string) => {
+    dispatch(setActiveKitIds([kitId]));
+    coworkService.clearSession({ restoreAgentSkills: true });
+    dispatch(clearSelection());
+    // Set the draft prompt and kit selection in store BEFORE switching view, so that when
+    // CoworkPromptInput mounts/updates with draftKey='__home__', it picks up both.
+    dispatch(setDraftPrompt({ sessionId: '__home__', draft: text }));
+    dispatch(setDraftKitIds({ draftKey: '__home__', kitIds: [kitId] }));
+    setMainView('cowork');
+    window.setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('cowork:focus-input', {
+        detail: { text },
+      }));
+    }, 0);
+  }, [dispatch]);
 
   const handleToggleSidebar = useCallback(() => {
     setIsSidebarCollapsed((prev) => !prev);
@@ -767,6 +789,7 @@ const App: React.FC = () => {
           onShowSkills={handleShowSkills}
           onShowCowork={handleShowCowork}
           onShowScheduledTasks={handleShowScheduledTasks}
+          onShowKits={handleShowKits}
           onShowMcp={handleShowMcp}
           onNewChat={handleNewChat}
           isCollapsed={isSidebarCollapsed}
@@ -793,6 +816,14 @@ const App: React.FC = () => {
                 onNewChat={handleNewChat}
                 updateBadge={isSidebarCollapsed ? updateBadge : null}
               />
+            ) : mainView === 'kits' ? (
+              <KitsView
+                isSidebarCollapsed={isSidebarCollapsed}
+                onToggleSidebar={handleToggleSidebar}
+                onNewChat={handleNewChat}
+                updateBadge={isSidebarCollapsed ? updateBadge : null}
+                onTryAsking={handleKitTryAsking}
+              />
             ) : mainView === 'mcp' ? (
               <McpView
                 isSidebarCollapsed={isSidebarCollapsed}
@@ -803,6 +834,7 @@ const App: React.FC = () => {
             ) : (
               <CoworkView
                 onShowSkills={handleShowSkills}
+                onShowKits={handleShowKits}
                 isSidebarCollapsed={isSidebarCollapsed}
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}

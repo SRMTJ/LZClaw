@@ -6,6 +6,7 @@ import { getScheduledReminderDisplayText } from '../../../scheduledTask/reminder
 import { i18nService } from '../../services/i18n';
 import type { Artifact } from '../../types/artifact';
 import type { CoworkMessage, CoworkMessageMetadata } from '../../types/cowork';
+import { revealLocalPathWithToast } from '../../utils/localFileActions';
 import { ArtifactPreviewCard } from '../artifacts';
 import ExclamationTriangleIcon from '../icons/ExclamationTriangleIcon';
 import InformationCircleIcon from '../icons/InformationCircleIcon';
@@ -22,6 +23,7 @@ import {
   getRetainedMediaPollCount,
   getToolResultDisplay,
   getToolResultLineCount,
+  getToolResultLineCountSummary,
   getVideoPathArtifacts,
   getVisibleAssistantItems,
   hasText,
@@ -115,11 +117,7 @@ const VideoArtifactPathList: React.FC<{ artifacts: Artifact[] }> = ({ artifacts 
           <span className="truncate">{getDisplayPath(artifact.filePath!)}</span>
           <button
             className="flex items-center gap-1 text-primary hover:underline flex-shrink-0"
-            onClick={() => {
-              window.electron.shell.showItemInFolder(artifact.filePath!).catch(() => {
-                // ignore
-              });
-            }}
+            onClick={() => void revealLocalPathWithToast(artifact.filePath!)}
           >
             <FolderIcon className="h-3.5 w-3.5" />
             <span>{i18nService.t('showInFolder')}</span>
@@ -162,6 +160,7 @@ const AssistantTurnBlock: React.FC<{
   resolveLocalFilePath?: (href: string, text: string) => string | null;
   mapDisplayText?: (value: string) => string;
   onOpenLocalService?: (artifact: Artifact) => void;
+  onForkMessage?: (messageId: string) => void;
   showTypingIndicator?: boolean;
   showCopyButtons?: boolean;
 }> = ({
@@ -170,6 +169,7 @@ const AssistantTurnBlock: React.FC<{
   resolveLocalFilePath,
   mapDisplayText,
   onOpenLocalService,
+  onForkMessage,
   showTypingIndicator = false,
   showCopyButtons = true,
 }) => {
@@ -257,7 +257,7 @@ const AssistantTurnBlock: React.FC<{
             </div>
             {resultLineCount > 0 && (
               <div className="text-xs text-muted mt-0.5">
-                {resultLineCount} {resultLineCount === 1 ? 'line' : 'lines'} of output
+                {getToolResultLineCountSummary(resultLineCount)}
               </div>
             )}
             {resultLineCount === 0 && showNoDetailError && (
@@ -350,6 +350,7 @@ const AssistantTurnBlock: React.FC<{
                     resolveLocalFilePath={resolveLocalFilePath}
                     mapDisplayText={mapDisplayText}
                     showCopyButton={isLastAssistant}
+                    onFork={isLastAssistant ? onForkMessage : undefined}
                     turnMetadata={isLastAssistant ? (item.message.metadata as CoworkMessageMetadata) : undefined}
                   />
                 );

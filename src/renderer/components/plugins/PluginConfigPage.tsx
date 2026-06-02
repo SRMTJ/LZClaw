@@ -7,6 +7,9 @@ import { SchemaForm } from '../im/SchemaForm';
 interface PluginConfigPageProps {
   pluginId: string;
   onBack: () => void;
+  initialConfig?: Record<string, unknown>;
+  onConfigChange: (pluginId: string, config: Record<string, unknown>) => void;
+  onConfigLoaded: (pluginId: string, config: Record<string, unknown>) => void;
 }
 
 interface ConfigSchemaData {
@@ -46,13 +49,11 @@ function deepSet(obj: Record<string, unknown>, path: string, value: unknown): Re
   return result;
 }
 
-export default function PluginConfigPage({ pluginId, onBack }: PluginConfigPageProps) {
+export default function PluginConfigPage({ pluginId, onBack, initialConfig, onConfigChange, onConfigLoaded }: PluginConfigPageProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [schema, setSchema] = useState<ConfigSchemaData | null>(null);
-  const [configValue, setConfigValue] = useState<Record<string, unknown>>({});
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [configValue, setConfigValue] = useState<Record<string, unknown>>(initialConfig ?? {});
   const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
 
   const loadSchema = useCallback(async () => {
@@ -62,7 +63,13 @@ export default function PluginConfigPage({ pluginId, onBack }: PluginConfigPageP
       const result = await window.electron?.plugins.getConfigSchema(pluginId);
       if (result?.success && result.schema) {
         setSchema(result.schema);
-        setConfigValue(result.config ?? {});
+        const loadedConfig = result.config ?? {};
+        // If parent already has a pending config for this plugin, use that instead
+        if (!initialConfig) {
+          setConfigValue(loadedConfig);
+        }
+        // Notify parent about the initial config from backend
+        onConfigLoaded(pluginId, loadedConfig);
       } else {
         setError(result?.error || i18nService.t('pluginsConfigLoadError'));
       }
@@ -70,35 +77,20 @@ export default function PluginConfigPage({ pluginId, onBack }: PluginConfigPageP
       setError(i18nService.t('pluginsConfigLoadError'));
     }
     setLoading(false);
-  }, [pluginId]);
+  }, [pluginId, initialConfig, onConfigLoaded]);
 
   useEffect(() => {
     loadSchema();
   }, [loadSchema]);
 
   const handleChange = (path: string, value: unknown) => {
-    setConfigValue(prev => deepSet(prev, path, value));
-    setSaved(false);
+    const next = deepSet(configValue, path, value);
+    setConfigValue(next);
+    onConfigChange(pluginId, next);
   };
 
   const handleToggleSecret = (path: string) => {
     setShowSecrets(prev => ({ ...prev, [path]: !prev[path] }));
-  };
-
-  const handleSave = async () => {
-    setSaving(true);
-    try {
-      const result = await window.electron?.plugins.saveConfig(pluginId, configValue);
-      if (result?.ok) {
-        setSaved(true);
-        setTimeout(() => setSaved(false), 2000);
-      } else {
-        setError(result?.error || 'Save failed');
-      }
-    } catch {
-      setError('Save failed');
-    }
-    setSaving(false);
   };
 
   return (
@@ -132,41 +124,16 @@ export default function PluginConfigPage({ pluginId, onBack }: PluginConfigPageP
           {i18nService.t('pluginsConfigNoSchema')}
         </div>
       ) : (
-        <>
-          <div className="rounded-lg border border-border p-4">
-            <SchemaForm
-              schema={schema.configSchema}
-              hints={schema.uiHints as Record<string, import('../im/SchemaForm').UiHint>}
-              value={configValue}
-              onChange={handleChange}
-              showSecrets={showSecrets}
-              onToggleSecret={handleToggleSecret}
-            />
-          </div>
-
-          {/* Actions */}
-          <div className="flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={onBack}
-              className="px-4 py-2 text-sm rounded-md border border-border text-foreground hover:bg-surface-raised transition-colors"
-            >
-              {i18nService.t('pluginsConfigBack')}
-            </button>
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={saving}
-              className="px-4 py-2 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {saving
-                ? i18nService.t('pluginsConfigSaving')
-                : saved
-                  ? i18nService.t('pluginsConfigSaved')
-                  : i18nService.t('pluginsConfigSave')}
-            </button>
-          </div>
-        </>
+        <div className="rounded-lg border border-border p-4">
+          <SchemaForm
+            schema={schema.configSchema}
+            hints={schema.uiHints as Record<string, import('../im/SchemaForm').UiHint>}
+            value={configValue}
+            onChange={handleChange}
+            showSecrets={showSecrets}
+            onToggleSecret={handleToggleSecret}
+          />
+        </div>
       )}
     </div>
   );

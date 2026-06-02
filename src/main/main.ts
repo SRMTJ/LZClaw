@@ -23,6 +23,7 @@ import path from 'path';
 import { Readable } from 'stream';
 import { fileURLToPath, pathToFileURL } from 'url';
 
+import { CoworkSystemMessageKind } from '../common/coworkSystemMessages';
 import type { OpenClawSessionPatch } from '../common/openclawSession';
 import { buildSessionTitleFromInput } from '../common/sessionTitle';
 import { buildScheduledTaskEnginePrompt } from '../scheduledTask/enginePrompt';
@@ -48,6 +49,7 @@ import {
   COWORK_SESSION_PAGE_SIZE,
   CoworkContextUsageFailureReason,
   CoworkContextUsageSource,
+  CoworkForkMode,
   CoworkIpcChannel,
 } from '../shared/cowork/constants';
 import { DialogIpc } from '../shared/dialog/constants';
@@ -58,6 +60,10 @@ import {
   HtmlShareIpc,
   HtmlShareSourceType,
 } from '../shared/htmlShare/constants';
+import type {
+  KitReference,
+  ResolvedKitCapabilities,
+} from '../shared/kit/constants';
 import {
   type ListLocalWebServicesOptions,
   type LocalWebService,
@@ -65,11 +71,13 @@ import {
 } from '../shared/localWebServices/constants';
 import { PlatformRegistry } from '../shared/platform';
 import { ProviderName } from '../shared/providers';
+import type { ShellOpenFailureReason as ShellOpenFailureReasonType } from '../shared/shell/constants';
+import { ShellOpenFailureReason } from '../shared/shell/constants';
 import { AgentManager } from './agentManager';
 import { APP_NAME } from './appConstants';
 import { authQuotaGateStateFromQuota, AuthSubscriptionStatus, createDefaultAuthQuotaGateState, normalizeAuthQuota } from './authQuota';
 import { getAutoLaunchEnabled, isAutoLaunched, setAutoLaunchEnabled } from './autoLaunchManager';
-import { type CoworkMessage, CoworkStore } from './coworkStore';
+import { type CoworkForkContextMessage, type CoworkMessage, CoworkStore } from './coworkStore';
 import { setLanguage, t } from './i18n';
 import { IMGatewayConfig, IMGatewayManager } from './im';
 import {
@@ -90,6 +98,8 @@ import type {
   TelegramInstanceConfig,
   WecomInstanceConfig,
 } from './im/types';
+import { registerCoworkSubagentHandlers } from './ipcHandlers/coworkSubagent';
+import { registerKitHandlers } from './ipcHandlers/kits';
 import { registerNimQrLoginHandlers } from './ipcHandlers/nimQrLogin';
 import { registerPluginHandlers } from './ipcHandlers/plugins';
 import {
@@ -137,9 +147,10 @@ import {
 } from './libs/coworkUtil';
 import {
   getAgentTemplateUrl,
+  getHtmlSharePublicBaseUrl,
+  getKitStoreUrl,
   getLoginUrlEndpoint,
   getPortalTasksUrl,
-  getHtmlSharePublicBaseUrl,
   getServerApiBaseUrl,
   getSkillStoreUrl,
   isTestModeEnabled,
@@ -163,7 +174,7 @@ import { getKeyfromAttribution, initializeKeyfromAttribution } from './libs/keyf
 import { exportLogsZip } from './libs/logExport';
 import { McpBridgeServer, type MediaGenerationRequest, type MediaGenerationResponse } from './libs/mcpBridgeServer';
 import { type PersistedGeneratedImageAsset, persistGeneratedImageAssets, type PersistGeneratedImageAssetsResult, persistGeneratedVideoAssets, type RemoteGeneratedMediaAsset } from './libs/mediaAssetPersistence';
-import { parsePrimaryModelRef, resolveQualifiedAgentModelRef } from './libs/openclawAgentModels';
+import { migrateAgentModelRefs, parsePrimaryModelRef, resolveQualifiedAgentModelRef } from './libs/openclawAgentModels';
 import {
   buildManagedSessionKey,
   DEFAULT_MANAGED_AGENT_ID,
@@ -201,6 +212,7 @@ import { ensurePythonRuntimeReady } from './libs/pythonRuntime';
 import { resolveStdioCommand } from './libs/resolveStdioCommand';
 import { serializeForLog } from './libs/sanitizeForLog';
 import { SqliteBackupManager } from './libs/sqliteBackup/sqliteBackupManager';
+import { runStartupCacheWarmup } from './libs/startupCacheWarmup';
 import {
   applySystemProxyEnv,
   resolveSystemProxyUrlForTargets,
@@ -714,59 +726,6 @@ const normalizeOpenClawModelRef = (modelRef: string): string => {
   return qualification.status === 'qualified' ? qualification.primaryModel : normalized;
 };
 
-// Provider IDs that were renamed in past refactors. Any stored agent model ref
-// using an old ID is rewritten to the current ID on startup.
-const RENAMED_PROVIDER_IDS: Record<string, string> = {
-  'github-copilot': 'lobsterai-copilot',
-};
-
-const migrateAgentModelRefs = (): number => {
-  const defaultModelRef = resolveDefaultAgentModelRef();
-  if (!defaultModelRef) return 0;
-
-  const availableProviders = buildAvailableOpenClawProviders();
-  const agents = getAgentManager().listAgents();
-  let changed = 0;
-
-  for (const agent of agents) {
-    let normalizedModel = agent.model.trim();
-    if (!normalizedModel) continue;
-
-    // Apply explicit provider rename map before qualification so that renamed
-    // provider IDs (e.g. 'github-copilot' → 'lobsterai-copilot') are corrected
-    // even though resolveQualifiedAgentModelRef treats any slash-ref as valid.
-    const slashIdx = normalizedModel.indexOf('/');
-    if (slashIdx > 0) {
-      const storedProviderId = normalizedModel.slice(0, slashIdx);
-      const renamedId = RENAMED_PROVIDER_IDS[storedProviderId];
-      if (renamedId) {
-        normalizedModel = `${renamedId}${normalizedModel.slice(slashIdx)}`;
-      }
-    }
-
-    const qualification = resolveQualifiedAgentModelRef({
-      agentModel: normalizedModel,
-      availableProviders,
-    });
-
-    if (qualification.status === 'ambiguous') {
-      console.warn(
-        `[Main] Skipped ambiguous agent model migration for "${agent.id}" because "${qualification.modelId}" matches multiple providers: ${qualification.providerIds.join(', ')}`,
-      );
-      continue;
-    }
-
-    if (qualification.status !== 'qualified' || qualification.primaryModel === agent.model.trim()) {
-      continue;
-    }
-
-    getCoworkStore().updateAgent(agent.id, { model: qualification.primaryModel });
-    changed += 1;
-  }
-
-  return changed;
-};
-
 const fetchAgentTemplatesFromLzService = async (): Promise<PresetAgent[]> => {
   const url = getAgentTemplateUrl();
   console.log(`[AgentTemplate] Fetching agent templates from ${url}`);
@@ -805,7 +764,6 @@ const getAgentTemplatesWithFallback = async (): Promise<PresetAgent[]> => {
     return PRESET_AGENTS;
   }
 };
-
 const sanitizeAttachmentFileName = (value?: string): string => {
   const raw = typeof value === 'string' ? value.trim() : '';
   if (!raw) return 'attachment';
@@ -1084,14 +1042,16 @@ const safeDecodeURIComponent = (value: string): string => {
 };
 
 const normalizeWindowsShellPath = (inputPath: string): string => {
-  if (!isWindows) return inputPath;
-
   const trimmed = inputPath.trim();
   if (!trimmed) return inputPath;
 
   let normalized = trimmed;
-  if (/^file:\/\//i.test(normalized)) {
-    normalized = safeDecodeURIComponent(normalized.replace(/^file:\/\//i, ''));
+  if (/^(?:file|localfile):\/\//i.test(normalized)) {
+    normalized = safeDecodeURIComponent(normalized.replace(/^(?:file|localfile):\/\//i, ''));
+  }
+
+  if (!isWindows) {
+    return normalized;
   }
 
   if (/^\/[A-Za-z]:/.test(normalized)) {
@@ -2450,6 +2410,40 @@ function mergeCoworkSystemPrompt(systemPrompt?: string): string | undefined {
   return sections.length > 0 ? sections.join('\n\n') : undefined;
 }
 
+type CoworkImageAttachmentMain = {
+  name: string;
+  mimeType: string;
+  base64Data: string;
+};
+
+function buildCoworkUserSelectionMetadata(options: {
+  skillIds?: string[];
+  kitIds?: string[];
+  kitReferences?: KitReference[];
+  resolvedKitCapabilities?: ResolvedKitCapabilities;
+  imageAttachments?: CoworkImageAttachmentMain[];
+}): Record<string, unknown> | undefined {
+  const metadata: Record<string, unknown> = {};
+
+  if (options.skillIds?.length) {
+    metadata.skillIds = options.skillIds;
+  }
+  if (options.kitIds?.length) {
+    metadata.kitIds = options.kitIds;
+    if (options.kitReferences?.length) {
+      metadata.kitReferences = options.kitReferences;
+    }
+    if (options.resolvedKitCapabilities) {
+      metadata.resolvedKitCapabilities = options.resolvedKitCapabilities;
+    }
+  }
+  if (options.imageAttachments?.length) {
+    metadata.imageAttachments = options.imageAttachments;
+  }
+
+  return Object.keys(metadata).length > 0 ? metadata : undefined;
+}
+
 // 获取正确的预加载脚本路径
 const PRELOAD_PATH = app.isPackaged
   ? path.join(__dirname, 'preload.js')
@@ -3351,13 +3345,22 @@ if (!gotTheLock) {
       // Video generation confirmation: inform user about cost and duration
       if (mediaType === 'video' && mcpBridgeServer) {
         const durationSec = typeof args.durationSeconds === 'number' ? args.durationSeconds : null;
-        const costLine = durationSec
-          ? `本次预计大约消耗 ${durationSec * 100} 积分。`
-          : '费用约为 100积分/秒。';
+        const costPoints = durationSec ? durationSec * 100 : null;
         const portalTasksUrl = getPortalTasksUrl();
-        const questionText = `视频生成任务耗时较长，${costLine}\n\n生成后的结果请及时下载保存！\n可在当前对话或「[个人主页-用量详情-生成任务](${portalTasksUrl})」查看。\n\n确认开始生成？`;
+        const subtitle = costPoints
+          ? `本次生成大约预计消耗 **${costPoints}** 积分`
+          : '费用约为 **100** 积分/秒';
+        const questionText = [
+          '请确认当前描述无误，提交后将无法取消。',
+          '视频生成任务耗时较长，请耐心等待。',
+          '',
+          `生成后请妥善保存视频，若误删可在[「个人主页-用量详情-生成任务」](${portalTasksUrl})中下载`,
+          '~~（链接有时效性，请尽快下载）~~',
+        ].join('\n');
         const confirmResponse = await mcpBridgeServer.askUserInternal([{
           question: questionText,
+          title: '确认生成视频？',
+          subtitle,
           options: [
             { label: '确认生成', description: '开始视频生成任务' },
             { label: '取消', description: '暂不生成' },
@@ -4607,6 +4610,13 @@ if (!gotTheLock) {
     }
   });
 
+  // Kits IPC handlers
+  registerKitHandlers({
+    getStore,
+    getKitStoreUrl,
+    getSkillManager,
+  });
+
   ipcMain.handle('openclaw:engine:getStatus', async () => {
     try {
       const manager = getOpenClawEngineManager();
@@ -5029,7 +5039,11 @@ if (!gotTheLock) {
         systemPrompt?: string;
         title?: string;
         activeSkillIds?: string[];
-        imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
+        runtimeSkillIds?: string[];
+        kitIds?: string[];
+        kitReferences?: KitReference[];
+        resolvedKitCapabilities?: ResolvedKitCapabilities;
+        imageAttachments?: CoworkImageAttachmentMain[];
         agentId?: string;
         modelOverride?: string;
         mediaSelection?: {
@@ -5040,7 +5054,7 @@ if (!gotTheLock) {
           videoModelId?: string;
         };
         mediaReferences?: MediaAttachmentRefMain[];
-  },
+      },
     ) => {
       try {
         const engineStatus = await ensureOpenClawRunningForCowork();
@@ -5069,13 +5083,14 @@ if (!gotTheLock) {
         );
         const title = options.title?.trim() || fallbackTitle;
         const taskWorkingDirectory = resolveTaskWorkingDirectory(selectedTaskDirectory);
+        const runtimeSkillIds = options.runtimeSkillIds ?? options.activeSkillIds;
 
         const session = coworkStoreInstance.createSession(
           title,
           taskWorkingDirectory,
           systemPrompt,
           config.executionMode || 'local',
-          options.activeSkillIds || [],
+          runtimeSkillIds || [],
           options.agentId || 'main',
           options.modelOverride || '',
         );
@@ -5094,16 +5109,12 @@ if (!gotTheLock) {
           mediaSelectionBySession.delete(session.id);
         }
 
-      if (options.mediaReferences?.length) {
-        mediaReferencesBySession.set(session.id, options.mediaReferences);
-      } else {
-        mediaReferencesBySession.delete(session.id);
-      }
-
-        const messageMetadata: Record<string, unknown> = {};
-        if (options.activeSkillIds?.length) {
-          messageMetadata.skillIds = options.activeSkillIds;
+        if (options.mediaReferences?.length) {
+          mediaReferencesBySession.set(session.id, options.mediaReferences);
+        } else {
+          mediaReferencesBySession.delete(session.id);
         }
+
         if (options.imageAttachments?.length) {
           console.log('[Cowork:StartSession] imageAttachments received via IPC:', {
             count: options.imageAttachments.length,
@@ -5113,12 +5124,18 @@ if (!gotTheLock) {
               base64Length: img.base64Data?.length ?? 0,
             })),
           });
-          messageMetadata.imageAttachments = options.imageAttachments;
         }
+        const messageMetadata = buildCoworkUserSelectionMetadata({
+          skillIds: options.activeSkillIds,
+          kitIds: options.kitIds,
+          kitReferences: options.kitReferences,
+          resolvedKitCapabilities: options.resolvedKitCapabilities,
+          imageAttachments: options.imageAttachments,
+        });
         coworkStoreInstance.addMessage(session.id, {
           type: 'user',
           content: options.prompt,
-          metadata: Object.keys(messageMetadata).length > 0 ? messageMetadata : undefined,
+          metadata: messageMetadata,
         });
 
         coworkStoreInstance.updateSession(session.id, { status: 'running' });
@@ -5128,14 +5145,18 @@ if (!gotTheLock) {
           .startSession(session.id, options.prompt, {
             skipInitialUserMessage: true,
             systemPrompt,
-            skillIds: options.activeSkillIds,
+            skillIds: runtimeSkillIds,
+            messageSkillIds: options.activeSkillIds,
+            kitIds: options.kitIds,
+            kitReferences: options.kitReferences,
+            resolvedKitCapabilities: options.resolvedKitCapabilities,
             workspaceRoot: taskWorkingDirectory,
             confirmationMode: 'modal',
             imageAttachments: options.imageAttachments,
             agentId: options.agentId,
             mediaSelection: options.mediaSelection,
             mediaReferences: options.mediaReferences,
-      })
+          })
           .catch(error => {
             console.error('[Cowork] session error:', error);
             try {
@@ -5181,7 +5202,11 @@ if (!gotTheLock) {
         prompt: string;
         systemPrompt?: string;
         activeSkillIds?: string[];
-        imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
+        runtimeSkillIds?: string[];
+        kitIds?: string[];
+        kitReferences?: KitReference[];
+        resolvedKitCapabilities?: ResolvedKitCapabilities;
+        imageAttachments?: CoworkImageAttachmentMain[];
         mediaSelection?: {
           mode: 'auto' | 'image' | 'video' | 'none';
           modelId?: string;
@@ -5230,11 +5255,15 @@ if (!gotTheLock) {
             systemPrompt: mergeCoworkSystemPrompt(
               options.systemPrompt ?? existingSession?.systemPrompt,
             ),
-            skillIds: options.activeSkillIds,
+            skillIds: options.runtimeSkillIds ?? options.activeSkillIds,
+            messageSkillIds: options.activeSkillIds,
+            kitIds: options.kitIds,
+            kitReferences: options.kitReferences,
+            resolvedKitCapabilities: options.resolvedKitCapabilities,
             imageAttachments: options.imageAttachments,
             mediaSelection: options.mediaSelection,
             mediaReferences: options.mediaReferences,
-      })
+          })
           .catch(error => {
             console.error('[Cowork] continue error:', error);
             try {
@@ -5385,9 +5414,91 @@ if (!gotTheLock) {
     },
   );
 
+  ipcMain.handle(
+    CoworkIpcChannel.ForkSession,
+    async (
+      _event,
+      options?: {
+        sessionId: string;
+        forkedFromMessageId?: string | null;
+        title?: string;
+      },
+    ) => {
+      try {
+        const sessionId = options?.sessionId?.trim();
+        if (!sessionId) {
+          return { success: false, error: 'Session id is required' };
+        }
+
+        const runtime = getCoworkEngineRouter();
+        const coworkStoreInstance = getCoworkStore();
+        const sourceSession = coworkStoreInstance.getSession(sessionId);
+        if (!sourceSession) {
+          console.warn('[CoworkFork] fork request referenced a missing session');
+          return { success: false, error: 'Session not found' };
+        }
+        if (sourceSession.status === 'running' || runtime.isSessionActive(sessionId)) {
+          console.warn('[CoworkFork] fork request was rejected because the session is still running');
+          return { success: false, error: 'Please stop the current task before forking it.' };
+        }
+
+        const forkedFromMessageId = options?.forkedFromMessageId?.trim() || null;
+        const forkedFromTimestamp = forkedFromMessageId
+          ? coworkStoreInstance.getMessageTimestamp(sessionId, forkedFromMessageId)
+          : null;
+        const forkContextMessages: CoworkForkContextMessage[] = [];
+        const compactionSummary = await runtime.getForkCompactionSummary(
+          sessionId,
+          forkedFromTimestamp ?? undefined,
+        );
+        if (compactionSummary) {
+          forkContextMessages.push({
+            content: compactionSummary.summary,
+            metadata: {
+              kind: CoworkSystemMessageKind.ForkCompactionSummary,
+              sourceSessionId: sessionId,
+              sourceSessionKey: compactionSummary.sessionKey,
+              checkpointId: compactionSummary.checkpointId ?? null,
+              checkpointReason: compactionSummary.reason ?? null,
+              checkpointCreatedAt: compactionSummary.createdAt ?? null,
+              tokensBefore: compactionSummary.tokensBefore ?? null,
+              tokensAfter: compactionSummary.tokensAfter ?? null,
+              truncated: compactionSummary.truncated === true,
+            },
+          });
+          console.log(`[CoworkFork] attached a compaction summary bridge from source session ${sessionId}`);
+        }
+
+        console.log(`[CoworkFork] creating a local conversation fork from session ${sessionId}`);
+        const session = coworkStoreInstance.forkSession({
+          sourceSessionId: sessionId,
+          forkMode: CoworkForkMode.Conversation,
+          forkedFromMessageId,
+          title: options?.title,
+          contextMessages: forkContextMessages,
+        });
+        console.log(`[CoworkFork] created local conversation fork ${session.id} successfully`);
+        return { success: true, session };
+      } catch (error) {
+        console.error('[CoworkFork] failed to fork session:', error);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to fork session',
+        };
+      }
+    },
+  );
+
   ipcMain.handle('cowork:session:get', async (_event, sessionId: string) => {
     try {
       const session = getCoworkStore().getSession(sessionId);
+      if (session) {
+        console.log(
+          `[CoworkIPC] loaded session ${sessionId}; returned ${session.messages.length} of ${session.totalMessages} messages from offset ${session.messagesOffset}.`,
+        );
+      } else {
+        console.warn(`[CoworkIPC] session ${sessionId} was not found during load.`);
+      }
       return { success: true, session };
     } catch (error) {
       return {
@@ -5440,6 +5551,9 @@ if (!gotTheLock) {
         const store = getCoworkStore();
         const total = store.countSessionMessages(sessionId);
         const messages = store.getPagedSessionMessages(sessionId, limit, offset);
+        console.log(
+          `[CoworkIPC] loaded message page for session ${sessionId}; returned ${messages.length} of ${total} messages from offset ${offset} with limit ${limit}.`,
+        );
         return { success: true, messages, offset, total };
       } catch (error) {
         return {
@@ -5799,39 +5913,9 @@ if (!gotTheLock) {
 
   // ── Subagent tracking IPC ──────────────────────────────────────────────
 
-  ipcMain.handle(
-    'cowork:subTask:history',
-    async (
-      _event,
-      options: {
-        parentSessionId: string;
-        agentId: string;
-        sessionKey?: string;
-      },
-    ) => {
-      if (!openClawRuntimeAdapter) {
-        return { success: false, error: 'Runtime adapter not available' };
-      }
-      try {
-        const messages = await openClawRuntimeAdapter.getSubTaskHistory(
-          options.parentSessionId,
-          options.agentId,
-          options.sessionKey,
-        );
-        return { success: true, messages };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to fetch subagent history',
-        };
-      }
-    },
-  );
-
-  ipcMain.handle('cowork:subagent:list', async (_event, options: { parentSessionId: string }) => {
-    if (!openClawRuntimeAdapter) return { success: true, runs: [] };
-    const runs = openClawRuntimeAdapter.listSubagentRuns(options.parentSessionId);
-    return { success: true, runs };
+  registerCoworkSubagentHandlers({
+    getOpenClawRuntimeAdapter: () => openClawRuntimeAdapter,
+    getCoworkEngineRouter,
   });
 
   ipcMain.handle('cowork:media:cancel', async (_event, taskId: string) => {
@@ -7953,28 +8037,83 @@ if (!gotTheLock) {
     },
   );
 
+  const getFileAccessFailureReason = (error: unknown): ShellOpenFailureReasonType => {
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    if (code === 'ENOENT') {
+      return ShellOpenFailureReason.NotFound;
+    }
+    if (code === 'EACCES' || code === 'EPERM') {
+      return ShellOpenFailureReason.PermissionDenied;
+    }
+    return ShellOpenFailureReason.Unknown;
+  };
+
+  const getFailedShellPathStatus = async (
+    operation: string,
+    normalizedPath: string,
+    fallbackError: string,
+  ): Promise<{ success: false; error: string; reason: ShellOpenFailureReasonType }> => {
+    try {
+      await fs.promises.stat(normalizedPath);
+      const status = {
+        success: false,
+        error: fallbackError,
+        reason: ShellOpenFailureReason.OpenFailed,
+      } as const;
+      console.warn(`[Shell] failed to ${operation} because the system could not open the existing path:`, normalizedPath);
+      return status;
+    } catch (error) {
+      const status = {
+        success: false,
+        error: fallbackError,
+        reason: getFileAccessFailureReason(error),
+      } as const;
+      console.warn(`[Shell] failed to ${operation} because the path is not accessible:`, normalizedPath, error);
+      return status;
+    }
+  };
+
   // Shell handlers - 打开文件/文件夹
   ipcMain.handle('shell:openPath', async (_event, filePath: string) => {
     try {
       const normalizedPath = normalizeWindowsShellPath(filePath);
       const result = await shell.openPath(normalizedPath);
       if (result) {
-        // 如果返回非空字符串，表示打开失败
-        return { success: false, error: result };
+        return await getFailedShellPathStatus('open local path', normalizedPath, result);
       }
       return { success: true };
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+      const normalizedPath = normalizeWindowsShellPath(filePath);
+      return await getFailedShellPathStatus(
+        'open local path',
+        normalizedPath,
+        error instanceof Error ? error.message : 'Unknown error',
+      );
     }
   });
 
   ipcMain.handle('shell:showItemInFolder', async (_event, filePath: string) => {
     try {
       const normalizedPath = normalizeWindowsShellPath(filePath);
+      try {
+        await fs.promises.stat(normalizedPath);
+      } catch (error) {
+        console.warn('[Shell] failed to reveal local path because the path is not accessible:', normalizedPath, error);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error',
+          reason: getFileAccessFailureReason(error),
+        };
+      }
       shell.showItemInFolder(normalizedPath);
       return { success: true };
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+      console.warn('[Shell] failed to reveal local path because the system request failed:', filePath, error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        reason: ShellOpenFailureReason.Unknown,
+      };
     }
   });
 
@@ -8015,12 +8154,17 @@ if (!gotTheLock) {
   });
 
   ipcMain.handle('shell:openPathWithApp', async (_event, filePath: string, appPath: string) => {
+    const normalizedPath = normalizeWindowsShellPath(filePath);
     try {
       const { openFileWithApp } = await import('./shellApps');
-      await openFileWithApp(filePath, appPath);
+      await openFileWithApp(normalizedPath, appPath);
       return { success: true };
     } catch (error) {
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+      return await getFailedShellPathStatus(
+        'open local path with selected app',
+        normalizedPath,
+        error instanceof Error ? error.message : 'Unknown error',
+      );
     }
   });
 
@@ -9246,9 +9390,46 @@ end tell'`,
     bindCoworkRuntimeForwarder();
     bindOpenClawStatusForwarder();
 
+    // Start proxy BEFORE config sync so proxy-dependent providers (e.g. copilot)
+    // get the correct baseURL on the first write, avoiding a mid-startup config
+    // overwrite that triggers unnecessary gateway hot-reload.
+    profiler.mark('applyProxyPreference');
+    const appConfig = getStore().get<AppConfigSettings>('app_config');
+    await applyProxyPreference(getUseSystemProxyFromConfig(appConfig));
+    profiler.measure('applyProxyPreference');
+
+    profiler.mark('coworkOpenAICompatProxy');
+    await startCoworkOpenAICompatProxy().catch(error => {
+      console.error('Failed to start OpenAI compatibility proxy:', error);
+    });
+    profiler.measure('coworkOpenAICompatProxy');
+
+    // ── Pre-warm quota & model caches so provider resolution and config sync
+    // see real server data instead of empty defaults ──
+    if (getAuthTokens()) {
+      profiler.mark('startupCacheWarmup');
+      const warmupResult = await runStartupCacheWarmup({
+        serverBaseUrl: getServerApiBaseUrl(),
+        fetchWithAuth,
+        appendKeyfromQuery,
+        cachedSubscriptionStatus,
+        t,
+      });
+      cachedSubscriptionStatus = warmupResult.subscriptionStatus;
+      cachedMediaGenerationEntitled = warmupResult.mediaGenerationEntitled;
+      profiler.measure('startupCacheWarmup');
+    }
+
+    // Agent model migration — runs after cache warmup so resolveMatchedProvider
+    // can match lobsterai-server models without falling back.
     const defaultAgentModelRef = resolveDefaultAgentModelRef();
     const backfilledAgentModels = getCoworkStore().backfillEmptyAgentModels(defaultAgentModelRef);
-    const qualifiedAgentModels = migrateAgentModelRefs();
+    const qualifiedAgentModels = migrateAgentModelRefs({
+      defaultModelRef: defaultAgentModelRef,
+      availableProviders: buildAvailableOpenClawProviders(),
+      agents: getAgentManager().listAgents(),
+      updateAgent: (id, patch) => getCoworkStore().updateAgent(id, patch),
+    });
     if (backfilledAgentModels > 0 || qualifiedAgentModels > 0) {
       console.log(
         `[Main] migrated agent model bindings: backfilled=${backfilledAgentModels}, qualified=${qualifiedAgentModels}`,
@@ -9267,20 +9448,6 @@ end tell'`,
     } catch (err) {
       console.warn('[OpenClaw] main agent workspace migration failed (non-fatal):', err);
     }
-
-    // Start proxy BEFORE config sync so proxy-dependent providers (e.g. copilot)
-    // get the correct baseURL on the first write, avoiding a mid-startup config
-    // overwrite that triggers unnecessary gateway hot-reload.
-    profiler.mark('applyProxyPreference');
-    const appConfig = getStore().get<AppConfigSettings>('app_config');
-    await applyProxyPreference(getUseSystemProxyFromConfig(appConfig));
-    profiler.measure('applyProxyPreference');
-
-    profiler.mark('coworkOpenAICompatProxy');
-    await startCoworkOpenAICompatProxy().catch(error => {
-      console.error('Failed to start OpenAI compatibility proxy:', error);
-    });
-    profiler.measure('coworkOpenAICompatProxy');
 
     profiler.mark('syncOpenClawConfig');
     const startupSync = await syncOpenClawConfig({

@@ -88,3 +88,9 @@ const PORTAL_BASE_PROD = 'https://c.youdao.com/dict/hardware/octopus/lobsterai-p
 const getPortalBase = (): string => isTestModeEnabled() ? PORTAL_BASE_TEST : PORTAL_BASE_PROD;
 
 export const getPortalTasksUrl = (): string => `${getPortalBase()}/profile/detail?tab=tasks`;
+
+export const getKitStoreUrl = (): string => (
+  isTestModeEnabled()
+    ? 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/test/kit-store'
+    : 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/prod/kit-store'
+);

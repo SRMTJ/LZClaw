@@ -73,7 +73,6 @@
       }\
     }"'
   Pop $0
-
   ; ── Backup user-created skills to AppData before extraction overwrites them ──
   ; Copy non-bundled skills to %APPDATA%\LZClaw\skills-backup\ so they are
   ; preserved when NSIS extracts the new version over the existing install.

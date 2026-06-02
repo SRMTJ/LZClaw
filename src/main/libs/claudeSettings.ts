@@ -181,15 +181,23 @@ function buildServerFallbackModels(effectiveModelId: string): NonNullable<LocalP
 function normalizeProviderModels(providerName: string, models?: ProviderModelInputConfig[]): ProviderModelConfig[] {
   return (models ?? [])
     .filter(model => model.id?.trim())
-    .map(model => ({
-      ...model,
-      name: model.name || model.id,
-      supportsImage: ProviderRegistry.resolveModelSupportsImage(
+    .map(model => {
+      const contextWindow = ProviderRegistry.resolveModelContextWindow(
         providerName,
         model.id,
-        model.supportsImage,
-      ),
-    }));
+        model.contextWindow,
+      );
+      return {
+        ...model,
+        name: model.name || model.id,
+        supportsImage: ProviderRegistry.resolveModelSupportsImage(
+          providerName,
+          model.id,
+          model.supportsImage,
+        ),
+        ...(contextWindow !== undefined ? { contextWindow } : {}),
+      };
+    });
 }
 
 const getStore = (): SqliteStore | null => {
@@ -247,7 +255,7 @@ function tryLobsteraiServerFallback(modelId?: string): MatchedProvider | null {
   if (!effectiveModelId) return null;
   const baseURL = `${serverBaseUrl}/api/proxy/v1`;
   const cachedMeta = serverModelMetadataCache.get(effectiveModelId);
-  console.log('[ClaudeSettings] lobsterai-server fallback activated:', { baseURL, modelId: effectiveModelId, supportsImage: cachedMeta?.supportsImage });
+  console.debug('[ClaudeSettings] lobsterai-server provider resolved:', { baseURL, modelId: effectiveModelId, supportsImage: cachedMeta?.supportsImage });
   return {
     providerName: ProviderName.LobsteraiServer,
     providerConfig: { enabled: true, apiKey: tokens.accessToken, baseUrl: baseURL, apiFormat: 'openai', models: buildServerFallbackModels(effectiveModelId) },

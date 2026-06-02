@@ -1,4 +1,11 @@
-import { test, expect } from 'vitest';
+import { expect, test, vi } from 'vitest';
+
+vi.mock('electron', () => ({
+  app: { getAppPath: () => process.cwd(), getPath: () => '/tmp' },
+  BrowserWindow: { getAllWindows: () => [] },
+  session: { defaultSession: { webRequest: { onBeforeSendHeaders: vi.fn() } } },
+}));
+
 import { __skillManagerTestUtils } from './skillManager';
 
 const { parseFrontmatter, isTruthy, extractDescription } = __skillManagerTestUtils;
