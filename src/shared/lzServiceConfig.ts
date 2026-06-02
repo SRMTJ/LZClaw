@@ -1,4 +1,4 @@
-export const LZ_SERVICE_DEFAULT_DEV_BASE_URL = 'http://127.0.0.1:6003';
+export const LZ_SERVICE_DEFAULT_DEV_BASE_URL = 'https://lzclaw.srmtj.com';
 export const LZ_SERVICE_DEFAULT_PROD_BASE_URL = 'https://lzclaw.srmtj.com';
 export const LZ_SERVICE_DEFAULT_BASE_URL = LZ_SERVICE_DEFAULT_DEV_BASE_URL;
 
