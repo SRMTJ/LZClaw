@@ -1,4 +1,5 @@
 import { ArtifactBrowserPartition } from '@shared/artifactPreview/constants';
+import type { CoworkSelectedTextSnippet } from '@shared/cowork/selectedText';
 import {
   type HtmlShareConfigurableStatus,
   HtmlShareErrorCode,
@@ -264,6 +265,8 @@ interface ArtifactPanelProps {
   onOpenFileListTab?: () => void;
   onOpenBrowserTab?: () => void;
   onBrowserAnnotationCaptured?: (payload: BrowserAnnotationPayload) => void;
+  onAddSelectedText?: (snippet: CoworkSelectedTextSnippet) => void;
+  selectedTextEnabled?: boolean;
 }
 
 export const BrowserAnnotationShape = {
@@ -330,6 +333,8 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   onOpenFileListTab,
   onOpenBrowserTab,
   onBrowserAnnotationCaptured,
+  onAddSelectedText,
+  selectedTextEnabled = false,
 }) => {
   const dispatch = useDispatch();
   const panelWidth = useSelector(selectPanelWidth);
@@ -373,6 +378,14 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   const selectedArtifactId = selectedArtifact?.id ?? null;
   const activeTab = activePreviewTab?.contentView ?? ArtifactContentView.Preview;
   const isDocumentArtifact = selectedArtifact?.type === 'document';
+  const selectedTextContext = useMemo(
+    () => (
+      selectedTextEnabled && onAddSelectedText
+        ? { enabled: true, onAddSelectedText }
+        : undefined
+    ),
+    [onAddSelectedText, selectedTextEnabled],
+  );
 
   const isResizing = useRef(false);
   const startX = useRef(0);
@@ -1522,7 +1535,11 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
             {/* Render area */}
             <div className="flex-1 min-h-0 overflow-hidden">
               {activeTab === ArtifactContentView.Preview ? (
-                <ArtifactRenderer artifact={selectedArtifact} sessionArtifacts={artifacts} />
+                <ArtifactRenderer
+                  artifact={selectedArtifact}
+                  sessionArtifacts={artifacts}
+                  selectedTextContext={selectedTextContext}
+                />
               ) : (
                 <CodeRenderer artifact={selectedArtifact} />
               )}
