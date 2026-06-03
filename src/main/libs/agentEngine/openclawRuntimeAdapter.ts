@@ -1405,6 +1405,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private static readonly VISIBLE_FINAL_LARGE_TOOL_CONFIRMATION_GRACE_MS = 8_000;
   private static readonly VISIBLE_FINAL_TOOL_RESULT_CHAR_THRESHOLD = 20_000;
   private static readonly VISIBLE_FINAL_SHORT_TEXT_CHAR_THRESHOLD = 600;
+  private static readonly GATEWAY_SESSION_DELETE_TIMEOUT_MS = 5_000;
 
   private gatewayClient: GatewayClientLike | null = null;
   private gatewayClientVersion: string | null = null;
@@ -6738,6 +6739,34 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
   }
 
+  private async syncLatestChannelUserMessage(sessionId: string, sessionKey: string): Promise<void> {
+    const client = this.gatewayClient;
+    if (!client) {
+      console.log('[ChannelSync] no gateway client, skipping latest channel user sync');
+      return;
+    }
+
+    const history = await client.request<{ messages?: unknown[] }>('chat.history', {
+      sessionKey,
+      limit: FINAL_HISTORY_SYNC_LIMIT,
+    }, { timeoutMs: 10_000 });
+    if (!Array.isArray(history?.messages) || history.messages.length === 0) {
+      this.channelSyncCursor.set(sessionId, 0);
+      return;
+    }
+
+    this.markGatewayHistoryWindowConsumed(sessionId, history.messages);
+    this.syncChannelUserMessages(
+      sessionId,
+      history.messages,
+      true,
+      sessionKey.includes(':discord:'),
+      sessionKey.includes(':qqbot:'),
+      sessionKey.includes(':moltbot-popo:'),
+      sessionKey.includes(':feishu:'),
+    );
+  }
+
   private async syncFinalAssistantWithHistory(sessionId: string, turn: ActiveTurn): Promise<void> {
     console.debug('[OpenClawRuntime] syncFinalAssistant — sessionId:', sessionId);
     const client = this.gatewayClient;
@@ -7231,6 +7260,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
    * Delegates to reconcileWithHistory which handles diff and update.
    */
   private async incrementalChannelSync(sessionId: string, sessionKey: string): Promise<void> {
+    if (this.reCreatedChannelSessionIds.has(sessionId)) {
+      await this.syncLatestChannelUserMessage(sessionId, sessionKey);
+      return;
+    }
+
     await this.reconcileWithHistory(sessionId, sessionKey);
   }
 
@@ -7379,10 +7413,18 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
     }
 
+    const removedChannelKeys = removedKeys.filter((key) =>
+      this.channelSessionSync?.isChannelSessionKey(key) ?? false,
+    );
+
     // Suppress polling re-creation for deleted channel keys.
     // Only real-time events (new IM messages) will re-create the session.
-    for (const key of removedKeys) {
+    for (const key of removedChannelKeys) {
       this.deletedChannelKeys.add(key);
+    }
+
+    if (removedKeys.length > 0) {
+      void this.deleteGatewaySessionTranscripts(removedKeys);
     }
 
     // Allow polling to rediscover channel sessions
@@ -7415,6 +7457,27 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     // Clean up subagent tracking state and persisted messages
     this.subagentTracker.onSessionDeleted(sessionId);
+  }
+
+  private async deleteGatewaySessionTranscripts(sessionKeys: string[]): Promise<void> {
+    const client = this.gatewayClient;
+    if (!client) {
+      console.warn('[OpenClawRuntime] could not delete gateway session transcripts because the gateway client is unavailable');
+      return;
+    }
+
+    const uniqueKeys = Array.from(new Set(sessionKeys.filter(Boolean)));
+    for (const sessionKey of uniqueKeys) {
+      try {
+        await client.request('sessions.delete', {
+          key: sessionKey,
+          deleteTranscript: true,
+        }, { timeoutMs: OpenClawRuntimeAdapter.GATEWAY_SESSION_DELETE_TIMEOUT_MS });
+        console.log(`[OpenClawRuntime] deleted gateway session transcript for ${sessionKey}`);
+      } catch (error) {
+        console.warn(`[OpenClawRuntime] failed to delete gateway session transcript for ${sessionKey}:`, error);
+      }
+    }
   }
 
   /**
@@ -7537,7 +7600,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       try {
         const beforeCount = this.getUserMessageCount(sessionId);
-        await this.reconcileWithHistory(sessionId, sessionKey);
+        if (this.reCreatedChannelSessionIds.has(sessionId)) {
+          await this.syncLatestChannelUserMessage(sessionId, sessionKey);
+        } else {
+          await this.reconcileWithHistory(sessionId, sessionKey);
+        }
         const afterCount = this.getUserMessageCount(sessionId);
         const newUserMessages = afterCount - beforeCount;
         console.log('[Debug:prefetch] reconciled (attempt', attempt, ') synced user messages:', newUserMessages, '(before:', beforeCount, 'after:', afterCount, ')');

@@ -3,7 +3,7 @@ import React, { useCallback, useState } from 'react';
 import { i18nService } from '../../services/i18n';
 import type { CoworkMessage, CoworkMessageMetadata } from '../../types/cowork';
 import { formatMessageDateTime } from '../../utils/tokenFormat';
-import ForkBranchIcon from '../icons/ForkBranchIcon';
+import MessageForkIcon from '../icons/MessageForkIcon';
 import MessageCopyIcon from '../icons/MessageCopyIcon';
 import MarkdownContent from '../MarkdownContent';
 import ImagePreviewModal, { type ImagePreviewSource } from './ImagePreviewModal';
@@ -84,7 +84,7 @@ const ForkButton: React.FC<{
     title={i18nService.t('coworkForkFromMessage')}
     aria-label={i18nService.t('coworkForkFromMessage')}
   >
-    <ForkBranchIcon className="w-4 h-4 text-[var(--icon-secondary)]" />
+    <MessageForkIcon className="w-4 h-4 text-[var(--icon-secondary)]" />
   </button>
 );
 
