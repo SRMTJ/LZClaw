@@ -1014,8 +1014,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
     voiceInputStopRecording: '停止录音并识别',
     voiceInputRecognizing: '正在识别语音',
     voiceInputLoginRequired: '登录后可使用语音输入',
-    voiceInputPermissionDenied:
-      '语音输入需要辅助功能权限，请前往 系统设置 → 隐私与安全性 → 辅助功能 中开启，开启后需重启应用',
     voiceInputFailed: '语音输入失败，请稍后重试',
     voiceInputMicrophoneDenied: '无法访问麦克风，请检查系统麦克风权限',
     voiceInputMicrophoneUnavailable: '未检测到可用麦克风',
@@ -3369,8 +3367,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
     voiceInputStopRecording: 'Stop recording and transcribe',
     voiceInputRecognizing: 'Transcribing voice',
     voiceInputLoginRequired: 'Sign in to use voice input',
-    voiceInputPermissionDenied:
-      'Voice input requires Accessibility permission. Please enable it in System Settings → Privacy & Security → Accessibility, then restart the app',
     voiceInputFailed: 'Voice input failed. Please try again later.',
     voiceInputMicrophoneDenied: 'Microphone access is blocked. Check system microphone permissions.',
     voiceInputMicrophoneUnavailable: 'No available microphone was detected.',
