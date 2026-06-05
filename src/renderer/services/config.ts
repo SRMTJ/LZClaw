@@ -237,12 +237,11 @@ const REMOVED_PROVIDER_MODELS: Record<string, string[]> = {
   ],
 };
 
-// Models to inject into existing saved configs (for existing users).
-// These models will be added on every startup if missing from the stored config.
-// Note: users cannot permanently remove these models — they will be re-injected
-// on next launch. Once all users have upgraded, entries here should be removed
-// so the models follow normal user-editable behavior (same as other models).
+// Models to inject into existing saved configs once per migration version.
+// After the migration marker is persisted, user edits to these model lists
+// must be respected across restarts.
 // position: 'start' inserts at the beginning, 'end' appends at the end.
+const ADDED_PROVIDER_MODELS_MIGRATION_VERSION = 1;
 const ADDED_PROVIDER_MODELS: Record<string, { models: ProviderModel[]; position: 'start' | 'end' }> = {
   deepseek: {
     models: [
@@ -317,6 +316,27 @@ const ADDED_PROVIDER_MODELS: Record<string, { models: ProviderModel[]; position:
   },
 };
 
+const markCurrentProviderModelMigrationsApplied = (
+  versions: AppConfig['providerModelMigrationVersions'],
+): NonNullable<AppConfig['providerModelMigrationVersions']> => {
+  const nextVersions = { ...(versions ?? {}) };
+  Object.keys(ADDED_PROVIDER_MODELS).forEach((providerKey) => {
+    nextVersions[providerKey] = Math.max(
+      nextVersions[providerKey] ?? 0,
+      ADDED_PROVIDER_MODELS_MIGRATION_VERSION,
+    );
+  });
+  return nextVersions;
+};
+
+const getNewlyAppliedProviderModelMigrations = (
+  previousVersions: AppConfig['providerModelMigrationVersions'],
+  nextVersions: AppConfig['providerModelMigrationVersions'],
+): string[] => Object.keys(ADDED_PROVIDER_MODELS).filter(
+  providerKey => (previousVersions?.[providerKey] ?? 0) < ADDED_PROVIDER_MODELS_MIGRATION_VERSION
+    && (nextVersions?.[providerKey] ?? 0) >= ADDED_PROVIDER_MODELS_MIGRATION_VERSION
+);
+
 const PROVIDER_MODEL_CONTEXT_WINDOW_OVERRIDES: Record<string, Record<string, number>> = {
   [ProviderName.Minimax]: {
     'MiniMax-M3': 1_000_000,
@@ -384,6 +404,9 @@ const alignProviderModelOrder = (
 };
 
 const hydrateStoredConfig = (storedConfig: AppConfig): AppConfig => {
+  const providerModelMigrationVersions = {
+    ...(storedConfig.providerModelMigrationVersions ?? {}),
+  };
   const mergedProviders = storedConfig.providers
     ? Object.fromEntries(
         Object.entries({
@@ -405,14 +428,23 @@ const hydrateStoredConfig = (storedConfig: AppConfig): AppConfig => {
             }
             // Inject added models (for existing users who already have saved config)
             const addedConfig = ADDED_PROVIDER_MODELS[providerKey];
-            if (addedConfig && mergedProvider.models) {
-              const existingIds = new Set(mergedProvider.models.map((m: { id: string }) => m.id));
+            const existingIds = new Set(
+              (mergedProvider.models as Array<{ id: string }> | undefined)?.map(model => model.id) ?? []
+            );
+            const hasAnyAddedModel = addedConfig?.models.some(model => existingIds.has(model.id)) ?? false;
+            const hasAppliedAddedModelsMigration =
+              (providerModelMigrationVersions[providerKey] ?? 0) >= ADDED_PROVIDER_MODELS_MIGRATION_VERSION
+              || hasAnyAddedModel;
+            if (addedConfig && mergedProvider.models && !hasAppliedAddedModelsMigration) {
               const newModels = addedConfig.models.filter(m => !existingIds.has(m.id));
               if (newModels.length > 0) {
                 mergedProvider.models = addedConfig.position === 'start'
                   ? [...newModels, ...mergedProvider.models]
                   : [...mergedProvider.models, ...newModels];
               }
+            }
+            if (addedConfig && mergedProvider.models) {
+              providerModelMigrationVersions[providerKey] = ADDED_PROVIDER_MODELS_MIGRATION_VERSION;
             }
             if (mergedProvider.models) {
               mergedProvider.models = applyProviderModelContextWindowOverrides(
@@ -465,6 +497,7 @@ const hydrateStoredConfig = (storedConfig: AppConfig): AppConfig => {
     },
     shortcuts: normalizeShortcutsConfig(storedConfig.shortcuts),
     providers: mergedProviders as AppConfig['providers'],
+    providerModelMigrationVersions,
     browserWebAccess: normalizeBrowserWebAccessConfig(storedConfig.browserWebAccess),
   });
 };
@@ -479,10 +512,18 @@ class ConfigService {
         console.warn('[ConfigService] init: no stored config found, using defaults');
       }
       if (storedConfig) {
+        const previousMigrationVersions = storedConfig.providerModelMigrationVersions;
         this.config = hydrateStoredConfig(storedConfig);
         if (JSON.stringify(this.config) !== JSON.stringify(storedConfig)) {
           try {
             await localStore.setItem(CONFIG_KEYS.APP_CONFIG, this.config);
+            const appliedProviders = getNewlyAppliedProviderModelMigrations(
+              previousMigrationVersions,
+              this.config.providerModelMigrationVersions,
+            );
+            if (appliedProviders.length > 0) {
+              console.log(`[ConfigService] applied provider model migrations for ${appliedProviders.join(', ')}`);
+            }
           } catch (persistError) {
             console.warn('[ConfigService] init: failed to persist migrated config:', persistError);
           }
@@ -510,6 +551,9 @@ class ConfigService {
       ...base,
       ...newConfig,
       ...(normalizedProviders ? { providers: normalizedProviders } : {}),
+      ...(normalizedProviders
+        ? { providerModelMigrationVersions: markCurrentProviderModelMigrationsApplied(base.providerModelMigrationVersions) }
+        : {}),
       browserWebAccess: normalizeBrowserWebAccessConfig(
         newConfig.browserWebAccess ?? base.browserWebAccess,
       ),

@@ -70,6 +70,7 @@ export interface AppConfig {
     defaultModelProvider?: string;
   };
   providers?: Record<string, ProviderConfig>;
+  providerModelMigrationVersions?: Record<string, number>;
   // 主题配置
   theme: 'light' | 'dark' | 'system';
   // 语言配置
