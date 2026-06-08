@@ -4206,6 +4206,7 @@ if (!gotTheLock) {
     let localCallback: Awaited<ReturnType<typeof startAuthLocalCallback>> | null = null;
 
     try {
+      console.log('[Auth] starting browser login with local callback server');
       localCallback = await startAuthLocalCallback({
         onCode: code => {
           authCallbackRouter.handleAuthCode(code);
@@ -4221,6 +4222,7 @@ if (!gotTheLock) {
         redirect_uri: appendCallbackReturnTo(localCallback.redirectUri, returnTo),
         state: localCallback.state,
       });
+      console.log('[Auth] opening portal login with local callback redirect');
       await shell.openExternal(finalUrl);
       return { success: true };
     } catch (error) {
