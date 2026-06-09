@@ -9,6 +9,10 @@ import {
   ensureComputerUseHelperStateHome,
   inspectComputerUseRuntime,
 } from './computerUseRuntime';
+import {
+  ensureComputerUseLogDir,
+  getComputerUseLogRetentionDays,
+} from './computerUseLogs';
 
 export const ComputerUseMcpServerName = {
   BuiltIn: 'computer-use',
@@ -21,6 +25,9 @@ export const ComputerUseMcpEnv = {
   BridgeSecret: 'LOBSTER_MCP_BRIDGE_SECRET',
   ExePath: 'LOBSTER_COMPUTER_USE_EXE',
   HelperStateHome: 'LOBSTER_COMPUTER_USE_HOME',
+  LogDir: 'LOBSTER_COMPUTER_USE_LOG_DIR',
+  LogLevel: 'LOBSTER_COMPUTER_USE_LOG_LEVEL',
+  LogRetentionDays: 'LOBSTER_COMPUTER_USE_LOG_RETENTION_DAYS',
   RuntimePackageRoot: 'LOBSTER_COMPUTER_USE_RUNTIME_PACKAGE_ROOT',
   SdkRoot: 'LOBSTER_COMPUTER_USE_MCP_SDK_ROOT',
   ZodRoot: 'LOBSTER_COMPUTER_USE_ZOD_ROOT',
@@ -127,6 +134,9 @@ export function resolveComputerUseMcpServer(
     [ComputerUseMcpEnv.BridgeSecret]: options.bridgeSecret,
     [ComputerUseMcpEnv.ExePath]: runtimePaths.helperExePath,
     [ComputerUseMcpEnv.HelperStateHome]: ensureComputerUseHelperStateHome(),
+    [ComputerUseMcpEnv.LogDir]: ensureComputerUseLogDir(),
+    [ComputerUseMcpEnv.LogLevel]: 'info',
+    [ComputerUseMcpEnv.LogRetentionDays]: String(getComputerUseLogRetentionDays()),
     [ComputerUseMcpEnv.RuntimePackageRoot]: runtimePaths.runtimePackageRoot,
     [ComputerUseMcpEnv.SdkRoot]: sdkRoot,
     [ComputerUseMcpEnv.ZodRoot]: zodRoot,
