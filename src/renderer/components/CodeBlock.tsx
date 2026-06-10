@@ -38,6 +38,7 @@ import CodeMirror from '@uiw/react-codemirror';
 import React, { useCallback, useEffect, useMemo,useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
+import { copyTextToClipboard } from '../services/clipboard';
 import { i18nService } from '../services/i18n';
 import Tooltip, { TooltipAlign, TooltipPosition } from './ui/Tooltip';
 
@@ -891,14 +892,11 @@ const CodeFullscreenModal: React.FC<CodeFullscreenModalProps> = ({ code, lang, i
   }, []);
 
   const handleCopy = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(code);
-      setIsCopied(true);
-      if (copyTimeoutRef.current != null) window.clearTimeout(copyTimeoutRef.current);
-      copyTimeoutRef.current = window.setTimeout(() => setIsCopied(false), 1500);
-    } catch (err) {
-      console.error('Failed to copy in fullscreen modal:', err);
-    }
+    const copiedToClipboard = await copyTextToClipboard(code);
+    if (!copiedToClipboard) return;
+    setIsCopied(true);
+    if (copyTimeoutRef.current != null) window.clearTimeout(copyTimeoutRef.current);
+    copyTimeoutRef.current = window.setTimeout(() => setIsCopied(false), 1500);
   }, [code]);
 
   const handleToggleSearch = useCallback(() => {
@@ -1347,14 +1345,11 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ node, className, children, ...pro
   );
 
   const handleCopy = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(trimmedCodeText);
-      setIsCopied(true);
-      if (copyTimeoutRef.current != null) window.clearTimeout(copyTimeoutRef.current);
-      copyTimeoutRef.current = window.setTimeout(() => setIsCopied(false), 1500);
-    } catch (error) {
-      console.error('Failed to copy code block: ', error);
-    }
+    const copiedToClipboard = await copyTextToClipboard(trimmedCodeText);
+    if (!copiedToClipboard) return;
+    setIsCopied(true);
+    if (copyTimeoutRef.current != null) window.clearTimeout(copyTimeoutRef.current);
+    copyTimeoutRef.current = window.setTimeout(() => setIsCopied(false), 1500);
   }, [trimmedCodeText]);
 
   const savedTimeoutRef = useRef<number | null>(null);
