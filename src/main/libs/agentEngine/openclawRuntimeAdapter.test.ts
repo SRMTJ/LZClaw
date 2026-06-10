@@ -17,6 +17,7 @@ import {
   CoworkSystemMessageKind,
 } from '../../../common/coworkSystemMessages';
 import { CoworkSelectedTextSource } from '../../../shared/cowork/selectedText';
+import { ContinuityCapsuleSource } from './coworkContinuityCapsule';
 import {
   buildOpenClawChatSendPayloadTooLargeError,
   estimateOpenClawChatSendFrameBytes,
@@ -157,6 +158,90 @@ test('outbound prompt includes selected assistant text as quoted reference data'
   expect(prompt.indexOf('[Selected assistant text excerpts]')).toBeLessThan(
     prompt.indexOf('[Current user request]'),
   );
+});
+
+test('outbound prompt injects continuity capsule bridge before the current request', async () => {
+  const adapter = new OpenClawRuntimeAdapter({
+    getSession: () => null,
+    getAgent: () => null,
+    getContinuityCapsule: () => ({
+      version: 1,
+      sessionId: 'session-1',
+      revision: 2,
+      updatedAt: 100,
+      lastSource: ContinuityCapsuleSource.PostCompaction,
+      lastCompactedAt: 100,
+      currentObjective: 'Improve compaction continuity.',
+      userConstraints: ['Do not change the user model.'],
+      decisions: ['Use a session capsule row.'],
+      recentActions: [],
+      touchedFiles: [{ path: 'src/main/libs/agentEngine/openclawRuntimeAdapter.ts' }],
+      keySymbols: [],
+      verification: ['npm test -- openclawRuntimeAdapter passed'],
+      nextSteps: ['Inject capsule bridge.'],
+      recentFailures: [],
+      activeCapabilities: [],
+      openQuestions: [],
+    }),
+  } as never, {} as never);
+  const internal = adapter as unknown as {
+    bridgedSessions: Set<string>;
+    buildOutboundPrompt: (
+      sessionId: string,
+      prompt: string,
+      systemPrompt?: string,
+      agentId?: string,
+    ) => Promise<string>;
+  };
+  internal.bridgedSessions.add('session-1');
+
+  const prompt = await internal.buildOutboundPrompt('session-1', '继续');
+
+  expect(prompt).toContain('[LobsterAI continuity context after context compaction]');
+  expect(prompt).toContain('Improve compaction continuity.');
+  expect(prompt).toContain('src/main/libs/agentEngine/openclawRuntimeAdapter.ts');
+  expect(prompt.indexOf('[LobsterAI continuity context after context compaction]')).toBeLessThan(
+    prompt.indexOf('[Current user request]'),
+  );
+});
+
+test('outbound prompt skips continuity capsule bridge before compaction', async () => {
+  const adapter = new OpenClawRuntimeAdapter({
+    getSession: () => null,
+    getAgent: () => null,
+    getContinuityCapsule: () => ({
+      version: 1,
+      sessionId: 'session-1',
+      revision: 1,
+      updatedAt: 100,
+      lastSource: ContinuityCapsuleSource.PostRun,
+      currentObjective: 'Normal turn.',
+      userConstraints: [],
+      decisions: [],
+      recentActions: [],
+      touchedFiles: [],
+      keySymbols: [],
+      verification: [],
+      nextSteps: [],
+      recentFailures: [],
+      activeCapabilities: [],
+      openQuestions: [],
+    }),
+  } as never, {} as never);
+  const internal = adapter as unknown as {
+    bridgedSessions: Set<string>;
+    buildOutboundPrompt: (
+      sessionId: string,
+      prompt: string,
+      systemPrompt?: string,
+      agentId?: string,
+    ) => Promise<string>;
+  };
+  internal.bridgedSessions.add('session-1');
+
+  const prompt = await internal.buildOutboundPrompt('session-1', 'hello');
+
+  expect(prompt).not.toContain('[LobsterAI continuity context after context compaction]');
 });
 
 test('context usage ignores non-checkpoint compactionCount', () => {

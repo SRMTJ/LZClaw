@@ -43,6 +43,23 @@
 - 不把 OpenClaw assembled context 中的 `compactionSummary` 当成 LobsterAI 可见消息。
 - 不把 RTK/RAG 作为第一步强依赖；第一阶段先做 continuity capsule 和诊断。
 
+### 1.5 行业参考
+
+`continuity capsule` 是 LobsterAI 对该能力的命名，本质属于行业内常见的 session-scoped short-term memory / context engineering 模式：
+
+- LangGraph/LangChain memory：把 thread-scoped state 作为短期记忆，并通过 checkpointer 持久化；单份持续更新的 profile/state JSON 是常见模式。
+  - https://docs.langchain.com/oss/python/concepts/memory
+- Letta/MemGPT：通过 memory blocks 保留始终可见的结构化记忆，并在 compaction 后继续把关键 memory 注入上下文。
+  - https://docs.letta.com/guides/core-concepts/stateful-agents
+  - https://docs.letta.com/guides/core-concepts/memory/memory-blocks/
+  - https://docs.letta.com/guides/core-concepts/messages/compaction/
+- Semantic Kernel Chat History Reducer：用 truncation / summarization / token-based reducer 降低聊天历史，同时强调保留关键上下文、隐私和安全。
+  - https://learn.microsoft.com/en-us/semantic-kernel/concepts/ai-services/chat-completion/chat-history
+- MemGPT 论文：提出 virtual context management，在有限 context window 内管理热记忆和冷记忆。
+  - https://arxiv.org/abs/2310.08560
+
+LobsterAI 不直接引入这些框架，而是采用它们的核心原则：用一份短小、结构化、可持久化的任务状态补足压缩摘要的缺陷。
+
 ## 2. 什么能做，什么不能做
 
 ### 2.1 不能默认做
@@ -175,7 +192,15 @@ type ContextCompactionDiagnostic = {
 
 ### 4.2 第二阶段：Continuity Capsule
 
-第二阶段目标是“压缩后仍有任务连续性”。
+第二阶段目标是“压缩后仍有任务连续性”。它不是替代 OpenClaw compaction，也不是再做一份完整聊天摘要，而是维护一张 LobsterAI 自己的“当前任务工作卡片”。
+
+核心策略：
+
+- 每个 Cowork session 只维护一份滚动更新的 capsule。
+- capsule 记录任务状态，不记录完整历史。
+- 关键事件后覆盖更新，不保存无限版本。
+- 压缩后继续会话时，把最新 capsule 注入为隐藏 bridge。
+- 未发生压缩或 capsule 为空时，不额外加重普通 prompt。
 
 #### FR-3: 定义 LobsterAI continuity capsule
 
@@ -183,12 +208,18 @@ type ContextCompactionDiagnostic = {
 
 ```ts
 type CoworkContinuityCapsule = {
+  version: 1;
   sessionId: string;
+  revision: number;
   updatedAt: number;
-  source: 'pre_compaction' | 'post_compaction' | 'post_run' | 'manual';
-  currentGoal?: string;
+  lastSource: 'user_message' | 'post_run' | 'tool_result' | 'pre_compaction' | 'post_compaction' | 'manual' | 'fork';
+  lastSourceMessageId?: string;
+  lastCompactedAt?: number;
+  currentObjective?: string;
   userConstraints: string[];
-  keyFiles: Array<{
+  decisions: string[];
+  recentActions: string[];
+  touchedFiles: Array<{
     path: string;
     reason?: string;
   }>;
@@ -197,14 +228,12 @@ type CoworkContinuityCapsule = {
     file?: string;
     reason?: string;
   }>;
-  decisions: string[];
-  completedSteps: string[];
-  pendingSteps: string[];
+  verification: string[];
+  nextSteps: string[];
   recentFailures: Array<{
     command?: string;
     summary: string;
   }>;
-  validationState?: string;
   activeCapabilities: Array<{
     kind: 'skill' | 'kit' | 'mcp' | 'tool';
     id: string;
@@ -214,21 +243,53 @@ type CoworkContinuityCapsule = {
 };
 ```
 
+字段定位：
+
+- `currentObjective`：当前用户目标和完成标准。
+- `userConstraints`：用户明确说过的约束、偏好和禁区。
+- `decisions`：已经确认的设计/实现决定，避免压缩后反复推翻。
+- `recentActions`：最近已经完成的动作。
+- `touchedFiles` / `keySymbols`：最近相关文件和关键符号，只记录路径/名称和原因。
+- `verification` / `recentFailures`：跑过的命令、测试结论和失败摘要。
+- `nextSteps`：压缩后继续时最该执行的下一步。
+- `openQuestions`：尚未确认的问题，避免模型压缩后自行猜测。
+
 生成原则：
 
 - 只保存任务状态，不保存大段聊天。
 - 优先保留文件路径、函数名、命令、错误摘要、决策和 TODO。
 - 不保存 secret、token、完整日志、完整 tool result。
-- 单个 capsule 有上限，例如 6k-10k 字符。
-- 更新是覆盖式，不无限增长。
+- 单个 capsule 有上限，MVP 建议 2k-4k 字符，最多不超过 6k 字符。
+- 每类字段有数量上限，例如 constraints 8 条、decisions 12 条、files 20 个、nextSteps 8 条。
+- 更新是覆盖式 merge，不无限增长。
+- 重复内容按规范化文本去重，较新的状态覆盖较旧状态。
 
 #### FR-4: Capsule 生成时机
 
-第一版生成时机：
+第一版更新时机：
 
-1. 手动 compact 前。
-2. 自动 compaction `phase=start` 或 `phase=end completed=true` 后。
-3. 每次 session complete 后低频更新一次。
+1. 用户发新消息后：
+   - 更新 `currentObjective`、`userConstraints`、`openQuestions`。
+   - 只处理低频消息级事件，不处理 token delta。
+2. assistant 完成一轮后：
+   - 更新 `decisions`、`recentActions`、`nextSteps`。
+   - 以 session complete / turn complete 为边界。
+3. 工具调用完成后：
+   - 如果涉及文件读写、命令、测试、构建，更新 `touchedFiles`、`verification`、`recentFailures`。
+   - 只记录摘要和路径，不记录完整 stdout/stderr。
+4. 手动 compact 前：
+   - 强制刷新一次 capsule，确保压缩前任务状态最新。
+5. 自动 compaction：
+   - `phase=start` 时尽力刷新一次。
+   - `phase=end completed=true` 后可补一次 checkpoint/usage 相关 metadata。
+6. fork session 时：
+   - 从源 session 复制最新 capsule，并裁剪为新 session 的初始 capsule。
+
+更新节流：
+
+- 不在 stream delta、polling tick 或每个小工具事件上写库。
+- 同一 turn 内可以先在内存聚合，turn 完成后一次性持久化。
+- compaction 前刷新应有短超时，失败不阻塞原 compaction。
 
 如果 compact 前生成失败：
 
@@ -254,21 +315,57 @@ type CoworkContinuityCapsule = {
 
 第一版建议：先规则提取 + 简短模板，不新增 LLM 调用，降低成本和不确定性。
 
+规则提取建议：
+
+- 从 user message 中提取显式约束，例如“不要编码”“先写 spec”“兼容 mac/windows”。
+- 从 assistant final 中提取“已完成/下一步/验证结果”这类结构化语义。
+- 从 tool metadata 和消息 metadata 中提取文件路径、命令、测试结果。
+- 从已存在的 context usage / compaction diagnostic 中提取压缩相关状态。
+- 对不确定内容宁可放入 `openQuestions`，不要推断成事实。
+
+后续可选 LLM 更新方式：
+
+- 只在用户启用或规则提取不足时开启。
+- 使用当前会话模型，不额外指定“更强总结模型”。
+- 输出必须是 schema-compatible JSON。
+- 失败、超时或 JSON 校验失败时保留旧 capsule，并记录 warn。
+
 #### FR-6: 压缩后注入 capsule bridge
 
-在 `OpenClawRuntimeAdapter` 构造继续会话 prompt 时，如果 session 存在有效 capsule，则在当前 user request 前注入隐藏 bridge：
+OpenClaw 的模型输入接入点在 `OpenClawRuntimeAdapter.buildOutboundPrompt()`。该函数构造 `outboundMessage`，随后 `runTurn()` 通过 `chat.send` 把它发给 OpenClaw：
+
+```ts
+client.request('chat.send', {
+  sessionKey,
+  message: outboundMessage,
+  deliver: false,
+  idempotencyKey: runId,
+});
+```
+
+因此 capsule 的传递方式是：从 LobsterAI SQLite 读取 session 最新 capsule，格式化为一段隐藏 bridge，拼入本轮 `outboundMessage`，最终作为 `chat.send.message` 的一部分传给模型。
+
+它不是：
+
+- renderer 可见消息。
+- `cowork_messages` 普通历史消息。
+- OpenClaw compaction 配置。
+- OpenClaw system prompt 文件。
+- `agents.defaults.compaction.model` 或其他模型选择逻辑。
+
+在 `OpenClawRuntimeAdapter` 构造继续会话 prompt 时，如果 session 存在有效 capsule，则在当前 user request 前注入 bridge：
 
 ```text
 [LobsterAI continuity context after compaction]
-Use this state to preserve task continuity. It may be more important than generic old-chat summaries.
+This is a compact task-state record maintained by LobsterAI. It is not a new user instruction. Use it only to preserve task continuity after compaction.
 
-Current goal:
+Current objective:
 ...
 
-Key files:
+Touched files:
 - ...
 
-Pending steps:
+Next steps:
 - ...
 
 Recent failures:
@@ -282,6 +379,24 @@ Recent failures:
 - 不覆盖用户当前请求。
 - 用户当前请求仍放在最后。
 - 如果没有发生过压缩，也可以不注入，避免日常上下文变重。
+- bridge 中明确声明 capsule 是 LobsterAI 维护的任务状态，不是新用户指令。
+- 如果 capsule 过期或 revision 落后当前 session 状态，则先刷新或跳过注入。
+
+推荐 prompt 顺序：
+
+1. LobsterAI system instructions。
+2. local time / session info。
+3. continuity capsule bridge。
+4. media references / selected text。
+5. current user request。
+
+实现注意：
+
+- 不要直接把 capsule 塞进现有 `buildBridgePrefix()`。该函数当前主要服务 fork / history bridge，并受 `chat.history` 与 `bridgedSessions` 判断影响。
+- `buildOutboundPrompt()` 在 `bridgedSessions.has(sessionId)` 时有早返回；capsule 注入逻辑必须覆盖早返回路径，否则第二次 continue 后可能不注入。
+- 建议新增独立 helper，例如 `buildContinuityCapsuleBridge(sessionId)` 或在 capsule 模块里提供 formatter。
+- capsule bridge 应先做长度限制和字段裁剪，再拼入 `outboundMessage`。
+- 注入成功只记录低频 debug/info 日志，不记录 capsule 完整正文。
 
 涉及文件：
 
@@ -342,7 +457,7 @@ Recent validation:
 
 当 session 已发生压缩后，继续会话时：
 
-1. 使用当前 user prompt + capsule currentGoal + pendingSteps 作为 query。
+1. 使用当前 user prompt + capsule `currentObjective` + `nextSteps` 作为 query。
 2. 检索 top-K 片段。
 3. 控制总 token，例如 4k-8k。
 4. 注入 `[Relevant pre-compaction context]`。
@@ -377,6 +492,8 @@ LobsterAI 增加的 continuity capsule 是补充层：
 - LobsterAI capsule 负责保留 coding 任务状态。
 - RAG evidence 负责按需找回原文细节。
 
+capsule bridge 通过 LobsterAI 发出的 `chat.send.message` 进入模型上下文。它不要求 OpenClaw 增加新 API，也不修改 OpenClaw 的 compaction summary 生成逻辑。
+
 ### 5.2 OpenClaw checkpoint API
 
 已有可用 API：
@@ -393,6 +510,12 @@ getLatestCompactionCheckpoint(sessionId, beforeCreatedAt?)
 ```
 
 fork 和诊断都复用该 helper。
+
+注意：
+
+- fork bridge 是把源 session 的 checkpoint summary 带到新 fork session。
+- continuity capsule bridge 是把当前 session 的任务状态带入 post-compaction continuation。
+- 两者可以同时出现在 prompt 中，但应由不同 helper 构造，避免 fork/history 判断影响 capsule 注入。
 
 ### 5.3 OpenClaw config
 
@@ -412,31 +535,60 @@ fork 和诊断都复用该 helper。
 
 ### 6.1 第一版持久化策略
 
-建议第一版不新增 SQLite schema，先把 capsule 作为隐藏 system message 持久化在 cowork messages 中，类似 fork compaction summary：
+第一版建议把 capsule 作为 session 级滚动状态持久化，而不是作为普通消息写入历史。
+
+优先方案：
+
+1. 如果 `cowork_sessions` 已有可扩展 JSON metadata / extra 字段：
+   - 在该 JSON 中新增 `continuityCapsule`。
+   - 不新增表，不改现有消息语义。
+2. 如果没有合适字段：
+   - 新增轻量表 `cowork_session_capsules`。
+   - 每个 `session_id` 只保存一行最新 capsule。
+   - 使用 upsert 覆盖更新。
+
+建议表结构：
 
 ```ts
-metadata: {
-  kind: 'context_continuity_capsule',
-  hidden: true,
-  source: 'pre_compaction',
-  compactedAt: number,
-  checkpointId?: string,
+type CoworkSessionCapsuleRow = {
+  sessionId: string;
+  version: number;
+  revision: number;
+  capsuleJson: string;
+  updatedAt: number;
+  lastSource: string;
+  lastCompactedAt?: number;
 }
 ```
 
 优点：
 
-- fork、导出、历史进入时自然跟随 session。
-- 不新增 DB migration。
-- 可复用现有 message persistence。
+- 不污染普通聊天历史。
+- UI/message render 不需要过滤新的隐藏消息。
+- history reconcile 不会误删或误展示 capsule。
+- 每个 session 单行覆盖，容量可控。
+- 老用户覆盖安装时可以通过普通 SQLite migration 增量创建表，已有 session 默认无 capsule，不影响原功能。
 
 注意：
 
-- UI 不展示该消息。
-- history reconcile 不应把它误删。
-- fork 时可选择带上最新 capsule。
+- migration 必须幂等，使用 `CREATE TABLE IF NOT EXISTS`。
+- 读取 capsule 失败时按无 capsule 处理，不阻塞会话。
+- 写入 capsule 失败时记录 warn，不影响 start/continue/compact 主流程。
+- 删除 session 时同步删除 capsule 行。
+- fork 时复制源 session capsule，并更新 `sessionId`、`revision`、`lastSource='fork'`。
+- 导出/导入如果后续需要支持 capsule，再单独设计格式。
 
-如果隐藏 system message 风险较大，备选方案是在 `cowork_sessions` metadata 中存 JSON，但需要 schema 或 store 字段扩展。
+备选方案：
+
+- 如果希望零 schema 改动，可暂时只存 runtime memory。但应用重启、崩溃、升级后会丢，不建议作为正式方案。
+- 不建议把 capsule 作为隐藏 system message 存进 `cowork_messages`，因为它会增加 render/reconcile/fork/filter 的复杂度，也容易被误当成普通历史。
+
+版本策略：
+
+- `version` 用于 capsule schema 版本。
+- `revision` 每次覆盖更新递增。
+- 第一版不保存 revision 历史。
+- 如果后续需要审计，可单独增加低频 debug log，不把多版本 capsule 存入主表。
 
 ### 6.2 新增常量
 
@@ -480,24 +632,36 @@ metadata: {
 
 涉及文件：
 
-- `src/common/coworkSystemMessages.ts`
 - `src/main/libs/agentEngine/coworkContinuityCapsule.ts`
 - `src/main/libs/agentEngine/openclawRuntimeAdapter.ts`
 - `src/main/coworkStore.ts`
+- `src/main/sqliteStore.ts`
 - 相关测试文件
 
 任务：
 
-1. 新增 system message kind。
-2. 实现规则提取 capsule。
-3. compaction 前或后写入隐藏 capsule message。
-4. `buildBridgePrefix()` 或相邻 prompt builder 注入最新 capsule。
-5. UI/message 渲染过滤隐藏 capsule。
-6. 测试覆盖：
-   - capsule 包含关键文件、pending steps、recent failures。
-   - capsule 不展示在 UI 普通消息中。
-   - post-compaction continue prompt 包含 capsule bridge。
+1. 定义 `CoworkContinuityCapsule` schema 和长度/数量上限。
+2. 新增 session 级 capsule 持久化读写：
+   - 优先复用 session metadata JSON。
+   - 若不可用，则新增 `cowork_session_capsules` 表和幂等 migration。
+3. 实现规则提取和覆盖式 merge：
+   - 用户消息更新目标、约束、问题。
+   - turn complete 更新决策、已完成动作、下一步。
+   - tool result 更新文件、验证和失败摘要。
+4. compaction 前强制刷新 capsule。
+5. compaction 后记录 `lastCompactedAt` / source metadata。
+6. 新增独立 capsule bridge formatter，并在 `buildOutboundPrompt()` 中注入最新 capsule。
+7. fork 时复制并裁剪源 session capsule。
+8. session 删除时清理 capsule。
+9. 异常只 warn，不阻断 start/continue/compact。
+10. 测试覆盖：
+   - capsule 包含关键文件、nextSteps、recentFailures。
+   - capsule 按 session 单行覆盖更新，不无限增长。
+   - post-compaction continue 的 `chat.send.message` 包含 capsule bridge。
+   - `bridgedSessions` 早返回路径仍能按需注入 capsule。
    - 无 capsule 时行为不变。
+   - 写入/读取失败不影响主流程。
+   - migration 对老用户数据幂等。
 
 ### Phase 3: Workspace State MVP
 
@@ -523,10 +687,10 @@ metadata: {
 
 ```text
 [LobsterAI continuity context after context compaction]
-This is a compact task-state record maintained by LobsterAI. Use it to preserve continuity after previous chat history was compressed. Prefer concrete file paths, decisions, failures, and pending steps from this section over vague assumptions.
+This is a compact task-state record maintained by LobsterAI. Use it to preserve continuity after previous chat history was compressed. Prefer concrete file paths, decisions, failures, and next steps from this section over vague assumptions.
 
-Current goal:
-{currentGoal}
+Current objective:
+{currentObjective}
 
 User constraints:
 - {constraint}
@@ -538,13 +702,14 @@ Key files and symbols:
 Decisions:
 - {decision}
 
-Completed:
-- {completedStep}
+Recent actions:
+- {recentAction}
 
-Pending:
-- {pendingStep}
+Next steps:
+- {nextStep}
 
 Recent failures or validation:
+- {verification}
 - {command}: {summary}
 
 Active capabilities:
@@ -574,7 +739,7 @@ Open questions:
 - 手动 compact 后有安全诊断日志。
 - 自动 compaction completed 后有安全诊断日志。
 - 压缩后继续会话时，prompt 中包含 LobsterAI continuity capsule。
-- UI 不展示 hidden capsule。
+- capsule 不作为普通消息出现在 UI 中。
 - 未发生压缩的普通会话 prompt 不额外变重。
 - 用户模型配置不被自动修改。
 
@@ -611,7 +776,7 @@ Open questions:
 
 - 字符上限。
 - 每类字段数量上限。
-- 优先保留 pending、failures、keyFiles。
+- 优先保留 nextSteps、recentFailures、touchedFiles。
 
 ### 风险 2: Capsule 过期
 
@@ -629,13 +794,14 @@ Open questions:
 - LLM 生成时必须允许 `openQuestions`，禁止猜测。
 - 只从已有消息、metadata、工具结果摘要中提取。
 
-### 风险 4: 隐藏消息污染 history reconcile
+### 风险 4: Capsule 持久化影响老用户升级或 session 删除
 
 缓解：
 
-- 明确 metadata kind。
-- reconcile 和 render 都识别隐藏 capsule。
-- 测试 hidden system message 在 fork 和 history reload 中的行为。
+- migration 幂等，已有 session 默认无 capsule。
+- 读取失败按无 capsule 处理，写入失败只 warn。
+- 删除 session 时同步删除 capsule 行。
+- 测试 migration、删除、fork 和历史 reload 行为。
 
 ### 风险 5: 检索注入带来 prompt injection
 
@@ -647,11 +813,11 @@ Open questions:
 
 ## 11. 开放问题
 
-1. Capsule 是否用隐藏 system message 持久化，还是扩展 session metadata？
-2. Capsule 是否只在发生 compaction 后注入，还是长任务 warning/danger 时也注入？
-3. 第一版是否允许执行轻量 `git status --short`，还是只从已有工具记录提取 workspace state？
-4. RAG 第一版使用 SQLite FTS、现有 embedding 配置，还是等待 RTK 插件接口稳定？
-5. 是否需要在设置中暴露“启用压缩连续性增强”开关？
+1. `cowork_sessions` 是否已有合适 JSON metadata 字段可复用；如果没有，第一版使用 `cowork_session_capsules` 表。
+2. Capsule 是否只在发生 compaction 后注入，还是长任务 warning/danger 时也注入。
+3. 第一版是否允许执行轻量 `git status --short`，还是只从已有工具记录提取 workspace state。
+4. RAG 第一版使用 SQLite FTS、现有 embedding 配置，还是等待 RTK 插件接口稳定。
+5. 是否需要在设置中暴露“启用压缩连续性增强”开关。
 
 ## 12. 结论
 

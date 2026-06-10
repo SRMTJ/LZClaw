@@ -57,6 +57,12 @@ import {
 } from '../openclawHistory';
 import { buildOpenClawLocalTimeContextPrompt } from '../openclawLocalTimeContextPrompt';
 import { AgentLifecyclePhase, type AgentLifecyclePhase as AgentLifecyclePhaseValue } from './constants';
+import {
+  buildCoworkContinuityCapsule,
+  ContinuityCapsuleSource,
+  formatCoworkContinuityCapsuleBridge,
+  type ContinuityCapsuleSource as ContinuityCapsuleSourceValue,
+} from './coworkContinuityCapsule';
 import { SubagentTracker } from './subagentTracker';
 import type {
   CoworkContextUsage,
@@ -1604,6 +1610,79 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.emit('contextMaintenance', sessionId, active);
   }
 
+  private refreshContinuityCapsule(
+    sessionId: string,
+    source: ContinuityCapsuleSourceValue,
+    options: {
+      sourceMessageId?: string;
+      compactedAt?: number;
+    } = {},
+  ): void {
+    try {
+      if (
+        typeof this.store.getSession !== 'function'
+        || typeof this.store.getContinuityCapsule !== 'function'
+        || typeof this.store.upsertContinuityCapsule !== 'function'
+      ) {
+        return;
+      }
+      const session = this.store.getSession(sessionId);
+      if (!session) {
+        console.debug(`[CoworkContinuityCapsule] skipped refresh because session ${sessionId} was not found.`);
+        return;
+      }
+      const previous = this.store.getContinuityCapsule(sessionId);
+      const capsule = buildCoworkContinuityCapsule({
+        sessionId,
+        messages: session.messages,
+        previous,
+        source,
+        ...(options.sourceMessageId ? { sourceMessageId: options.sourceMessageId } : {}),
+        ...(options.compactedAt ? { compactedAt: options.compactedAt } : {}),
+      });
+      this.store.upsertContinuityCapsule(sessionId, capsule);
+      const logMessage = [
+        `[CoworkContinuityCapsule] refreshed capsule for session ${sessionId}.`,
+        `Source ${source}.`,
+        `Revision ${capsule.revision}.`,
+        `Touched files ${capsule.touchedFiles.length}.`,
+        `Next steps ${capsule.nextSteps.length}.`,
+      ] as const;
+      if (source === ContinuityCapsuleSource.PreCompaction || source === ContinuityCapsuleSource.PostCompaction) {
+        console.log(...logMessage);
+      } else {
+        console.debug(...logMessage);
+      }
+    } catch (error) {
+      console.warn(`[CoworkContinuityCapsule] failed to refresh capsule for session ${sessionId}:`, error);
+    }
+  }
+
+  private buildContinuityCapsuleBridge(sessionId: string): string {
+    try {
+      if (typeof this.store.getContinuityCapsule !== 'function') {
+        return '';
+      }
+      const capsule = this.store.getContinuityCapsule(sessionId);
+      if (!capsule?.lastCompactedAt) {
+        return '';
+      }
+      const bridge = formatCoworkContinuityCapsuleBridge(capsule);
+      if (!bridge.trim()) {
+        return '';
+      }
+      console.debug(
+        `[CoworkContinuityCapsule] injected capsule bridge for session ${sessionId}.`,
+        `Revision ${capsule.revision}.`,
+        `Bridge length ${bridge.length}.`,
+      );
+      return bridge;
+    } catch (error) {
+      console.warn(`[CoworkContinuityCapsule] failed to build capsule bridge for session ${sessionId}; continuing without it.`, error);
+      return '';
+    }
+  }
+
   private isWaitingForRecoverableFollowup(turn: ActiveTurn): boolean {
     return Boolean(
       turn.hasContextMaintenanceTool
@@ -2145,6 +2224,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
 
     console.log(`[OpenClawRuntime] starting manual context compaction for session ${sessionId}.`);
+    this.refreshContinuityCapsule(sessionId, ContinuityCapsuleSource.PreCompaction);
     const result = await client.request<Record<string, unknown>>('sessions.compact', {
       key: sessionKey,
     }, { timeoutMs: 120_000 });
@@ -2152,6 +2232,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const reason = typeof result?.reason === 'string' ? result.reason : undefined;
     const usage = await this.getContextUsage(sessionId);
     console.log(`[OpenClawRuntime] manual context compaction finished for session ${sessionId}, compacted=${compacted}, reason=${reason ?? 'none'}.`);
+    if (compacted) {
+      this.refreshContinuityCapsule(sessionId, ContinuityCapsuleSource.PostCompaction, {
+        compactedAt: Date.now(),
+      });
+    }
     void this.logContextCompactionDiagnostic({
       sessionId,
       sessionKey,
@@ -3173,6 +3258,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         content: prompt,
         metadata,
       });
+      this.refreshContinuityCapsule(sessionId, ContinuityCapsuleSource.UserMessage, {
+        sourceMessageId: userMessage.id,
+      });
       this.emit('message', sessionId, userMessage);
     }
 
@@ -3416,8 +3504,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         + `to the outbound message for session ${sessionId}`,
       );
     }
+    const continuityCapsuleBridge = this.buildContinuityCapsuleBridge(sessionId);
 
     if (this.bridgedSessions.has(sessionId)) {
+      if (continuityCapsuleBridge) {
+        sections.push(continuityCapsuleBridge);
+      }
       if (selectedTextSection) {
         sections.push(selectedTextSection);
       }
@@ -3467,6 +3559,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
     }
 
+    if (continuityCapsuleBridge) {
+      sections.push(continuityCapsuleBridge);
+    }
     if (selectedTextSection) {
       sections.push(selectedTextSection);
     }
@@ -5011,6 +5106,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       this.store.updateSession(sessionId, { status: 'running' });
       this.emitSessionStatus(sessionId, 'running');
       this.emitContextMaintenance(sessionId, true);
+      this.refreshContinuityCapsule(sessionId, ContinuityCapsuleSource.PreCompaction);
       console.log(`[OpenClawRuntime] context compaction started for session ${sessionId}.`);
       return;
     }
@@ -5045,6 +5141,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
     console.log(`[OpenClawRuntime] context compaction ended for session ${sessionId}, completed=${completed}, willRetry=${willRetry}.`);
     if (completed) {
+      this.refreshContinuityCapsule(sessionId, ContinuityCapsuleSource.PostCompaction, {
+        compactedAt: Date.now(),
+      });
       void this.logContextCompactionDiagnostic({
         sessionId,
         mode: 'auto',
@@ -7536,6 +7635,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         this.lastChatSeqByRunId.delete(knownRunId);
         this.lastAgentSeqByRunId.delete(knownRunId);
       });
+    }
+    if (typeof this.store.getSession === 'function' && this.store.getSession(sessionId)?.status === 'completed') {
+      this.refreshContinuityCapsule(sessionId, ContinuityCapsuleSource.PostRun);
     }
     this.activeTurns.delete(sessionId);
     setCoworkProxySessionId(null);
