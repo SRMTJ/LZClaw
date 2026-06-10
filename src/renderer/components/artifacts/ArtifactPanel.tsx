@@ -1,8 +1,10 @@
 import { ArtifactBrowserPartition } from '@shared/artifactPreview/constants';
+import type { CoworkSelectedTextSnippet } from '@shared/cowork/selectedText';
 import {
-  HtmlShareAccessMode,
-  type HtmlShareAccessMode as HtmlShareAccessModeType,
+  type HtmlShareConfigurableStatus,
   HtmlShareErrorCode,
+  HtmlShareStatus,
+  type HtmlShareStatus as HtmlShareStatusValue,
 } from '@shared/htmlShare/constants';
 import type { LocalWebService } from '@shared/localWebServices/constants';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -10,7 +12,8 @@ import { createPortal } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
 
 import { authService } from '@/services/auth';
-import { getPortalPricingUrl, isTestModeEnabled } from '@/services/endpoints';
+import { copyTextToClipboard } from '@/services/clipboard';
+import { getPortalPricingUrl, PortalPricingKeyfrom } from '@/services/endpoints';
 import { i18nService } from '@/services/i18n';
 import type { RootState } from '@/store';
 import {
@@ -38,6 +41,11 @@ import CopyIcon from '../icons/CopyIcon';
 import ArtifactRenderer from './ArtifactRenderer';
 import FileDirectoryView from './FileDirectoryView';
 import CodeRenderer from './renderers/CodeRenderer';
+import {
+  OfficePreviewActionsContext,
+  type OfficePreviewZoomControlsConfig,
+} from './renderers/OfficePreviewActionsContext';
+import { OfficeZoomControls } from './renderers/OfficeZoomControls';
 
 const t = (key: string) => i18nService.t(key);
 
@@ -61,7 +69,6 @@ const FILE_LIST_DRAWER_TRANSITION_MS = 180;
 const HtmlSharePhase = {
   Idle: 'idle',
   Checking: 'checking',
-  SelectingAccessMode: 'selectingAccessMode',
   Packing: 'packing',
   Uploading: 'uploading',
   Live: 'live',
@@ -72,12 +79,29 @@ type HtmlSharePhase = (typeof HtmlSharePhase)[keyof typeof HtmlSharePhase];
 
 const HtmlShareDialogKind = {
   Subscription: 'subscription',
-  AccessMode: 'accessMode',
   Existing: 'existing',
   Result: 'result',
 } as const;
 
 type HtmlShareDialogKind = (typeof HtmlShareDialogKind)[keyof typeof HtmlShareDialogKind];
+
+const HtmlShareContentUpdateStatus = {
+  Updating: 'updating',
+  Complete: 'complete',
+  Failed: 'failed',
+} as const;
+
+type HtmlShareContentUpdateStatus =
+  (typeof HtmlShareContentUpdateStatus)[keyof typeof HtmlShareContentUpdateStatus];
+
+const HtmlShareCopyStatus = {
+  Idle: 'idle',
+  Copied: 'copied',
+  Failed: 'failed',
+} as const;
+
+type HtmlShareCopyStatus =
+  (typeof HtmlShareCopyStatus)[keyof typeof HtmlShareCopyStatus];
 
 const HtmlSharePendingSource = {
   HtmlFile: 'htmlFile',
@@ -99,6 +123,77 @@ interface HtmlShareDialogState {
   url?: string;
   shareCode?: string;
   shareCodeUnavailable?: boolean;
+  status?: HtmlShareStatusValue;
+  targetStatus?: HtmlShareConfigurableStatus;
+  statusError?: string;
+  contentUpdateStatus?: HtmlShareContentUpdateStatus;
+}
+
+interface ExistingHtmlShareInfo {
+  shareId: string;
+  url: string;
+  shareCode?: string;
+  shareCodeUnavailable?: boolean;
+  status?: HtmlShareStatusValue;
+}
+
+interface HtmlShareLookupState {
+  filePath: string;
+  isLoading: boolean;
+  share?: ExistingHtmlShareInfo;
+}
+
+function getExistingHtmlShareInfo(
+  share: {
+    shareId?: string;
+    url?: string;
+    shareCode?: string;
+    shareCodeUnavailable?: boolean;
+    status?: HtmlShareStatusValue;
+  } | null | undefined,
+): ExistingHtmlShareInfo | null {
+  if (!share?.shareId || !share.url) return null;
+  return {
+    shareId: share.shareId,
+    url: share.url,
+    shareCode: share.shareCode,
+    shareCodeUnavailable: share.shareCodeUnavailable,
+    status: share.status,
+  };
+}
+
+function getConfigurableHtmlShareStatus(
+  status?: HtmlShareStatusValue,
+): HtmlShareConfigurableStatus | undefined {
+  if (status === HtmlShareStatus.Failed) return undefined;
+  return status === HtmlShareStatus.Disabled ? HtmlShareStatus.Disabled : HtmlShareStatus.Live;
+}
+
+function getHtmlShareFailureMessage(
+  result:
+    | {
+        code?: number;
+        error?: string;
+      }
+    | null
+    | undefined,
+): string {
+  if (result?.code === HtmlShareErrorCode.SubscriptionRequired) {
+    return t('htmlShareSubscriptionRequiredMessage');
+  }
+  if (result?.code === HtmlShareErrorCode.FeatureUnavailable) {
+    return t('htmlShareUnavailableInProduction');
+  }
+  if (result?.code === HtmlShareErrorCode.ReopenUnavailable) {
+    return t('htmlShareReopenUnavailable');
+  }
+  if (result?.code === HtmlShareErrorCode.ActiveShareLimitReached) {
+    return t('htmlShareActiveLimitReached');
+  }
+  if (result?.code === HtmlShareErrorCode.DisabledCannotUpdate) {
+    return t('htmlShareDisabledCannotUpdate');
+  }
+  return result?.error || t('htmlShareFailed');
 }
 
 function isCopyableArtifact(artifact: Artifact): boolean {
@@ -162,13 +257,18 @@ interface ArtifactPanelProps {
   activeSpecialTab?: ArtifactSpecialTab;
   minPanelWidth?: number;
   maxPanelWidth?: number;
+  isPanelExpanded?: boolean;
   browserAddress?: string;
   browserUrl?: string;
+  browserHtmlArtifactId?: string | null;
   onBrowserAddressChange?: (value: string) => void;
   onBrowserUrlChange?: (value: string) => void;
   onOpenFileListTab?: () => void;
   onOpenBrowserTab?: () => void;
+  onOpenHtmlFileInBrowser?: (artifact: Artifact) => void;
   onBrowserAnnotationCaptured?: (payload: BrowserAnnotationPayload) => void;
+  onAddSelectedText?: (snippet: CoworkSelectedTextSnippet) => void;
+  selectedTextEnabled?: boolean;
 }
 
 export const BrowserAnnotationShape = {
@@ -228,13 +328,18 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   activeSpecialTab = ArtifactSpecialTab.FileList,
   minPanelWidth = MIN_PANEL_WIDTH,
   maxPanelWidth = MAX_PANEL_WIDTH,
+  isPanelExpanded = false,
   browserAddress: controlledBrowserAddress,
   browserUrl: controlledBrowserUrl,
+  browserHtmlArtifactId,
   onBrowserAddressChange,
   onBrowserUrlChange,
   onOpenFileListTab,
   onOpenBrowserTab,
+  onOpenHtmlFileInBrowser,
   onBrowserAnnotationCaptured,
+  onAddSelectedText,
+  selectedTextEnabled = false,
 }) => {
   const dispatch = useDispatch();
   const panelWidth = useSelector(selectPanelWidth);
@@ -250,17 +355,20 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   const [htmlShareDialog, setHtmlShareDialog] = useState<HtmlShareDialogState | null>(null);
   const [htmlSharePendingRequest, setHtmlSharePendingRequest] =
     useState<HtmlSharePendingRequest | null>(null);
-  const [htmlShareAccessMode, setHtmlShareAccessMode] = useState<HtmlShareAccessModeType>(
-    HtmlShareAccessMode.Code,
-  );
-  const [isHtmlShareEnabled, setIsHtmlShareEnabled] = useState(isTestModeEnabled);
+  const [htmlShareLookup, setHtmlShareLookup] = useState<HtmlShareLookupState | null>(null);
+  const [isHtmlShareStatusUpdating, setIsHtmlShareStatusUpdating] = useState(false);
+  const [htmlShareCopyStatus, setHtmlShareCopyStatus] =
+    useState<HtmlShareCopyStatus>(HtmlShareCopyStatus.Idle);
   const [isArtifactActionsMenuOpen, setIsArtifactActionsMenuOpen] = useState(false);
+  const [officePreviewZoomControls, setOfficePreviewZoomControls] =
+    useState<OfficePreviewZoomControlsConfig | null>(null);
   const fileListDrawerRef = useRef<HTMLDivElement>(null);
   const fileListButtonRef = useRef<HTMLButtonElement>(null);
   const artifactActionsMenuRef = useRef<HTMLDivElement>(null);
   const artifactActionsMenuButtonRef = useRef<HTMLButtonElement>(null);
   const fileListDrawerAnimationFrameRef = useRef<number | undefined>(undefined);
   const fileListDrawerCloseTimeoutRef = useRef<number | undefined>(undefined);
+  const htmlShareCopyStatusTimerRef = useRef<number | undefined>(undefined);
 
   const previewableArtifacts = artifacts.filter(a => PREVIEWABLE_ARTIFACT_TYPES.has(a.type));
   const artifactsById = useMemo(
@@ -270,19 +378,51 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   const selectedArtifact = activePreviewTab
     ? (artifactsById.get(activePreviewTab.artifactId) ?? null)
     : null;
+  const browserHtmlArtifact = browserHtmlArtifactId
+    ? (artifactsById.get(browserHtmlArtifactId) ?? null)
+    : null;
+  const isBrowserTabActive = !selectedArtifact && activeSpecialTab === ArtifactSpecialTab.Browser;
+  const htmlShareArtifact =
+    selectedArtifact?.type === ArtifactTypeValue.Html
+      ? selectedArtifact
+      : isBrowserTabActive && browserHtmlArtifact?.type === ArtifactTypeValue.Html
+        ? browserHtmlArtifact
+        : null;
+  const selectedHtmlFilePath = htmlShareArtifact?.filePath;
+  const selectedHtmlShare =
+    selectedHtmlFilePath && htmlShareLookup?.filePath === selectedHtmlFilePath
+      ? htmlShareLookup.share
+      : undefined;
   const selectedArtifactId = selectedArtifact?.id ?? null;
   const activeTab = activePreviewTab?.contentView ?? ArtifactContentView.Preview;
-  const isDocumentArtifact = selectedArtifact?.type === 'document';
+  const canShowCodeView = Boolean(selectedArtifact && !NON_CODE_TYPES.has(selectedArtifact.type));
+  const isCodeViewActive = canShowCodeView && activeTab === ArtifactContentView.Code;
+  const contentViewActionTarget = isCodeViewActive
+    ? ArtifactContentView.Preview
+    : ArtifactContentView.Code;
+  const contentViewActionLabel = isCodeViewActive
+    ? t('artifactPreview')
+    : t('artifactCode');
+  const selectedTextContext = useMemo(
+    () => (
+      selectedTextEnabled && onAddSelectedText
+        ? { enabled: true, onAddSelectedText }
+        : undefined
+    ),
+    [onAddSelectedText, selectedTextEnabled],
+  );
 
   const isResizing = useRef(false);
   const startX = useRef(0);
   const startWidth = useRef(0);
   const previousBodyCursor = useRef('');
   const [panelIsResizing, setPanelIsResizing] = useState(false);
-  const constrainedMaxPanelWidth = Math.max(
-    MIN_PANEL_WIDTH,
-    Math.min(MAX_PANEL_WIDTH, maxPanelWidth),
-  );
+  const constrainedMaxPanelWidth = isPanelExpanded
+    ? Math.max(MIN_PANEL_WIDTH, maxPanelWidth)
+    : Math.max(
+        MIN_PANEL_WIDTH,
+        Math.min(MAX_PANEL_WIDTH, maxPanelWidth),
+      );
   const constrainedMinPanelWidth = Math.min(
     constrainedMaxPanelWidth,
     Math.max(MIN_PANEL_WIDTH, minPanelWidth),
@@ -297,10 +437,36 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     htmlSharePhase === HtmlSharePhase.Checking ||
     htmlSharePhase === HtmlSharePhase.Packing ||
     htmlSharePhase === HtmlSharePhase.Uploading;
+  let htmlShareButtonTitle = selectedHtmlShare ? t('htmlShareUpdateShare') : t('htmlShare');
+  if (htmlSharePhase === HtmlSharePhase.Checking) {
+    htmlShareButtonTitle = t('htmlShareScanning');
+  } else if (htmlSharePhase === HtmlSharePhase.Packing) {
+    htmlShareButtonTitle = t('htmlSharePacking');
+  } else if (htmlSharePhase === HtmlSharePhase.Uploading) {
+    htmlShareButtonTitle = t('htmlShareUploading');
+  }
+  const htmlShareButtonClass = selectedHtmlShare
+    ? 'p-1 rounded bg-primary/10 text-primary transition-colors hover:bg-primary/20 disabled:cursor-not-allowed disabled:opacity-50'
+    : 'p-1 rounded text-secondary transition-colors hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50';
   const canShareHtmlArtifact = Boolean(
-    isHtmlShareEnabled &&
-      selectedArtifact?.type === ArtifactTypeValue.Html &&
-      selectedArtifact.filePath,
+    htmlShareArtifact?.type === ArtifactTypeValue.Html &&
+      selectedHtmlFilePath,
+  );
+  const browserHtmlAutoRefreshFilePath =
+    isBrowserTabActive && browserHtmlArtifact?.type === ArtifactTypeValue.Html
+      ? browserHtmlArtifact.filePath
+      : undefined;
+  const browserHtmlPreviewUrl = browserHtmlAutoRefreshFilePath ? browserUrl : undefined;
+  const canUseHtmlShareDialogLink = Boolean(
+    htmlShareDialog?.url &&
+      !isHtmlShareStatusUpdating &&
+      htmlShareDialog.status !== HtmlShareStatus.Disabled &&
+      htmlShareDialog.status !== HtmlShareStatus.Failed,
+  );
+  const isHtmlShareContentUpdateDisabled = Boolean(
+    isHtmlShareStatusUpdating ||
+      htmlShareDialog?.status === HtmlShareStatus.Disabled ||
+      htmlShareDialog?.targetStatus === HtmlShareStatus.Disabled,
   );
   const isCompactHtmlToolbar = selectedArtifact?.type === ArtifactTypeValue.Html;
   const isCompactArtifactToolbar = Boolean(selectedArtifact);
@@ -326,13 +492,25 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   const showRevealInFolderActionInMenu = Boolean(
     showRevealInFolderAction && !showPrimaryRevealInFolderAction,
   );
+  const showContentViewActionInMenu = canShowCodeView;
+  const showOfficeZoomControlsInMenu = Boolean(officePreviewZoomControls);
+  const hasArtifactActionMenuItems = Boolean(
+    showContentViewActionInMenu ||
+      showRefreshAction ||
+      showCopyAction ||
+      showOpenBrowserActionInMenu ||
+      showOpenWithAppActionInMenu ||
+      showRevealInFolderActionInMenu,
+  );
   const showArtifactActionsMenu = Boolean(
     isCompactArtifactToolbar &&
-      (showRefreshAction ||
-        showCopyAction ||
-        showOpenBrowserActionInMenu ||
-        showOpenWithAppActionInMenu ||
-        showRevealInFolderActionInMenu),
+      (hasArtifactActionMenuItems || showOfficeZoomControlsInMenu),
+  );
+  const officePreviewActionsContextValue = useMemo(
+    () => ({
+      setZoomControls: setOfficePreviewZoomControls,
+    }),
+    [],
   );
 
   const handleBrowserAddressChange = useCallback(
@@ -394,6 +572,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
 
   const handleResizeStart = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
+      if (isPanelExpanded) return;
       e.preventDefault();
       e.currentTarget.setPointerCapture(e.pointerId);
       isResizing.current = true;
@@ -443,6 +622,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
       constrainedMinPanelWidth,
       constrainedPanelWidth,
       dispatch,
+      isPanelExpanded,
       sessionId,
     ],
   );
@@ -455,27 +635,83 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
       if (fileListDrawerCloseTimeoutRef.current !== undefined) {
         window.clearTimeout(fileListDrawerCloseTimeoutRef.current);
       }
+      if (htmlShareCopyStatusTimerRef.current !== undefined) {
+        window.clearTimeout(htmlShareCopyStatusTimerRef.current);
+      }
       document.body.style.cursor = previousBodyCursor.current;
       document.body.classList.remove('select-none');
     };
   }, []);
 
   useEffect(() => {
-    const refreshHtmlShareAvailability = () => {
-      const nextIsEnabled = isTestModeEnabled();
-      setIsHtmlShareEnabled(nextIsEnabled);
-      if (!nextIsEnabled) {
-        setHtmlShareDialog(null);
-        setHtmlSharePendingRequest(null);
-        setHtmlSharePhase(HtmlSharePhase.Idle);
-      }
-    };
+    if (
+      !selectedHtmlFilePath ||
+      !authState.isLoggedIn ||
+      authState.quota?.subscriptionStatus !== 'active'
+    ) {
+      setHtmlShareLookup(null);
+      return;
+    }
 
-    window.addEventListener('config-updated', refreshHtmlShareAvailability);
+    let isCancelled = false;
+    const htmlShareApi = window.electron?.htmlShare;
+
+    setHtmlShareLookup(previous => {
+      if (previous?.filePath === selectedHtmlFilePath && previous.share) {
+        return previous;
+      }
+      return { filePath: selectedHtmlFilePath, isLoading: true };
+    });
+
+    if (!htmlShareApi) {
+      setHtmlShareLookup({ filePath: selectedHtmlFilePath, isLoading: false });
+      return () => {
+        isCancelled = true;
+      };
+    }
+
+    htmlShareApi
+      .getByHtmlFile({ filePath: selectedHtmlFilePath })
+      .then(lookup => {
+        if (isCancelled) return;
+        const share = lookup?.success ? getExistingHtmlShareInfo(lookup.share) : null;
+        setHtmlShareLookup(previous => {
+          if (!share && previous?.filePath === selectedHtmlFilePath && previous.share) {
+            return previous;
+          }
+          return {
+            filePath: selectedHtmlFilePath,
+            isLoading: false,
+            ...(share ? { share } : {}),
+          };
+        });
+      })
+      .catch(() => {
+        if (isCancelled) return;
+        setHtmlShareLookup(previous => {
+          if (previous?.filePath === selectedHtmlFilePath && previous.share) {
+            return previous;
+          }
+          return { filePath: selectedHtmlFilePath, isLoading: false };
+        });
+      });
+
     return () => {
-      window.removeEventListener('config-updated', refreshHtmlShareAvailability);
+      isCancelled = true;
     };
-  }, []);
+  }, [
+    authState.isLoggedIn,
+    authState.quota?.subscriptionStatus,
+    selectedHtmlFilePath,
+  ]);
+
+  useEffect(() => {
+    if (htmlShareCopyStatusTimerRef.current !== undefined) {
+      window.clearTimeout(htmlShareCopyStatusTimerRef.current);
+      htmlShareCopyStatusTimerRef.current = undefined;
+    }
+    setHtmlShareCopyStatus(HtmlShareCopyStatus.Idle);
+  }, [htmlShareDialog?.shareId, htmlShareDialog?.url]);
 
   useEffect(() => {
     if (selectedArtifact) return;
@@ -584,10 +820,21 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     (id: string) => {
       const artifact = artifacts.find(item => item.id === id);
       if (artifact && openLocalServiceArtifact(artifact)) return;
+      if (artifact?.type === ArtifactTypeValue.Html && artifact.filePath && onOpenHtmlFileInBrowser) {
+        onOpenHtmlFileInBrowser(artifact);
+        return;
+      }
       onOpenFileListTab?.();
       dispatch(openArtifactPreviewTab({ sessionId, artifactId: id }));
     },
-    [artifacts, dispatch, onOpenFileListTab, openLocalServiceArtifact, sessionId],
+    [
+      artifacts,
+      dispatch,
+      onOpenFileListTab,
+      onOpenHtmlFileInBrowser,
+      openLocalServiceArtifact,
+      sessionId,
+    ],
   );
 
   const handleSelectArtifactFromDrawer = useCallback(
@@ -597,10 +844,22 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
         closeFileListDrawer();
         return;
       }
+      if (artifact?.type === ArtifactTypeValue.Html && artifact.filePath && onOpenHtmlFileInBrowser) {
+        onOpenHtmlFileInBrowser(artifact);
+        closeFileListDrawer();
+        return;
+      }
       dispatch(openArtifactPreviewTab({ sessionId, artifactId: id }));
       closeFileListDrawer();
     },
-    [artifacts, closeFileListDrawer, dispatch, openLocalServiceArtifact, sessionId],
+    [
+      artifacts,
+      closeFileListDrawer,
+      dispatch,
+      onOpenHtmlFileInBrowser,
+      openLocalServiceArtifact,
+      sessionId,
+    ],
   );
 
   const handleSetContentView = useCallback(
@@ -657,6 +916,15 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   const handleOpenInBrowser = useCallback(() => {
     if (!selectedArtifact) return;
 
+    if (
+      selectedArtifact.type === ArtifactTypeValue.Html &&
+      selectedArtifact.filePath &&
+      onOpenHtmlFileInBrowser
+    ) {
+      onOpenHtmlFileInBrowser(selectedArtifact);
+      return;
+    }
+
     // Mermaid needs HTML wrapper with mermaid.js to render in browser
     if (selectedArtifact.type === 'mermaid') {
       if (!selectedArtifact.content) return;
@@ -682,16 +950,28 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     if (html) {
       window.electron?.shell?.openHtmlInBrowser(html);
     }
-  }, [selectedArtifact]);
+  }, [onOpenHtmlFileInBrowser, selectedArtifact]);
 
   const openSubscriptionPage = useCallback(() => {
-    window.electron?.shell?.openExternal(getPortalPricingUrl());
+    window.electron?.shell?.openExternal(getPortalPricingUrl(PortalPricingKeyfrom.HtmlShare));
     setHtmlShareDialog(null);
   }, []);
 
   const formatShareClipboardText = useCallback((url: string, shareCode?: string): string => {
-    if (!shareCode) return url;
-    return `${t('htmlShareLink')}: ${url}\n${t('htmlShareCode')}: ${shareCode}`;
+    const linkLine = `${t('htmlShareClipboardLinkLabel')}: ${url}`;
+    if (!shareCode) return linkLine;
+    return `${linkLine}\n${t('htmlShareCode')}: ${shareCode}`;
+  }, []);
+
+  const showHtmlShareCopyStatus = useCallback((status: HtmlShareCopyStatus) => {
+    if (htmlShareCopyStatusTimerRef.current !== undefined) {
+      window.clearTimeout(htmlShareCopyStatusTimerRef.current);
+    }
+    setHtmlShareCopyStatus(status);
+    htmlShareCopyStatusTimerRef.current = window.setTimeout(() => {
+      setHtmlShareCopyStatus(HtmlShareCopyStatus.Idle);
+      htmlShareCopyStatusTimerRef.current = undefined;
+    }, 2200);
   }, []);
 
   const ensureHtmlShareAllowed = useCallback(async (): Promise<boolean> => {
@@ -726,53 +1006,58 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   const handleCopyShareLink = useCallback(
     async (url?: string, shareCode?: string) => {
       if (!url) return;
-      await navigator.clipboard.writeText(formatShareClipboardText(url, shareCode));
-      window.dispatchEvent(new CustomEvent('app:showToast', { detail: t('copied') }));
+      const copied = await copyTextToClipboard(formatShareClipboardText(url, shareCode));
+      if (copied) {
+        showHtmlShareCopyStatus(HtmlShareCopyStatus.Copied);
+        return;
+      }
+      showHtmlShareCopyStatus(HtmlShareCopyStatus.Failed);
     },
-    [formatShareClipboardText],
+    [formatShareClipboardText, showHtmlShareCopyStatus],
   );
-
-  const handleOpenShareLink = useCallback((url?: string) => {
-    if (!url) return;
-    window.electron?.shell?.openExternal(url);
-  }, []);
-
-  const openHtmlShareAccessModeDialog = useCallback((request: HtmlSharePendingRequest) => {
-    setHtmlSharePendingRequest(request);
-    setHtmlShareAccessMode(HtmlShareAccessMode.Code);
-    setHtmlSharePhase(HtmlSharePhase.SelectingAccessMode);
-    setHtmlShareDialog({
-      kind: HtmlShareDialogKind.AccessMode,
-      title: t('htmlShareCreateDialogTitle'),
-      message: t('htmlShareAccessModeCodeDescription'),
-    });
-  }, []);
 
   const openExistingHtmlShareDialog = useCallback(
     (
       request: HtmlSharePendingRequest,
-      share: NonNullable<
-        Awaited<ReturnType<NonNullable<typeof window.electron>['htmlShare']['getByHtmlFile']>>['share']
-      >,
+      share: ExistingHtmlShareInfo,
     ) => {
       setHtmlSharePendingRequest(request);
-      setHtmlShareAccessMode(share.accessMode || HtmlShareAccessMode.Code);
       setHtmlSharePhase(HtmlSharePhase.Live);
       setHtmlShareDialog({
         kind: HtmlShareDialogKind.Existing,
         title: t('htmlShareManageDialogTitle'),
-        message: t('htmlShareExistingShareMessage'),
+        message: t('htmlShareViewHint'),
         shareId: share.shareId,
         url: share.url,
         shareCode: share.shareCode,
         shareCodeUnavailable: share.shareCodeUnavailable,
+        status: share.status,
+        targetStatus: getConfigurableHtmlShareStatus(share.status),
       });
     },
     [],
   );
 
+  const rememberHtmlShare = useCallback((filePath: string, share: unknown) => {
+    const existingShare = getExistingHtmlShareInfo(
+      share as {
+        shareId?: string;
+        url?: string;
+        shareCode?: string;
+        shareCodeUnavailable?: boolean;
+        status?: HtmlShareStatusValue;
+      } | null | undefined,
+    );
+    if (!existingShare) return;
+    setHtmlShareLookup({
+      filePath,
+      isLoading: false,
+      share: existingShare,
+    });
+  }, []);
+
   const handleHtmlShareResult = useCallback(
-    async (
+    (
       result: Awaited<
         ReturnType<NonNullable<typeof window.electron>['htmlShare']['createFromHtmlFile']>
       >,
@@ -788,34 +1073,35 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
           setHtmlSharePhase(HtmlSharePhase.Failed);
           return;
         }
-        if (result?.code === HtmlShareErrorCode.FeatureUnavailable) {
-          throw new Error(t('htmlShareUnavailableInProduction'));
-        }
-        throw new Error(result?.error || t('htmlShareFailed'));
+        throw new Error(getHtmlShareFailureMessage(result));
       }
       setHtmlSharePhase(HtmlSharePhase.Live);
-      await handleCopyShareLink(result.url, result.shareCode);
       setHtmlShareDialog({
         kind: HtmlShareDialogKind.Result,
-        title: action === 'update' ? t('htmlShareUpdated') : t('htmlShareSuccess'),
+        title:
+          action === 'update'
+            ? t('htmlShareUpdated')
+            : t('htmlShareSuccess'),
         message: result.shareCodeUnavailable
           ? t('htmlShareCodeUnavailable')
           : result.warnings?.length
           ? result.warnings.slice(0, 3).join('\n')
           : action === 'update'
-            ? t('htmlShareUpdatedMessage')
-            : t('htmlShareSuccessMessage'),
+            ? result.status === HtmlShareStatus.Disabled
+              ? t('htmlShareUpdatedClosedMessage')
+              : t('htmlShareUpdateComplete')
+            : t('htmlShareViewHint'),
         url: result.url,
         shareCode: result.shareCode,
         shareCodeUnavailable: result.shareCodeUnavailable,
+        status: result.status,
       });
     },
-    [handleCopyShareLink],
+    [],
   );
 
-  const createHtmlShare = useCallback(async () => {
-    if (!htmlSharePendingRequest || isHtmlSharing) return;
-    const request = htmlSharePendingRequest;
+  const createHtmlShare = useCallback(async (request: HtmlSharePendingRequest) => {
+    if (isHtmlSharing) return;
     setHtmlShareDialog(null);
     setHtmlSharePendingRequest(null);
     try {
@@ -826,9 +1112,9 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
         artifactId: request.artifactId,
         filePath: request.filePath,
         title: request.title,
-        accessMode: htmlShareAccessMode,
       });
       await handleHtmlShareResult(result);
+      rememberHtmlShare(request.filePath, result);
     } catch (error) {
       setHtmlSharePhase(HtmlSharePhase.Failed);
       setHtmlShareDialog({
@@ -837,13 +1123,33 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
         message: error instanceof Error ? error.message : t('htmlShareFailed'),
       });
     }
-  }, [handleHtmlShareResult, htmlShareAccessMode, htmlSharePendingRequest, isHtmlSharing]);
+  }, [handleHtmlShareResult, isHtmlSharing, rememberHtmlShare]);
 
   const updateHtmlShare = useCallback(async () => {
-    if (!htmlSharePendingRequest || !htmlShareDialog?.shareId || isHtmlSharing) return;
+    if (
+      !htmlSharePendingRequest ||
+      !htmlShareDialog?.shareId ||
+      isHtmlSharing ||
+      isHtmlShareContentUpdateDisabled
+    )
+      return;
     const request = htmlSharePendingRequest;
     const shareId = htmlShareDialog.shareId;
-    setHtmlShareDialog(null);
+    const currentStatus = htmlShareDialog.status;
+    setHtmlShareDialog(previous => {
+      if (
+        !previous ||
+        previous.kind !== HtmlShareDialogKind.Existing ||
+        previous.shareId !== shareId
+      ) {
+        return previous;
+      }
+      return {
+        ...previous,
+        contentUpdateStatus: HtmlShareContentUpdateStatus.Updating,
+        statusError: undefined,
+      };
+    });
     try {
       setHtmlSharePhase(HtmlSharePhase.Packing);
       setHtmlSharePhase(HtmlSharePhase.Uploading);
@@ -853,30 +1159,183 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
         artifactId: request.artifactId,
         filePath: request.filePath,
         title: request.title,
-        accessMode: htmlShareAccessMode,
+        currentStatus,
       });
-      await handleHtmlShareResult(result, 'update');
+      if (!result?.success || !result.url) {
+        throw new Error(getHtmlShareFailureMessage(result));
+      }
+      const resultStatus = getConfigurableHtmlShareStatus(result.status) ?? HtmlShareStatus.Live;
+      rememberHtmlShare(request.filePath, result);
+      setHtmlSharePhase(HtmlSharePhase.Live);
+      setHtmlShareDialog(previous => {
+        if (
+          !previous ||
+          previous.kind !== HtmlShareDialogKind.Existing ||
+          previous.shareId !== shareId
+        ) {
+          return previous;
+        }
+        return {
+          ...previous,
+          message: t('htmlShareViewHint'),
+          url: result.url,
+          shareCode: result.shareCode,
+          shareCodeUnavailable: result.shareCodeUnavailable,
+          status: resultStatus,
+          targetStatus: resultStatus,
+          statusError: undefined,
+          contentUpdateStatus: HtmlShareContentUpdateStatus.Complete,
+        };
+      });
     } catch (error) {
       setHtmlSharePhase(HtmlSharePhase.Failed);
-      setHtmlShareDialog({
-        kind: HtmlShareDialogKind.Result,
-        title: t('htmlShareFailed'),
-        message: error instanceof Error ? error.message : t('htmlShareFailed'),
+      const message = error instanceof Error ? error.message : t('htmlShareFailed');
+      setHtmlShareDialog(previous => {
+        if (
+          !previous ||
+          previous.kind !== HtmlShareDialogKind.Existing ||
+          previous.shareId !== shareId
+        ) {
+          return {
+            kind: HtmlShareDialogKind.Result,
+            title: t('htmlShareFailed'),
+            message,
+          };
+        }
+        return {
+          ...previous,
+          statusError: message,
+          contentUpdateStatus: HtmlShareContentUpdateStatus.Failed,
+        };
       });
     }
   }, [
-    handleHtmlShareResult,
-    htmlShareAccessMode,
     htmlShareDialog?.shareId,
+    htmlShareDialog?.status,
     htmlSharePendingRequest,
+    isHtmlShareContentUpdateDisabled,
     isHtmlSharing,
+    rememberHtmlShare,
+  ]);
+
+  const toggleHtmlShareTargetStatus = useCallback(async () => {
+    if (
+      !htmlShareDialog ||
+      htmlShareDialog.kind !== HtmlShareDialogKind.Existing ||
+      !htmlShareDialog.shareId ||
+      !htmlShareDialog.targetStatus ||
+      isHtmlShareStatusUpdating
+    ) {
+      return;
+    }
+    const shareId = htmlShareDialog.shareId;
+    const previousStatus = htmlShareDialog.targetStatus;
+    const nextStatus =
+      previousStatus === HtmlShareStatus.Live ? HtmlShareStatus.Disabled : HtmlShareStatus.Live;
+    const request = htmlSharePendingRequest;
+
+    setIsHtmlShareStatusUpdating(true);
+    setHtmlShareDialog(previous => {
+      if (
+        !previous ||
+        previous.kind !== HtmlShareDialogKind.Existing ||
+        previous.shareId !== shareId
+      ) {
+        return previous;
+      }
+      return {
+        ...previous,
+        status: nextStatus,
+        targetStatus: nextStatus,
+        statusError: undefined,
+      };
+    });
+    try {
+      const result = await window.electron?.htmlShare?.updateStatus({
+        shareId,
+        status: nextStatus,
+      });
+      if (!result?.success || !result.url) {
+        throw new Error(getHtmlShareFailureMessage(result));
+      }
+      let refreshedShare: ExistingHtmlShareInfo | null = null;
+      if (request) {
+        try {
+          const lookup = await window.electron?.htmlShare?.getByHtmlFile({
+            filePath: request.filePath,
+          });
+          if (lookup?.success) {
+            refreshedShare = getExistingHtmlShareInfo(lookup.share);
+          }
+        } catch {
+          refreshedShare = null;
+        }
+      }
+      const resultStatus =
+        getConfigurableHtmlShareStatus(refreshedShare?.status ?? result.status) ?? nextStatus;
+      const refreshedResult = {
+        shareId: refreshedShare?.shareId ?? result.shareId ?? shareId,
+        url: refreshedShare?.url ?? result.url,
+        shareCode: refreshedShare?.shareCode ?? result.shareCode,
+        shareCodeUnavailable:
+          refreshedShare?.shareCodeUnavailable ?? result.shareCodeUnavailable,
+        status: resultStatus,
+      };
+      if (request) {
+        rememberHtmlShare(request.filePath, refreshedResult);
+      }
+      setHtmlShareDialog(previous => {
+        if (
+          !previous ||
+          previous.kind !== HtmlShareDialogKind.Existing ||
+          previous.shareId !== shareId
+        ) {
+          return previous;
+        }
+        return {
+          ...previous,
+          url: refreshedResult.url ?? previous.url,
+          shareCode: refreshedResult.shareCode ?? previous.shareCode,
+          shareCodeUnavailable:
+            refreshedResult.shareCodeUnavailable ?? previous.shareCodeUnavailable,
+          status: resultStatus,
+          targetStatus: resultStatus,
+          statusError: undefined,
+        };
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : t('htmlShareStatusUpdateFailed');
+      setHtmlShareDialog(previous => {
+        if (
+          !previous ||
+          previous.kind !== HtmlShareDialogKind.Existing ||
+          previous.shareId !== shareId
+        ) {
+          return previous;
+        }
+        return {
+          ...previous,
+          status: previousStatus,
+          targetStatus: previousStatus,
+          statusError: message,
+        };
+      });
+    } finally {
+      setIsHtmlShareStatusUpdating(false);
+    }
+  }, [
+    htmlShareDialog,
+    htmlSharePendingRequest,
+    isHtmlShareStatusUpdating,
+    rememberHtmlShare,
   ]);
 
   const handleShareHtmlArtifact = useCallback(async () => {
     if (
-      !isHtmlShareEnabled ||
-      !selectedArtifact?.filePath ||
-      selectedArtifact.type !== ArtifactTypeValue.Html ||
+      !htmlShareArtifact ||
+      !selectedHtmlFilePath ||
+      htmlShareArtifact.type !== ArtifactTypeValue.Html ||
       isHtmlSharing
     )
       return;
@@ -884,14 +1343,18 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     const request: HtmlSharePendingRequest = {
       source: HtmlSharePendingSource.HtmlFile,
       sessionId,
-      artifactId: selectedArtifact.id,
-      filePath: selectedArtifact.filePath,
-      title: selectedArtifact.title || selectedArtifact.fileName || t('htmlShare'),
+      artifactId: htmlShareArtifact.id,
+      filePath: selectedHtmlFilePath,
+      title: htmlShareArtifact.title || htmlShareArtifact.fileName || t('htmlShare'),
     };
     try {
+      if (selectedHtmlShare) {
+        openExistingHtmlShareDialog(request, selectedHtmlShare);
+        return;
+      }
       setHtmlSharePhase(HtmlSharePhase.Checking);
       const lookup = await window.electron?.htmlShare?.getByHtmlFile({
-        filePath: selectedArtifact.filePath,
+        filePath: selectedHtmlFilePath,
       });
       if (!lookup?.success) {
         if (lookup?.code === HtmlShareErrorCode.FeatureUnavailable) {
@@ -899,11 +1362,13 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
         }
         throw new Error(lookup?.error || t('htmlShareFailed'));
       }
-      if (lookup.share?.shareId && lookup.share.url) {
-        openExistingHtmlShareDialog(request, lookup.share);
+      const existingShare = getExistingHtmlShareInfo(lookup.share);
+      if (existingShare) {
+        rememberHtmlShare(request.filePath, existingShare);
+        openExistingHtmlShareDialog(request, existingShare);
         return;
       }
-      openHtmlShareAccessModeDialog(request);
+      await createHtmlShare(request);
     } catch (error) {
       setHtmlSharePhase(HtmlSharePhase.Failed);
       setHtmlShareDialog({
@@ -913,12 +1378,14 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
       });
     }
   }, [
+    createHtmlShare,
     ensureHtmlShareAllowed,
-    isHtmlShareEnabled,
     isHtmlSharing,
     openExistingHtmlShareDialog,
-    openHtmlShareAccessModeDialog,
-    selectedArtifact,
+    rememberHtmlShare,
+    htmlShareArtifact,
+    selectedHtmlFilePath,
+    selectedHtmlShare,
     sessionId,
   ]);
 
@@ -1007,18 +1474,54 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     action();
   }, []);
 
+  const isHtmlShareLinkDialog = Boolean(
+    htmlShareDialog &&
+      (htmlShareDialog.kind === HtmlShareDialogKind.Existing ||
+        (htmlShareDialog.kind === HtmlShareDialogKind.Result && htmlShareDialog.url)),
+  );
+  const isHtmlShareExistingDialog =
+    htmlShareDialog?.kind === HtmlShareDialogKind.Existing;
+  const isHtmlShareStoppedDialog =
+    isHtmlShareExistingDialog &&
+    htmlShareDialog.targetStatus === HtmlShareStatus.Disabled;
+  const isHtmlShareFileUpdateDisabled = isHtmlSharing || isHtmlShareContentUpdateDisabled;
+  const isHtmlShareAvailabilityActionDisabled = Boolean(
+    !htmlShareDialog?.shareId ||
+      isHtmlShareStatusUpdating ||
+      !htmlShareDialog.targetStatus,
+  );
+  const htmlShareAvailabilityActionLabel =
+    htmlShareDialog?.targetStatus === HtmlShareStatus.Disabled
+      ? t('htmlShareStartSharing')
+      : t('htmlShareStopSharing');
+  const htmlShareAvailabilityActionClassName = isHtmlShareStoppedDialog
+    ? 'rounded-lg bg-primary px-5 py-2 text-base text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60'
+    : 'rounded-lg border border-border bg-background px-5 py-2 text-base text-secondary transition-colors hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60';
+  const htmlShareCopyButtonLabel =
+    htmlShareCopyStatus === HtmlShareCopyStatus.Failed
+      ? t('copyFailed')
+      : htmlShareCopyStatus === HtmlShareCopyStatus.Copied
+        ? t('copied')
+        : t('htmlShareCopyLink');
+
   return (
     <>
       {/* Drag handle */}
-      <div
-        className="w-1 shrink-0 touch-none cursor-col-resize hover:bg-primary/30 active:bg-primary/50 transition-colors"
-        onPointerDown={handleResizeStart}
-      />
+      {!isPanelExpanded && (
+        <div
+          className="w-1 shrink-0 touch-none cursor-col-resize transition-colors hover:bg-primary/30 active:bg-primary/50"
+          onPointerDown={handleResizeStart}
+        />
+      )}
       <aside
-        style={{ width: constrainedPanelWidth, maxWidth: constrainedMaxPanelWidth }}
-        className="shrink border-l border-border bg-background flex flex-col h-full overflow-hidden relative"
+        style={isPanelExpanded
+          ? { width: '100%', maxWidth: 'none' }
+          : { width: constrainedPanelWidth, maxWidth: constrainedMaxPanelWidth }}
+        className={`bg-background flex flex-col h-full overflow-hidden relative ${
+          isPanelExpanded ? 'min-w-0 flex-1' : 'shrink border-l border-border'
+        }`}
       >
-        {panelIsResizing && (
+        {!isPanelExpanded && panelIsResizing && (
           <div className="absolute inset-0 z-30 cursor-col-resize bg-transparent" />
         )}
 
@@ -1050,8 +1553,18 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
                   {isArtifactActionsMenuOpen && (
                     <div
                       ref={artifactActionsMenuRef}
-                      className="absolute right-0 top-7 z-40 w-32 rounded-lg border border-border bg-surface-raised p-1.5 text-sm text-foreground shadow-xl"
+                      className="absolute right-0 top-7 z-40 w-44 rounded-lg border border-border bg-surface-raised p-1.5 text-sm text-foreground shadow-xl"
                     >
+                      {showContentViewActionInMenu && (
+                        <button
+                          type="button"
+                          onClick={() => runArtifactMenuAction(() => handleSetContentView(contentViewActionTarget))}
+                          className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs transition-colors hover:bg-surface"
+                        >
+                          <ContentViewIcon />
+                          <span>{contentViewActionLabel}</span>
+                        </button>
+                      )}
                       {showRefreshAction && (
                         <button
                           type="button"
@@ -1102,6 +1615,24 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
                           <span>{t('artifactOpenFolder')}</span>
                         </button>
                       )}
+                      {officePreviewZoomControls && (
+                        <div
+                          className={`${hasArtifactActionMenuItems ? 'mt-1 border-t border-border/70 pt-1.5' : ''} px-1 py-1`}
+                        >
+                          <div className="flex h-8 items-center gap-1.5">
+                            <span className="shrink-0 whitespace-nowrap text-xs text-secondary">
+                              {t('artifactBrowserZoom')}
+                            </span>
+                            <OfficeZoomControls
+                              zoomFactor={officePreviewZoomControls.zoomFactor}
+                              displayZoomFactor={officePreviewZoomControls.displayZoomFactor}
+                              onZoomOut={officePreviewZoomControls.onZoomOut}
+                              onZoomIn={officePreviewZoomControls.onZoomIn}
+                              onResetZoom={officePreviewZoomControls.onResetZoom}
+                            />
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1110,8 +1641,9 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
                 <button
                   onClick={handleShareHtmlArtifact}
                   disabled={isHtmlSharing}
-                  className="p-1 rounded text-secondary hover:text-foreground hover:bg-surface transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-                  title={isHtmlSharing ? t('htmlShareUploading') : t('htmlShare')}
+                  className={htmlShareButtonClass}
+                  aria-label={htmlShareButtonTitle}
+                  title={htmlShareButtonTitle}
                 >
                   <ShareIcon />
                 </button>
@@ -1180,41 +1712,19 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
               </div>
             )}
 
-            {/* Preview/Code tabs */}
-            <div
-              className={`flex border-b border-border shrink-0 ${isDocumentArtifact ? 'pl-4' : ''}`}
-            >
-              <button
-                onClick={() => handleSetContentView(ArtifactContentView.Preview)}
-                className={`${isDocumentArtifact ? 'px-0' : 'px-3'} py-1.5 text-xs font-medium transition-colors border-b-2 ${
-                  activeTab === ArtifactContentView.Preview
-                    ? 'border-primary text-primary'
-                    : 'border-transparent text-secondary hover:text-foreground'
-                }`}
-              >
-                {t('artifactPreview')}
-              </button>
-              {!NON_CODE_TYPES.has(selectedArtifact.type) && (
-                <button
-                  onClick={() => handleSetContentView(ArtifactContentView.Code)}
-                  className={`px-3 py-1.5 text-xs font-medium transition-colors border-b-2 ${
-                    activeTab === ArtifactContentView.Code
-                      ? 'border-primary text-primary'
-                      : 'border-transparent text-secondary hover:text-foreground'
-                  }`}
-                >
-                  {t('artifactCode')}
-                </button>
-              )}
-            </div>
-
             {/* Render area */}
             <div className="flex-1 min-h-0 overflow-hidden">
-              {activeTab === ArtifactContentView.Preview ? (
-                <ArtifactRenderer artifact={selectedArtifact} sessionArtifacts={artifacts} />
-              ) : (
-                <CodeRenderer artifact={selectedArtifact} />
-              )}
+              <OfficePreviewActionsContext.Provider value={officePreviewActionsContextValue}>
+                {!isCodeViewActive ? (
+                  <ArtifactRenderer
+                    artifact={selectedArtifact}
+                    sessionArtifacts={artifacts}
+                    selectedTextContext={selectedTextContext}
+                  />
+                ) : (
+                  <CodeRenderer artifact={selectedArtifact} />
+                )}
+              </OfficePreviewActionsContext.Provider>
             </div>
           </div>
         ) : activeSpecialTab === ArtifactSpecialTab.Browser ? (
@@ -1222,6 +1732,13 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
             address={browserAddress}
             currentUrl={browserUrl}
             sessionArtifacts={artifacts}
+            canShare={canShareHtmlArtifact}
+            shareButtonTitle={htmlShareButtonTitle}
+            hasExistingShare={Boolean(selectedHtmlShare)}
+            isSharing={isHtmlSharing}
+            onShare={handleShareHtmlArtifact}
+            autoRefreshFilePath={browserHtmlAutoRefreshFilePath}
+            localHtmlPreviewUrl={browserHtmlPreviewUrl}
             onAddressChange={handleBrowserAddressChange}
             onCurrentUrlChange={handleBrowserUrlChange}
             onAnnotationCaptured={onBrowserAnnotationCaptured}
@@ -1240,192 +1757,153 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
       {htmlShareDialog &&
         createPortal(
           <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/35 px-4">
-            <div className="w-full max-w-[420px] rounded-lg border border-border bg-background p-4 shadow-2xl">
-              <div className="text-sm font-semibold text-foreground">{htmlShareDialog.title}</div>
-              {htmlShareDialog.kind === HtmlShareDialogKind.AccessMode ||
-              htmlShareDialog.kind === HtmlShareDialogKind.Existing ? (
-                <div className="mt-3 space-y-3">
-                  {htmlShareDialog.kind === HtmlShareDialogKind.Existing && (
-                    <div className="space-y-2">
-                      <div className="text-sm leading-6 text-secondary">
-                        {htmlShareDialog.message}
-                      </div>
-                      <div className="rounded-md border border-border bg-surface px-3 py-2">
-                        <div className="text-xs text-muted">{t('htmlShareLink')}</div>
-                        <div className="mt-1 break-words text-sm text-foreground">
-                          {htmlShareDialog.url}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                  <div className="space-y-2">
-                    <button
-                      type="button"
-                      onClick={() => setHtmlShareAccessMode(HtmlShareAccessMode.Code)}
-                      className={`w-full rounded-md border px-3 py-2 text-left transition-colors ${
-                        htmlShareAccessMode === HtmlShareAccessMode.Code
-                          ? 'border-primary bg-primary/10 text-foreground'
-                          : 'border-border text-secondary hover:bg-surface hover:text-foreground'
-                      }`}
-                    >
-                      <span className="block text-sm font-medium">
-                        {t('htmlShareAccessModeCode')}
-                      </span>
-                      <span className="mt-1 block text-xs leading-5 text-muted">
-                        {t('htmlShareAccessModeCodeDescription')}
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setHtmlShareAccessMode(HtmlShareAccessMode.Public)}
-                      className={`w-full rounded-md border px-3 py-2 text-left transition-colors ${
-                        htmlShareAccessMode === HtmlShareAccessMode.Public
-                          ? 'border-primary bg-primary/10 text-foreground'
-                          : 'border-border text-secondary hover:bg-surface hover:text-foreground'
-                      }`}
-                    >
-                      <span className="block text-sm font-medium">
-                        {t('htmlShareAccessModePublic')}
-                      </span>
-                      <span className="mt-1 block text-xs leading-5 text-muted">
-                        {t('htmlShareAccessModePublicDescription')}
-                      </span>
-                    </button>
-                  </div>
-                  {htmlShareAccessMode === HtmlShareAccessMode.Code && htmlShareDialog.shareCode && (
-                    <div className="rounded-md border border-border bg-surface px-3 py-2">
-                      <div className="text-xs text-muted">{t('htmlShareCode')}</div>
-                      <div className="mt-1 font-mono text-sm tracking-wider text-foreground">
-                        {htmlShareDialog.shareCode}
-                      </div>
-                    </div>
-                  )}
-                  {htmlShareAccessMode === HtmlShareAccessMode.Code &&
-                    htmlShareDialog.shareCodeUnavailable && (
-                      <div className="text-xs leading-5 text-muted">
-                        {t('htmlShareCodeUnavailable')}
-                      </div>
-                    )}
-                </div>
-              ) : (
-                <>
-                  <div className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-secondary">
-                    {htmlShareDialog.url || htmlShareDialog.message}
-                  </div>
-                  {htmlShareDialog.shareCode && (
-                    <div className="mt-2 rounded-md border border-border bg-surface px-3 py-2">
-                      <div className="text-xs text-muted">{t('htmlShareCode')}</div>
-                      <div className="mt-1 font-mono text-sm tracking-wider text-foreground">
-                        {htmlShareDialog.shareCode}
-                      </div>
-                    </div>
-                  )}
-                  {htmlShareDialog.shareCodeUnavailable && (
-                    <div className="mt-2 text-xs leading-5 text-muted">
-                      {t('htmlShareCodeUnavailable')}
-                    </div>
-                  )}
-                  {htmlShareDialog.url && htmlShareDialog.message !== htmlShareDialog.url && (
-                    <div className="mt-2 whitespace-pre-wrap break-words text-xs leading-5 text-muted">
-                      {htmlShareDialog.message}
-                    </div>
-                  )}
-                </>
-              )}
-              <div className="mt-4 flex flex-wrap justify-end gap-2">
+            {isHtmlShareLinkDialog ? (
+              <div className="relative w-full max-w-[420px] rounded-2xl bg-background px-7 pb-6 pt-6 shadow-2xl">
                 <button
                   type="button"
                   onClick={() => {
                     setHtmlShareDialog(null);
                     setHtmlSharePendingRequest(null);
-                    if (htmlSharePhase === HtmlSharePhase.SelectingAccessMode) {
-                      setHtmlSharePhase(HtmlSharePhase.Idle);
-                    }
                   }}
-                  className="rounded-md border border-border px-3 py-1.5 text-sm text-secondary transition-colors hover:bg-surface hover:text-foreground"
+                  className="absolute right-6 top-6 rounded-md p-1 text-muted transition-colors hover:bg-surface hover:text-foreground"
+                  aria-label={t('close')}
+                  title={t('close')}
                 >
-                  {htmlShareDialog.kind === HtmlShareDialogKind.Result ||
-                  htmlShareDialog.kind === HtmlShareDialogKind.Existing
-                    ? t('close')
-                    : t('cancel')}
+                  <CloseIcon />
                 </button>
-                {htmlShareDialog.kind === HtmlShareDialogKind.Subscription ? (
-                  <button
-                    type="button"
-                    onClick={openSubscriptionPage}
-                    className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground transition-colors hover:bg-primary/90"
-                  >
-                    {t('htmlShareOpenSubscription')}
-                  </button>
-                ) : htmlShareDialog.kind === HtmlShareDialogKind.AccessMode ? (
-                  <button
-                    type="button"
-                    onClick={createHtmlShare}
-                    className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground transition-colors hover:bg-primary/90"
-                  >
-                    {t('htmlShareCreate')}
-                  </button>
-                ) : htmlShareDialog.kind === HtmlShareDialogKind.Existing ? (
-                  <>
-                    {htmlShareDialog.url && (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          handleCopyShareLink(
-                            htmlShareDialog.url,
-                            htmlShareAccessMode === HtmlShareAccessMode.Code
-                              ? htmlShareDialog.shareCode
-                              : undefined,
-                          )
-                        }
-                        className="rounded-md border border-border px-3 py-1.5 text-sm text-secondary transition-colors hover:bg-surface hover:text-foreground"
-                      >
-                        {htmlShareAccessMode === HtmlShareAccessMode.Code && htmlShareDialog.shareCode
-                          ? t('htmlShareCopyLinkAndCode')
-                          : t('htmlShareCopyLink')}
-                      </button>
+                <div className="pr-8 text-xl font-semibold leading-7 text-foreground">
+                  {t('htmlShare')}
+                </div>
+                {isHtmlShareStoppedDialog ? (
+                  <div className="mt-2 text-sm font-medium leading-5 text-red-500">
+                    {t('htmlShareStoppedNotice')}
+                  </div>
+                ) : (
+                  <div className="mt-3 text-sm leading-5 text-muted">
+                    {htmlShareDialog.message}
+                  </div>
+                )}
+
+                {htmlShareDialog.url && (
+                  <div className="mt-5 rounded-sm border border-[#edf0f4] bg-[#f5f6f8] px-4 py-4 dark:border-white/10 dark:bg-white/5">
+                    <div className="min-w-0 break-words text-base leading-6 text-foreground">
+                      {htmlShareDialog.url}
+                    </div>
+                    {htmlShareDialog.shareCode && (
+                      <div className="mt-4 text-base leading-6 text-foreground">
+                        <span className="text-muted">{t('htmlShareCode')}</span>
+                        <span className="ml-2 font-medium">{htmlShareDialog.shareCode}</span>
+                      </div>
                     )}
-                    {htmlShareDialog.url && (
-                      <button
-                        type="button"
-                        onClick={() => handleOpenShareLink(htmlShareDialog.url)}
-                        className="rounded-md border border-border px-3 py-1.5 text-sm text-secondary transition-colors hover:bg-surface hover:text-foreground"
-                      >
-                        {t('htmlShareOpenLink')}
-                      </button>
-                    )}
+                  </div>
+                )}
+
+                {htmlShareDialog.shareCodeUnavailable && (
+                  <div className="mt-3 text-xs leading-5 text-muted">
+                    {t('htmlShareCodeUnavailable')}
+                  </div>
+                )}
+                {isHtmlShareExistingDialog && htmlShareDialog.statusError && (
+                  <div className="mt-3 text-xs leading-5 text-red-500">
+                    {htmlShareDialog.statusError}
+                  </div>
+                )}
+
+                {isHtmlShareExistingDialog && (
+                  <div className="mt-5 flex items-center gap-2">
+                    <span className="text-base font-medium text-foreground">
+                      {t('htmlShareUpdateFile')}
+                    </span>
                     <button
                       type="button"
                       onClick={updateHtmlShare}
-                      className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground transition-colors hover:bg-primary/90"
+                      disabled={isHtmlShareFileUpdateDisabled}
+                      title={
+                        htmlShareDialog.targetStatus === HtmlShareStatus.Disabled
+                          ? t('htmlShareDisabledCannotUpdate')
+                          : undefined
+                      }
+                      className="inline-flex h-7 items-center gap-1 rounded-md border border-border px-2 text-sm text-secondary transition-colors hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
                     >
+                      <RefreshIcon />
                       {t('htmlShareUpdate')}
                     </button>
-                  </>
-                ) : htmlShareDialog.url ? (
-                  <>
+                    {htmlShareDialog.contentUpdateStatus &&
+                      htmlShareDialog.contentUpdateStatus !==
+                        HtmlShareContentUpdateStatus.Failed && (
+                        <span className="text-sm text-muted">
+                          {htmlShareDialog.contentUpdateStatus ===
+                          HtmlShareContentUpdateStatus.Updating
+                            ? t('htmlShareUpdatingFile')
+                            : t('htmlShareUpdateComplete')}
+                        </span>
+                      )}
+                  </div>
+                )}
+
+                <div className="mt-12 flex items-center justify-end gap-4">
+                  {isHtmlShareExistingDialog && (
+                    <button
+                      type="button"
+                      onClick={toggleHtmlShareTargetStatus}
+                      disabled={isHtmlShareAvailabilityActionDisabled}
+                      className={htmlShareAvailabilityActionClassName}
+                    >
+                      {isHtmlShareStatusUpdating
+                        ? t('htmlShareStatusUpdating')
+                        : htmlShareAvailabilityActionLabel}
+                    </button>
+                  )}
+                  {canUseHtmlShareDialogLink && (
                     <button
                       type="button"
                       onClick={() =>
                         handleCopyShareLink(htmlShareDialog.url, htmlShareDialog.shareCode)
                       }
-                      className="rounded-md border border-border px-3 py-1.5 text-sm text-secondary transition-colors hover:bg-surface hover:text-foreground"
+                      className={`w-28 rounded-lg px-5 py-2 text-base transition-colors ${
+                        htmlShareCopyStatus === HtmlShareCopyStatus.Failed
+                          ? 'bg-red-500 text-white hover:bg-red-500/90'
+                          : 'bg-primary text-primary-foreground hover:bg-primary/90'
+                      }`}
                     >
-                      {htmlShareDialog.shareCode
-                        ? t('htmlShareCopyLinkAndCode')
-                        : t('htmlShareCopyLink')}
+                      {htmlShareCopyButtonLabel}
                     </button>
+                  )}
+                </div>
+              </div>
+              ) : (
+              <div className="w-full max-w-[420px] rounded-lg border border-border bg-background p-4 shadow-2xl">
+                <div className="text-sm font-semibold text-foreground">
+                  {htmlShareDialog.title}
+                </div>
+                <div className="mt-3 space-y-3">
+                  <div className="whitespace-pre-wrap break-words text-sm leading-6 text-secondary">
+                    {htmlShareDialog.message}
+                  </div>
+                </div>
+                <div className="mt-4 flex flex-wrap justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHtmlShareDialog(null);
+                      setHtmlSharePendingRequest(null);
+                    }}
+                    className="rounded-md border border-border px-3 py-1.5 text-sm text-secondary transition-colors hover:bg-surface hover:text-foreground"
+                  >
+                    {htmlShareDialog.kind === HtmlShareDialogKind.Result ? t('close') : t('cancel')}
+                  </button>
+                  {htmlShareDialog.kind === HtmlShareDialogKind.Subscription && (
                     <button
                       type="button"
-                      onClick={() => handleOpenShareLink(htmlShareDialog.url)}
-                      className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground transition-colors hover:bg-primary/90"
+                      onClick={openSubscriptionPage}
+                      className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      {t('htmlShareOpenLink')}
+                      {t('htmlShareOpenSubscription')}
                     </button>
-                  </>
-                ) : null}
+                  )}
+                </div>
               </div>
-            </div>
+            )}
           </div>,
           document.body,
         )}
@@ -1470,7 +1948,7 @@ type BrowserAnnotationStatus =
 
 const BrowserToolbarAction = {
   Annotate: 'annotate',
-  Screenshot: 'screenshot',
+  Share: 'share',
   OpenExternal: 'openExternal',
 } as const;
 
@@ -1617,6 +2095,21 @@ function normalizeBrowserUrl(value: string): string | null {
     return `https://${trimmed}`;
   }
   return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
+}
+
+function normalizeBrowserPreviewUrlForMatch(value: string): string {
+  try {
+    const url = new URL(value);
+    url.hash = '';
+    return url.toString();
+  } catch {
+    return value;
+  }
+}
+
+function isSameBrowserPreviewUrl(value: string, previewUrl: string): boolean {
+  if (!value || !previewUrl) return false;
+  return normalizeBrowserPreviewUrlForMatch(value) === normalizeBrowserPreviewUrlForMatch(previewUrl);
 }
 
 function clampBrowserZoomFactor(value: number): number {
@@ -1939,6 +2432,13 @@ interface BrowserTabContentProps {
   address: string;
   currentUrl: string;
   sessionArtifacts?: Artifact[];
+  canShare?: boolean;
+  shareButtonTitle?: string;
+  hasExistingShare?: boolean;
+  isSharing?: boolean;
+  onShare?: () => void | Promise<void>;
+  autoRefreshFilePath?: string;
+  localHtmlPreviewUrl?: string;
   onAddressChange: (value: string) => void;
   onCurrentUrlChange: (value: string) => void;
   onAnnotationCaptured?: (payload: BrowserAnnotationPayload) => void;
@@ -1948,6 +2448,13 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
   address,
   currentUrl,
   sessionArtifacts,
+  canShare = false,
+  shareButtonTitle = t('htmlShare'),
+  hasExistingShare = false,
+  isSharing = false,
+  onShare,
+  autoRefreshFilePath,
+  localHtmlPreviewUrl,
   onAddressChange,
   onCurrentUrlChange,
   onAnnotationCaptured,
@@ -1979,11 +2486,12 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
   const [deviceHeight, setDeviceHeight] = useState<number>(BrowserDeviceViewport.DefaultHeight);
   const [deviceScale, setDeviceScale] = useState<number>(BrowserDeviceScale.Default);
   const annotateButtonRef = useRef<HTMLDivElement>(null);
-  const screenshotButtonRef = useRef<HTMLDivElement>(null);
+  const shareButtonRef = useRef<HTMLDivElement>(null);
   const openExternalButtonRef = useRef<HTMLDivElement>(null);
   const browserMenuButtonRef = useRef<HTMLButtonElement>(null);
   const browserMenuRef = useRef<HTMLDivElement>(null);
   const screenshotStatusTimeoutRef = useRef<number | undefined>(undefined);
+  const autoRefreshTimeoutRef = useRef<number | undefined>(undefined);
   const lastRequestedUrlRef = useRef('');
   const lastRequestedWebviewRef = useRef<BrowserWebviewElement | null>(null);
   const webviewNodeRef = useRef<BrowserWebviewElement | null>(null);
@@ -1996,6 +2504,9 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
     () => () => {
       if (screenshotStatusTimeoutRef.current !== undefined) {
         window.clearTimeout(screenshotStatusTimeoutRef.current);
+      }
+      if (autoRefreshTimeoutRef.current !== undefined) {
+        window.clearTimeout(autoRefreshTimeoutRef.current);
       }
     },
     [],
@@ -2058,6 +2569,20 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
     };
   }, [isBrowserMenuOpen]);
 
+  const getBrowserAddressForUrl = useCallback(
+    (nextUrl: string): string => {
+      if (
+        autoRefreshFilePath &&
+        localHtmlPreviewUrl &&
+        isSameBrowserPreviewUrl(nextUrl, localHtmlPreviewUrl)
+      ) {
+        return autoRefreshFilePath;
+      }
+      return nextUrl;
+    },
+    [autoRefreshFilePath, localHtmlPreviewUrl],
+  );
+
   const syncNavigationState = useCallback(
     (node: BrowserWebviewElement | null) => {
       if (!node) return;
@@ -2066,10 +2591,10 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
       const nextUrl = node.getURL?.();
       if (nextUrl && nextUrl !== BrowserPageUrl.Blank) {
         onCurrentUrlChange(nextUrl);
-        onAddressChange(nextUrl);
+        onAddressChange(getBrowserAddressForUrl(nextUrl));
       }
     },
-    [onAddressChange, onCurrentUrlChange],
+    [getBrowserAddressForUrl, onAddressChange, onCurrentUrlChange],
   );
 
   const getToolbarActionElement = useCallback(
@@ -2077,8 +2602,8 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
       switch (action) {
         case BrowserToolbarAction.Annotate:
           return annotateButtonRef.current;
-        case BrowserToolbarAction.Screenshot:
-          return screenshotButtonRef.current;
+        case BrowserToolbarAction.Share:
+          return shareButtonRef.current;
         case BrowserToolbarAction.OpenExternal:
           return openExternalButtonRef.current;
         default:
@@ -2125,7 +2650,7 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
       const nextUrl = (event as Event & { url?: string }).url;
       if (nextUrl && nextUrl !== BrowserPageUrl.Blank) {
         onCurrentUrlChange(nextUrl);
-        onAddressChange(nextUrl);
+        onAddressChange(getBrowserAddressForUrl(nextUrl));
       }
       syncNavigationState(webviewNode);
     };
@@ -2155,12 +2680,46 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
       webviewNode.removeEventListener('did-navigate-in-page', handleNavigate);
       webviewNode.removeEventListener('dom-ready', handleDomReady);
     };
-  }, [browserZoomFactor, onAddressChange, onCurrentUrlChange, syncNavigationState, webviewNode]);
+  }, [
+    browserZoomFactor,
+    getBrowserAddressForUrl,
+    onAddressChange,
+    onCurrentUrlChange,
+    syncNavigationState,
+    webviewNode,
+  ]);
 
   useEffect(() => {
     if (!isWebviewReady || !webviewNode?.setZoomFactor) return;
     webviewNode.setZoomFactor(browserZoomFactor);
   }, [browserZoomFactor, isWebviewReady, webviewNode]);
+
+  useEffect(() => {
+    if (!autoRefreshFilePath || !currentUrl) return;
+
+    let cleanup: (() => void) | undefined;
+    const watchedPath = autoRefreshFilePath;
+    window.electron?.artifact?.watchFile(watchedPath);
+    cleanup = window.electron?.artifact?.onFileChanged(({ filePath: changedPath }) => {
+      if (changedPath !== watchedPath) return;
+      if (autoRefreshTimeoutRef.current !== undefined) {
+        window.clearTimeout(autoRefreshTimeoutRef.current);
+      }
+      autoRefreshTimeoutRef.current = window.setTimeout(() => {
+        autoRefreshTimeoutRef.current = undefined;
+        webviewNodeRef.current?.reload?.();
+      }, 120);
+    });
+
+    return () => {
+      if (autoRefreshTimeoutRef.current !== undefined) {
+        window.clearTimeout(autoRefreshTimeoutRef.current);
+        autoRefreshTimeoutRef.current = undefined;
+      }
+      cleanup?.();
+      window.electron?.artifact?.unwatchFile(watchedPath);
+    };
+  }, [autoRefreshFilePath, currentUrl]);
 
   useEffect(() => {
     if (!currentUrl || !isWebviewReady || !webviewNode?.loadURL) return;
@@ -2197,11 +2756,29 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
   }, [currentUrl, isWebviewReady, webviewNode]);
 
   const handleNavigate = useCallback(() => {
+    const trimmedAddress = address.trim();
+    if (
+      autoRefreshFilePath &&
+      localHtmlPreviewUrl &&
+      trimmedAddress === autoRefreshFilePath
+    ) {
+      onCurrentUrlChange(localHtmlPreviewUrl);
+      onAddressChange(autoRefreshFilePath);
+      webviewNodeRef.current?.reload?.();
+      return;
+    }
+
     const nextUrl = normalizeBrowserUrl(address);
     if (!nextUrl) return;
     onCurrentUrlChange(nextUrl);
     onAddressChange(nextUrl);
-  }, [address, onAddressChange, onCurrentUrlChange]);
+  }, [
+    address,
+    autoRefreshFilePath,
+    localHtmlPreviewUrl,
+    onAddressChange,
+    onCurrentUrlChange,
+  ]);
 
   const handleOpenLocalService = useCallback(
     (service: LocalWebService) => {
@@ -2365,6 +2942,11 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
     }
   }, [currentUrl, isCapturingScreenshot, setTemporaryScreenshotStatus, webviewNode]);
 
+  const handleCaptureScreenshotFromMenu = useCallback(() => {
+    setIsBrowserMenuOpen(false);
+    void handleCaptureScreenshot();
+  }, [handleCaptureScreenshot]);
+
   const handleToggleAnnotation = useCallback(async () => {
     if (!webviewNode?.executeJavaScript || !webviewNode.capturePage || !currentUrl) return;
     if (isAnnotating) {
@@ -2436,8 +3018,8 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
   const hoveredToolbarLabel =
     hoveredToolbarAction === BrowserToolbarAction.Annotate
       ? t('artifactBrowserAnnotate')
-      : hoveredToolbarAction === BrowserToolbarAction.Screenshot
-        ? t('artifactBrowserScreenshot')
+      : hoveredToolbarAction === BrowserToolbarAction.Share
+        ? shareButtonTitle
         : hoveredToolbarAction === BrowserToolbarAction.OpenExternal
           ? t('artifactBrowserOpenExternal')
           : '';
@@ -2514,30 +3096,26 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
           </button>
         )}
         <div
-          ref={screenshotButtonRef}
+          ref={shareButtonRef}
           className="flex h-7 w-7 shrink-0 items-center justify-center"
-          onMouseEnter={() => setHoveredToolbarAction(BrowserToolbarAction.Screenshot)}
+          onMouseEnter={() => setHoveredToolbarAction(BrowserToolbarAction.Share)}
           onMouseLeave={() => setHoveredToolbarAction(null)}
         >
           <button
             type="button"
-            onClick={handleCaptureScreenshot}
-            disabled={!currentUrl || isCapturingScreenshot}
+            onClick={() => void onShare?.()}
+            disabled={!canShare || isSharing}
             className={`inline-flex h-7 w-7 items-center justify-center rounded transition-colors disabled:cursor-not-allowed disabled:opacity-35 ${
-              screenshotStatus === BrowserScreenshotStatus.Copied
-                ? 'text-primary hover:bg-surface'
-                : screenshotStatus === BrowserScreenshotStatus.Error
-                  ? 'text-red-500 hover:bg-surface'
-                  : 'text-secondary hover:bg-surface hover:text-foreground'
+              hasExistingShare
+                ? 'bg-primary/10 text-primary hover:bg-primary/20'
+                : canShare
+                ? 'text-secondary hover:bg-surface hover:text-foreground'
+                : 'text-secondary'
             }`}
-            aria-label={t('artifactBrowserScreenshot')}
-            title={screenshotButtonTitle}
+            aria-label={shareButtonTitle}
+            title={shareButtonTitle}
           >
-            {screenshotStatus === BrowserScreenshotStatus.Copied ? (
-              <ScreenshotCopiedIcon />
-            ) : (
-              <ScreenshotIcon />
-            )}
+            <ShareIcon />
           </button>
         </div>
         <div
@@ -2577,6 +3155,15 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
           ref={browserMenuRef}
           className="absolute right-3 top-10 z-40 w-56 rounded-lg border border-border bg-surface-raised p-2 text-sm text-foreground shadow-xl"
         >
+          <button
+            type="button"
+            onClick={handleCaptureScreenshotFromMenu}
+            disabled={!currentUrl || isCapturingScreenshot}
+            className="flex h-8 w-full items-center rounded-md px-2 text-left text-xs transition-colors hover:bg-surface disabled:cursor-not-allowed disabled:opacity-35"
+          >
+            {screenshotButtonTitle}
+          </button>
+          <div className="my-1 border-t border-border" />
           <button
             type="button"
             onClick={handleOpenBlankPage}
@@ -2883,37 +3470,6 @@ const AnnotateIcon = () => (
   </svg>
 );
 
-const ScreenshotIcon = () => (
-  <svg
-    width="14"
-    height="14"
-    viewBox="0 0 16 16"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.5"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <path d="M5.25 4.25l.55-1.1A1.5 1.5 0 017.14 2.3h1.72a1.5 1.5 0 011.34.85l.55 1.1h1.75A1.5 1.5 0 0114 5.75v6A1.5 1.5 0 0112.5 13h-9A1.5 1.5 0 012 11.75v-6a1.5 1.5 0 011.5-1.5h1.75z" />
-    <circle cx="8" cy="8.6" r="2.3" />
-  </svg>
-);
-
-const ScreenshotCopiedIcon = () => (
-  <svg
-    width="14"
-    height="14"
-    viewBox="0 0 16 16"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.6"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <path d="M3.5 8.2l3 3 6-6.4" />
-  </svg>
-);
-
 const ChevronLeftIcon = () => (
   <svg
     width="14"
@@ -3000,6 +3556,24 @@ const MoreHorizontalToolbarIcon = () => (
     <circle cx="4" cy="8.6" r="1.15" />
     <circle cx="8" cy="8.6" r="1.15" />
     <circle cx="12" cy="8.6" r="1.15" />
+  </svg>
+);
+
+const ContentViewIcon = () => (
+  <svg
+    width="14"
+    height="14"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <path d="M2.5 3.5h11" />
+    <path d="M2.5 8h11" />
+    <path d="M2.5 12.5h6" />
   </svg>
 );
 

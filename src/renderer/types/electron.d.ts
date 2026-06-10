@@ -1,6 +1,10 @@
 import type { OpenClawSessionPatch } from '../../common/openclawSession';
 import type { AppUpdateCheckResult, AppUpdateRuntimeState } from '../../shared/appUpdate/constants';
 import type {
+  AsrRecognizeRequest,
+  AsrRecognizeResult,
+} from '../../shared/asr/constants';
+import type {
   BrowserDiagnosticResult,
   BrowserRuntimeProfile,
 } from '../../shared/browserWebAccess/constants';
@@ -8,7 +12,11 @@ import type {
   CoworkContextUsageFailureReason,
   CoworkContextUsageSource,
 } from '../../shared/cowork/constants';
-import type { HtmlShareAccessMode, HtmlShareStatus } from '../../shared/htmlShare/constants';
+import type {
+  HtmlShareAccessMode,
+  HtmlShareConfigurableStatus,
+  HtmlShareStatus,
+} from '../../shared/htmlShare/constants';
 import type {
   InstalledKitRecord,
   KitReference,
@@ -19,6 +27,10 @@ import type {
   ListLocalWebServicesOptions,
   LocalWebService,
 } from '../../shared/localWebServices/constants';
+import type {
+  OpenClawEnginePhase as SharedOpenClawEnginePhase,
+  OpenClawGatewayRepairErrorCode,
+} from '../../shared/openclawEngine/constants';
 import type { ShellOpenFailureReason } from '../../shared/shell/constants';
 interface ApiResponse {
   ok: boolean;
@@ -181,13 +193,7 @@ interface CoworkApiConfig {
   apiType?: 'anthropic' | 'openai';
 }
 
-type OpenClawEnginePhase =
-  | 'not_installed'
-  | 'installing'
-  | 'ready'
-  | 'starting'
-  | 'running'
-  | 'error';
+type OpenClawEnginePhase = SharedOpenClawEnginePhase;
 
 interface OpenClawEngineStatus {
   phase: OpenClawEnginePhase;
@@ -195,6 +201,16 @@ interface OpenClawEngineStatus {
   progressPercent?: number;
   message?: string;
   canRetry: boolean;
+}
+
+interface OpenClawGatewayRepairResult {
+  success: boolean;
+  status?: OpenClawEngineStatus;
+  originalPath?: string;
+  backupPath?: string;
+  error?: string;
+  errorCode?: OpenClawGatewayRepairErrorCode;
+  recoverable?: boolean;
 }
 
 interface OpenClawSessionPolicyConfig {
@@ -264,6 +280,25 @@ interface McpServerConfigIPC {
   isBuiltIn: boolean;
   githubUrl?: string;
   registryId?: string;
+  launchResolution?: {
+    serverId: string;
+    resolverKind: 'npx' | 'uvx' | 'python' | 'raw';
+    sourceFingerprint: string;
+    status: 'pending' | 'installing' | 'ready' | 'failed' | 'unsupported';
+    packageName?: string;
+    requestedVersion?: string;
+    resolvedVersion?: string;
+    installDir?: string;
+    command?: string;
+    args?: string[];
+    env?: Record<string, string>;
+    error?: string;
+    installedAt?: number;
+    resolvedAt?: number;
+    lastProbeAt?: number;
+    lastProbeStatus?: string;
+    updatedAt: number;
+  };
   createdAt: number;
   updatedAt: number;
 }
@@ -320,8 +355,11 @@ interface HtmlShareResult {
   shareCode?: string;
   shareCodeUnavailable?: boolean;
   status?: HtmlShareStatus;
+  moderationStatus?: string;
   updatedAt?: string;
   contentUpdatedAt?: string;
+  disabledAt?: string | null;
+  disabledReason?: string | null;
   error?: string;
   code?: number;
   warnings?: string[];
@@ -401,11 +439,15 @@ interface IElectronAPI {
       id: string;
       enabled: boolean;
     }) => Promise<{ success: boolean; servers?: McpServerConfigIPC[]; error?: string }>;
+    retryLaunchResolution: (
+      id: string,
+    ) => Promise<{ success: boolean; servers?: McpServerConfigIPC[]; error?: string }>;
     fetchMarketplace: () => Promise<{
       success: boolean;
       data?: McpMarketplaceData;
       error?: string;
     }>;
+    onChanged: (callback: () => void) => () => void;
   };
   kits: {
     fetchStore: () => Promise<{ success: boolean; data?: string; error?: string }>;
@@ -502,6 +544,7 @@ interface IElectronAPI {
         status?: OpenClawEngineStatus;
         error?: string;
       }>;
+      repairGatewayState: () => Promise<OpenClawGatewayRepairResult>;
       onProgress: (callback: (status: OpenClawEngineStatus) => void) => () => void;
     };
     sessionPolicy: {
@@ -550,8 +593,9 @@ interface IElectronAPI {
       kitIds?: string[];
       kitReferences?: KitReference[];
       resolvedKitCapabilities?: ResolvedKitCapabilities;
+      selectedTextSnippets?: Array<{ id: string; text: string; sourceMessageId?: string; sourceMessageType?: 'assistant' | 'artifact_markdown' | 'artifact_text'; sourceId?: string; sourceType?: 'assistant' | 'artifact_markdown' | 'artifact_text'; sourceTitle?: string; sourcePath?: string; artifactId?: string; createdAt: number; startOffset?: number; endOffset?: number }>;
       agentId?: string;
-      imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
+      imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string; sizeBytes?: number; localPath?: string; previewMimeType?: string; previewBase64Data?: string }>;
       mediaSelection?: { mode: string; modelId?: string; modelName?: string; imageModelId?: string; videoModelId?: string };
       mediaReferences?: Array<{ token: string; mediaType: string; index: number; fileId: string; fileName: string; mimeType: string; localPath?: string; remoteUrl?: string; dataUrl?: string; role?: string }>;
     }) => Promise<{
@@ -570,7 +614,8 @@ interface IElectronAPI {
       kitIds?: string[];
       kitReferences?: KitReference[];
       resolvedKitCapabilities?: ResolvedKitCapabilities;
-      imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string }>;
+      selectedTextSnippets?: Array<{ id: string; text: string; sourceMessageId?: string; sourceMessageType?: 'assistant' | 'artifact_markdown' | 'artifact_text'; sourceId?: string; sourceType?: 'assistant' | 'artifact_markdown' | 'artifact_text'; sourceTitle?: string; sourcePath?: string; artifactId?: string; createdAt: number; startOffset?: number; endOffset?: number }>;
+      imageAttachments?: Array<{ name: string; mimeType: string; base64Data: string; sizeBytes?: number; localPath?: string; previewMimeType?: string; previewBase64Data?: string }>;
       mediaSelection?: { mode: string; modelId?: string; modelName?: string; imageModelId?: string; videoModelId?: string };
       mediaReferences?: Array<{ token: string; mediaType: string; index: number; fileId: string; fileName: string; mimeType: string; localPath?: string; remoteUrl?: string; dataUrl?: string; role?: string }>;
     }) => Promise<{
@@ -818,6 +863,7 @@ interface IElectronAPI {
     ) => Promise<ShellActionResponse>;
   };
   clipboard: {
+    writeText: (text: string) => Promise<{ success: boolean; error?: string }>;
     writeImageFromFile: (filePath: string) => Promise<{ success: boolean; error?: string }>;
     writeImageFromDataUrl: (dataUrl: string) => Promise<{ success: boolean; error?: string }>;
   };
@@ -827,7 +873,6 @@ interface IElectronAPI {
       artifactId: string;
       filePath: string;
       title: string;
-      accessMode: HtmlShareAccessMode;
     }) => Promise<HtmlShareResult>;
     updateFromHtmlFile: (options: {
       shareId: string;
@@ -835,16 +880,20 @@ interface IElectronAPI {
       artifactId: string;
       filePath: string;
       title: string;
-      accessMode: HtmlShareAccessMode;
+      currentStatus?: HtmlShareStatus;
     }) => Promise<HtmlShareResult>;
     getByHtmlFile: (options: {
       filePath: string;
     }) => Promise<{ success: boolean; share?: HtmlShareResult | null; error?: string; code?: number }>;
-    disable: (shareId: string) => Promise<{ success: boolean; error?: string }>;
+    updateStatus: (options: {
+      shareId: string;
+      status: HtmlShareConfigurableStatus;
+    }) => Promise<HtmlShareResult>;
+    disable: (shareId: string) => Promise<HtmlShareResult>;
     get: (shareId: string) => Promise<{ success: boolean; share?: unknown; error?: string }>;
   };
-  voice: {
-    triggerDictation: () => Promise<{ success: boolean; error?: string }>;
+  asr: {
+    recognize: (options: AsrRecognizeRequest) => Promise<AsrRecognizeResult>;
   };
   artifact: {
     watchFile: (filePath: string) => Promise<void>;
@@ -1262,6 +1311,21 @@ interface IElectronAPI {
         apiBaseUrl?: string;
         apiKey?: string;
       }>;
+    }>;
+    getPricingCatalog: () => Promise<{
+      success: boolean;
+      textModels?: Array<{
+        modelId: string;
+        modelName: string;
+        provider?: string;
+        providerLabel?: string;
+        description?: string;
+        supportsImage?: boolean;
+        supportsThinking?: boolean;
+        contextWindow?: number | null;
+        costMultiplier?: number;
+      }>;
+      error?: string;
     }>;
     getProfileSummary: () => Promise<{ success: boolean; data?: ProfileSummaryData }>;
     getPendingCallback: () => Promise<string | null>;

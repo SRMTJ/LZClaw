@@ -1,3 +1,5 @@
+import { ProviderName } from '@shared/providers';
+
 import { store } from '../store';
 import {
   setAuthLoading,
@@ -19,6 +21,72 @@ interface AuthStateRefreshResult {
   isLoggedIn: boolean;
   user: UserProfile | null;
   quota: UserQuota | null;
+}
+
+export interface PricingCatalogTextModel {
+  modelId?: string;
+  modelName?: string;
+  provider?: string;
+  providerLabel?: string;
+  description?: string;
+  supportsImage?: boolean;
+  supportsThinking?: boolean;
+  contextWindow?: number | null;
+  costMultiplier?: number;
+}
+
+export interface PricingCatalogResponse {
+  textModels?: PricingCatalogTextModel[];
+  imageModels?: unknown[];
+  videoModels?: unknown[];
+}
+
+const readString = (value: unknown): string => (
+  typeof value === 'string' ? value.trim() : ''
+);
+
+const readPositiveNumber = (value: unknown): number | undefined => (
+  typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? value
+    : undefined
+);
+
+export function mapPricingCatalogTextModelsToServerModels(
+  textModels: PricingCatalogTextModel[],
+): Model[] {
+  return textModels.flatMap((model): Model[] => {
+    const modelId = readString(model.modelId);
+    if (!modelId) return [];
+
+    const modelName = readString(model.modelName) || modelId;
+    const provider = readString(model.providerLabel)
+      || readString(model.provider)
+      || 'LobsterAI';
+    const contextWindow = readPositiveNumber(model.contextWindow);
+    const costMultiplier = readPositiveNumber(model.costMultiplier);
+
+    return [{
+      id: modelId,
+      name: modelName,
+      provider,
+      providerKey: ProviderName.LobsteraiServer,
+      isServerModel: true,
+      supportsImage: model.supportsImage === true,
+      supportsThinking: model.supportsThinking === true,
+      description: readString(model.description) || undefined,
+      costMultiplier,
+      contextWindow,
+      accessible: false,
+    }];
+  });
+}
+
+export function mapPricingCatalogToPublicServerModels(
+  catalog: PricingCatalogResponse,
+): Model[] {
+  return mapPricingCatalogTextModelsToServerModels(
+    Array.isArray(catalog.textModels) ? catalog.textModels : [],
+  );
 }
 
 class AuthService {
@@ -119,6 +187,7 @@ class AuthService {
     if (options.clearOnFailure) {
       store.dispatch(setLoggedOut());
       store.dispatch(clearServerModels());
+      await this.loadPublicPricingCatalogModels();
     }
 
     const current = store.getState().auth;
@@ -136,6 +205,7 @@ class AuthService {
     await window.electron.auth.logout();
     store.dispatch(setLoggedOut());
     store.dispatch(clearServerModels());
+    await this.loadPublicPricingCatalogModels();
   }
 
   /**
@@ -229,6 +299,24 @@ class AuthService {
       }
     } catch {
       // ignore — server models are optional
+    }
+  }
+
+  /**
+   * Load public pricing catalog models for unauthenticated read-only display.
+   */
+  private async loadPublicPricingCatalogModels() {
+    try {
+      const catalogResult = await window.electron.auth.getPricingCatalog();
+      if (!catalogResult.success || !catalogResult.textModels) {
+        return;
+      }
+      const serverModels = mapPricingCatalogToPublicServerModels({
+        textModels: catalogResult.textModels,
+      });
+      store.dispatch(setServerModels(serverModels));
+    } catch {
+      // ignore — public catalog is optional
     }
   }
 }

@@ -11,6 +11,7 @@ export interface Model {
   openClawProviderId?: string; // OpenClaw runtime provider id
   supportsImage?: boolean;
   supportsThinking?: boolean;
+  contextWindow?: number;
   isServerModel?: boolean; // 是否为服务端套餐模型
   serverApiFormat?: string; // 服务端模型的 API 格式 ("openai" | "anthropic")
   serverApiBaseUrl?: string; // 服务端模型指定的直连 base URL（可选）
@@ -37,6 +38,21 @@ export function isSameModelIdentity(
   }
   // 兼容旧配置：缺失 providerKey 时回退到 id 匹配
   return true;
+}
+
+function isModelAccessible(model: Model | undefined): model is Model {
+  return !!model && model.accessible !== false;
+}
+
+function selectPreferredAccessibleModel(
+  allAvailableModels: Model[],
+  currentModel: Model,
+): Model {
+  const matchedModel = allAvailableModels.find(m => isSameModelIdentity(m, currentModel));
+  if (isModelAccessible(matchedModel)) {
+    return matchedModel;
+  }
+  return allAvailableModels.find(isModelAccessible) ?? matchedModel ?? allAvailableModels[0] ?? currentModel;
 }
 
 // 从 providers 配置中构建初始可用模型列表
@@ -84,13 +100,16 @@ export function selectAgentSelectedModel(
   agentModelRef: string,
 ): Model {
   const override = modelState.selectedModelByAgent[agentId];
-  if (override) return override;
+  if (isModelAccessible(override)) return override;
   const trimmed = agentModelRef.trim();
   if (trimmed) {
     const resolved = resolveOpenClawModelRef(trimmed, modelState.availableModels);
-    if (resolved) return resolved;
+    if (resolved && isModelAccessible(resolved)) return resolved;
   }
-  return modelState.defaultSelectedModel;
+  if (isModelAccessible(modelState.defaultSelectedModel)) {
+    return modelState.defaultSelectedModel;
+  }
+  return modelState.availableModels.find(isModelAccessible) ?? modelState.defaultSelectedModel;
 }
 
 /**
@@ -104,7 +123,7 @@ function syncSelectedModelByAgent(
   for (const agentId of Object.keys(selectedModelByAgent)) {
     const agentModel = selectedModelByAgent[agentId];
     const matched = allAvailableModels.find(m => isSameModelIdentity(m, agentModel));
-    if (matched) {
+    if (isModelAccessible(matched)) {
       selectedModelByAgent[agentId] = matched;
     } else {
       delete selectedModelByAgent[agentId];
@@ -127,9 +146,11 @@ const modelSlice = createSlice({
   initialState,
   reducers: {
     setSelectedModel: (state, action: PayloadAction<{ agentId: string; model: Model }>) => {
+      if (action.payload.model.accessible === false) return;
       state.selectedModelByAgent[action.payload.agentId] = action.payload.model;
     },
     setDefaultSelectedModel: (state, action: PayloadAction<Model>) => {
+      if (action.payload.accessible === false) return;
       state.defaultSelectedModel = action.payload;
     },
     clearAgentSelectedModel: (state, action: PayloadAction<string>) => {
@@ -143,12 +164,10 @@ const modelSlice = createSlice({
       availableModels = state.availableModels;
       // 同步 defaultSelectedModel
       if (state.availableModels.length > 0) {
-        const matchedModel = state.availableModels.find(m => isSameModelIdentity(m, state.defaultSelectedModel));
-        if (matchedModel) {
-          state.defaultSelectedModel = matchedModel;
-        } else {
-          state.defaultSelectedModel = state.availableModels[0];
-        }
+        state.defaultSelectedModel = selectPreferredAccessibleModel(
+          state.availableModels,
+          state.defaultSelectedModel,
+        );
       }
       // 同步 per-agent 选中模型
       syncSelectedModelByAgent(state.selectedModelByAgent, state.availableModels);
@@ -160,13 +179,10 @@ const modelSlice = createSlice({
       availableModels = state.availableModels;
       // 同步 defaultSelectedModel（优先选择 accessible 的模型）
       if (state.availableModels.length > 0) {
-        const matchedModel = state.availableModels.find(m => isSameModelIdentity(m, state.defaultSelectedModel));
-        if (matchedModel && matchedModel.accessible !== false) {
-          state.defaultSelectedModel = matchedModel;
-        } else {
-          const firstAccessible = state.availableModels.find(m => m.accessible !== false);
-          state.defaultSelectedModel = firstAccessible ?? state.availableModels[0];
-        }
+        state.defaultSelectedModel = selectPreferredAccessibleModel(
+          state.availableModels,
+          state.defaultSelectedModel,
+        );
       }
       // 同步 per-agent 选中模型
       syncSelectedModelByAgent(state.selectedModelByAgent, state.availableModels);
@@ -176,7 +192,8 @@ const modelSlice = createSlice({
       availableModels = state.availableModels;
       // 如果 defaultSelectedModel 是服务端模型，切换到第一个可用模型
       if (state.defaultSelectedModel.isServerModel && state.availableModels.length > 0) {
-        state.defaultSelectedModel = state.availableModels[0];
+        state.defaultSelectedModel = state.availableModels.find(isModelAccessible)
+          ?? state.defaultSelectedModel;
       }
       // 同步 per-agent 选中模型
       syncSelectedModelByAgent(state.selectedModelByAgent, state.availableModels);

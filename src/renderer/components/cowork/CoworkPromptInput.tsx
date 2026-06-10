@@ -1,8 +1,15 @@
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { ArrowUpIcon, FolderIcon } from '@heroicons/react/24/solid';
+import { ProviderName } from '@shared/providers';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
+import {
+  COWORK_IMAGE_ATTACHMENT_PREVIEW_FALLBACK_MAX_BYTES,
+  formatCoworkImageAttachmentLimit,
+  validateCoworkImageAttachmentSize,
+} from '../../../shared/cowork/imageAttachments';
+import type { CoworkSelectedTextSnippet } from '../../../shared/cowork/selectedText';
 import { agentService } from '../../services/agent';
 import { configService } from '../../services/config';
 import { coworkService } from '../../services/cowork';
@@ -14,10 +21,13 @@ import { selectDraftPrompts } from '../../store/selectors/coworkSelectors';
 import {
   addDraftAttachment,
   clearDraftAttachments,
+  clearDraftSelectedTextSnippets,
   type DraftAttachment,
+  removeDraftSelectedTextSnippet,
   setDraftAttachments,
   setDraftKitIds,
   setDraftPrompt,
+  setDraftSelectedTextSnippets,
   setDraftSkillIds,
   updateCurrentSessionModelOverride,
 } from '../../store/slices/coworkSlice';
@@ -39,10 +49,11 @@ import SkillIcon from '../icons/SkillIcon';
 import TaskPauseIcon from '../icons/TaskPauseIcon';
 import XMarkIcon from '../icons/XMarkIcon';
 import { ActiveKitBadge, KitsButton } from '../kits';
-import ModelSelector from '../ModelSelector';
+import ModelSelector, { ModelAccessPromptKind, ModelAccessPromptModal } from '../ModelSelector';
 import { ActiveSkillBadge, SkillsPopover } from '../skills';
 import { resolveAgentModelSelection, resolveEffectiveModel, useAgentSelectedModel } from './agentModelSelection';
 import AttachmentCard from './AttachmentCard';
+import { CoworkUiEvent } from './constants';
 import FolderSelectorPopover from './FolderSelectorPopover';
 import { getCaretPixelPosition } from './getCaretPosition';
 import MediaMentionPicker from './MediaMentionPicker';
@@ -57,12 +68,18 @@ import {
 import MediaModelPicker from './MediaModelPicker';
 import { buildSelectedKitContextPrompt } from './selectedKitContextPrompt';
 import { buildSelectedSkillRoutingPrompt } from './selectedSkillRoutingPrompt';
+import SelectedTextSnippetBadge from './SelectedTextSnippetBadge';
 import { usePersistAgentModelSelection } from './usePersistAgentModelSelection';
+import { useCoworkVoiceInput } from './voiceInput/useCoworkVoiceInput';
+import VoiceInputButton from './voiceInput/VoiceInputButton';
+import VoiceInputRecordingStatus from './voiceInput/VoiceInputRecordingStatus';
 
 // CoworkAttachment is aliased from the Redux-persisted DraftAttachment type
 // so that attachment state survives view switches (cowork ↔ skills, etc.)
 type CoworkAttachment = DraftAttachment;
 
+const IMAGE_ATTACHMENT_PREVIEW_MAX_DIMENSION = 512;
+const IMAGE_ATTACHMENT_PREVIEW_QUALITY = 0.78;
 
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.tiff', '.tif', '.ico', '.avif']);
 
@@ -81,6 +98,35 @@ const extractBase64FromDataUrl = (dataUrl: string): { mimeType: string; base64Da
   const match = /^data:(.+);base64,(.*)$/.exec(dataUrl);
   if (!match) return null;
   return { mimeType: match[1], base64Data: match[2] };
+};
+
+const showToast = (message: string): void => {
+  window.dispatchEvent(new CustomEvent('app:showToast', { detail: message }));
+};
+
+const createImagePreviewDataUrl = async (dataUrl: string): Promise<string> => {
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('Failed to load image preview'));
+    image.src = dataUrl;
+  });
+
+  const scale = Math.min(
+    1,
+    IMAGE_ATTACHMENT_PREVIEW_MAX_DIMENSION / Math.max(img.naturalWidth || img.width, img.naturalHeight || img.height, 1),
+  );
+  const width = Math.max(1, Math.round((img.naturalWidth || img.width || 1) * scale));
+  const height = Math.max(1, Math.round((img.naturalHeight || img.height || 1) * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    throw new Error('Failed to create image preview canvas');
+  }
+  ctx.drawImage(img, 0, 0, width, height);
+  return canvas.toDataURL('image/jpeg', IMAGE_ATTACHMENT_PREVIEW_QUALITY);
 };
 
 const getFileNameFromPath = (path: string): string => {
@@ -113,6 +159,7 @@ const truncateDisplayText = (value: string, maxLength: number): string => {
 };
 
 const getSendShortcutLabel = (value: string): string => {
+  if (!value) return i18nService.t('shortcutNotSet');
   const option = SEND_SHORTCUT_OPTIONS.find(o => o.value === value);
   if (!option) return value;
   return isMacPlatform ? option.labelMac : option.label;
@@ -146,6 +193,8 @@ export interface CoworkPromptInputRef {
   setValue: (value: string) => void;
   /** 设置图片附件（用于重新编辑消息时还原图片） */
   setImageAttachments: (images: CoworkImageAttachment[]) => void;
+  /** 设置选中的 assistant 文本片段（用于重新编辑消息时还原上下文） */
+  setSelectedTextSnippets: (snippets: CoworkSelectedTextSnippet[]) => void;
   /** 插入浏览器注释截图和注释文本 */
   insertBrowserAnnotation: (annotation: BrowserAnnotationPayload) => void;
   /** 聚焦输入框 */
@@ -153,12 +202,12 @@ export interface CoworkPromptInputRef {
 }
 
 interface CoworkPromptInputProps {
-  onSubmit: (prompt: string, skillPrompt?: string, imageAttachments?: CoworkImageAttachment[], mediaReferences?: MediaAttachmentRef[]) => boolean | void | Promise<boolean | void>;
+  onSubmit: (prompt: string, skillPrompt?: string, imageAttachments?: CoworkImageAttachment[], mediaReferences?: MediaAttachmentRef[], selectedTextSnippets?: CoworkSelectedTextSnippet[]) => boolean | void | Promise<boolean | void>;
   onStop?: () => void;
   isStreaming?: boolean;
   placeholder?: string;
   disabled?: boolean;
-  size?: 'normal' | 'large';
+  size?: 'normal' | 'large' | 'compact';
   workingDirectory?: string;
   onWorkingDirectoryChange?: (dir: string) => void;
   showFolderSelector?: boolean;
@@ -204,11 +253,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const draftKey = sessionId || '__home__';
     const draftPrompt = useSelector((state: RootState) => selectDraftPrompts(state)[draftKey] || '');
     const attachments = useSelector((state: RootState) => state.cowork.draftAttachments[draftKey] || EMPTY_ATTACHMENTS) as CoworkAttachment[];
+    const selectedTextSnippets = useSelector((state: RootState) => state.cowork.draftSelectedTextSnippets[draftKey] || []);
     const currentAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
     const agents = useSelector((state: RootState) => state.agent.agents);
     const coworkAgentEngine = useSelector((state: RootState) => state.cowork.config.agentEngine);
     const availableModels = useSelector((state: RootState) => state.model.availableModels);
     const currentSession = useSelector((state: RootState) => state.cowork.currentSession);
+    const isLoggedIn = useSelector((state: RootState) => state.auth.isLoggedIn);
     const [value, setValue] = useState(draftPrompt);
     const [showFolderMenu, setShowFolderMenu] = useState(false);
     const [showFolderRequiredWarning, setShowFolderRequiredWarning] = useState(false);
@@ -225,6 +276,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const [textareaScrollTop, setTextareaScrollTop] = useState(0);
     const [showAddMenu, setShowAddMenu] = useState(false);
     const [showSkillsPopover, setShowSkillsPopover] = useState(false);
+    const [modelAccessPrompt, setModelAccessPrompt] = useState<ModelAccessPromptKind | null>(null);
+    const [showVoiceLoginPrompt, setShowVoiceLoginPrompt] = useState(false);
 
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const addMenuButtonRef = useRef<HTMLButtonElement>(null);
@@ -236,7 +289,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const readOnlyContextGroupRef = useRef<HTMLDivElement>(null);
     const dragDepthRef = useRef(0);
     const warningTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const skillPopoverCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const modelPatchRequestIdRef = useRef(0);
 
   // 暴露方法给父组件
@@ -254,12 +306,15 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     },
     setImageAttachments: (images: CoworkImageAttachment[]) => {
       const newAttachments: CoworkAttachment[] = images.map((img, idx) => ({
-        path: `inline:${img.name}:reedit-${Date.now()}-${idx}`,
+        path: img.localPath ?? `inline:${img.name}:reedit-${Date.now()}-${idx}`,
         name: img.name,
         isImage: true,
         dataUrl: `data:${img.mimeType};base64,${img.base64Data}`,
       }));
       dispatch(setDraftAttachments({ draftKey, attachments: newAttachments }));
+    },
+    setSelectedTextSnippets: (snippets: CoworkSelectedTextSnippet[]) => {
+      dispatch(setDraftSelectedTextSnippets({ draftKey, snippets }));
     },
     insertBrowserAnnotation: (annotation) => {
       const timestamp = Date.now();
@@ -342,17 +397,20 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     engine: coworkAgentEngine,
   });
 
-  const isLarge = size === 'large';
+  const isCompact = size === 'compact';
+  const isLarge = size === 'large' || isCompact;
   const useHomeContextLayout = isLarge && showAgentSelector;
-  const useCompactSendButton = isLarge && (useHomeContextLayout || showReadOnlyContext);
+  const useCompactSendButton = isLarge && (useHomeContextLayout || showReadOnlyContext || isCompact);
   const hasActiveContext = hasActiveSkills || hasActiveKits;
   const hasAttachments = attachments.length > 0;
-  const minHeight = isLarge
-    ? useHomeContextLayout
-      ? hasAttachments ? 34 : hasActiveContext ? 36 : 52
-      : hasAttachments ? 38 : hasActiveContext ? 44 : 60
-    : 24;
-  const maxHeight = isLarge ? 200 : 200;
+  const minHeight = isCompact
+    ? hasAttachments ? 30 : hasActiveContext ? 30 : 28
+    : isLarge
+      ? useHomeContextLayout
+        ? hasAttachments ? 34 : hasActiveContext ? 36 : 52
+        : hasAttachments ? 38 : hasActiveContext ? 44 : 60
+      : 24;
+  const maxHeight = isCompact ? 96 : 200;
 
   const effectiveSelectedModel = resolveEffectiveModel({
     sessionId,
@@ -360,6 +418,53 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     globalSelectedModel: currentAgentSelectedModel,
   });
   const modelSupportsImage = !!effectiveSelectedModel?.supportsImage;
+
+  const resolveSubmitModelAccessPrompt = useCallback((): ModelAccessPromptKind | null => {
+    const hasAccessibleUserModel = availableModels.some(
+      model => !model.isServerModel && model.accessible !== false
+    );
+    if (!isLoggedIn && !hasAccessibleUserModel) {
+      return ModelAccessPromptKind.Login;
+    }
+    if (
+      effectiveSelectedModel?.providerKey === ProviderName.LobsteraiServer
+      && effectiveSelectedModel.accessible === false
+    ) {
+      return isLoggedIn ? ModelAccessPromptKind.Subscribe : ModelAccessPromptKind.Login;
+    }
+    return null;
+  }, [
+    availableModels,
+    effectiveSelectedModel?.accessible,
+    effectiveSelectedModel?.providerKey,
+    isLoggedIn,
+  ]);
+
+  const {
+    handleVoiceInput,
+    isVoiceRecording,
+    isVoiceRecognizing,
+    recordingElapsedSeconds,
+  } = useCoworkVoiceInput({
+    draftKey,
+    value,
+    setValue,
+    textareaRef,
+    minHeight,
+    maxHeight,
+    isLoggedIn,
+    disabled,
+    isStreaming,
+  });
+
+  const handleVoiceInputClick = useCallback(() => {
+    if (disabled || isStreaming) return;
+    if (!isLoggedIn) {
+      setShowVoiceLoginPrompt(true);
+      return;
+    }
+    void handleVoiceInput();
+  }, [disabled, handleVoiceInput, isLoggedIn, isStreaming]);
 
   // Load skills on mount
   useEffect(() => {
@@ -396,10 +501,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       if (detail?.text !== undefined) {
         setValue(detail.text);
         dispatch(clearDraftAttachments(draftKey));
+        dispatch(clearDraftSelectedTextSnippets(draftKey));
         setImageVisionHint(false);
       } else if (shouldClear) {
         setValue('');
         dispatch(clearDraftAttachments(draftKey));
+        dispatch(clearDraftSelectedTextSnippets(draftKey));
         dispatch(setDraftKitIds({ draftKey, kitIds: [] }));
         dispatch(setActiveKitIds([]));
         setImageVisionHint(false);
@@ -408,9 +515,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         textareaRef.current?.focus();
       });
     };
-    window.addEventListener('cowork:focus-input', handleFocusInput);
+    window.addEventListener(CoworkUiEvent.FocusInput, handleFocusInput);
     return () => {
-      window.removeEventListener('cowork:focus-input', handleFocusInput);
+      window.removeEventListener(CoworkUiEvent.FocusInput, handleFocusInput);
       if (warningTimerRef.current) clearTimeout(warningTimerRef.current);
     };
   }, [dispatch, draftKey]);
@@ -473,12 +580,14 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       const target = event.target as Node;
       if (!addMenuButtonRef.current?.contains(target) && !addMenuRef.current?.contains(target)) {
         setShowAddMenu(false);
+        setShowSkillsPopover(false);
       }
     };
 
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setShowAddMenu(false);
+        setShowSkillsPopover(false);
       }
     };
 
@@ -492,21 +601,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
   useEffect(() => {
     if (!showAddMenu) {
-      if (skillPopoverCloseTimerRef.current) {
-        clearTimeout(skillPopoverCloseTimerRef.current);
-        skillPopoverCloseTimerRef.current = null;
-      }
       setShowSkillsPopover(false);
     }
   }, [showAddMenu]);
-
-  useEffect(() => {
-    return () => {
-      if (skillPopoverCloseTimerRef.current) {
-        clearTimeout(skillPopoverCloseTimerRef.current);
-      }
-    };
-  }, []);
 
   useEffect(() => {
     modelPatchRequestIdRef.current += 1;
@@ -558,6 +655,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   const mediaMentionSegments = useMemo(
     () => buildMediaMentionSegments(value, mediaLabels),
     [mediaLabels, value]
+  );
+  const hasMediaMentionHighlight = mediaMentionSegments.some(
+    segment => segment.kind === MediaMentionSegmentKind.Mention
   );
 
   const handleMentionSelect = useCallback((item: MediaLabel) => {
@@ -617,13 +717,17 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
     const trimmedValue = value.trim();
     if (isStreaming) {
-      window.dispatchEvent(new CustomEvent('app:showToast', {
-        detail: i18nService.t('coworkSessionStillRunning'),
-      }));
+      showToast(i18nService.t('coworkSessionStillRunning'));
       return;
     }
     if ((!trimmedValue && attachments.length === 0) || disabled || isPatchingModel) return;
     setShowFolderRequiredWarning(false);
+
+    const accessPrompt = resolveSubmitModelAccessPrompt();
+    if (accessPrompt) {
+      setModelAccessPrompt(accessPrompt);
+      return;
+    }
 
     // Get selected skill routing metadata, including skills from active kits.
     // OpenClaw loads SKILL.md files natively; do not inline full skill bodies here.
@@ -656,10 +760,54 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       if (attachment.isImage && attachment.dataUrl) {
         const extracted = extractBase64FromDataUrl(attachment.dataUrl);
         if (extracted) {
+          const sizeValidation = validateCoworkImageAttachmentSize({
+            base64Data: extracted.base64Data,
+          });
+          if (!sizeValidation.ok) {
+            console.warn('[CoworkPromptInput] image attachment exceeded single-file limit:', {
+              name: attachment.name,
+              mimeType: extracted.mimeType,
+              sizeBytes: sizeValidation.sizeBytes,
+              maxBytes: sizeValidation.maxBytes,
+              base64Length: extracted.base64Data.length,
+            });
+            showToast(
+              i18nService.t('coworkImageAttachmentTooLarge')
+                .replace('{name}', attachment.name)
+                .replace('{limit}', formatCoworkImageAttachmentLimit(sizeValidation.maxBytes)),
+            );
+            return;
+          }
+
+          let previewMimeType: string | undefined;
+          let previewBase64Data: string | undefined;
+          if (sizeValidation.sizeBytes > COWORK_IMAGE_ATTACHMENT_PREVIEW_FALLBACK_MAX_BYTES) {
+            try {
+              const previewDataUrl = await createImagePreviewDataUrl(attachment.dataUrl);
+              const preview = extractBase64FromDataUrl(previewDataUrl);
+              if (preview) {
+                previewMimeType = preview.mimeType;
+                previewBase64Data = preview.base64Data;
+              }
+            } catch (error) {
+              console.warn('[CoworkPromptInput] failed to create image preview:', error);
+            }
+            if (!previewBase64Data) {
+              showToast(
+                i18nService.t('coworkImageAttachmentPreviewFailed')
+                  .replace('{name}', attachment.name),
+              );
+              return;
+            }
+          }
+
           imageAtts.push({
             name: attachment.name,
             mimeType: extracted.mimeType,
             base64Data: extracted.base64Data,
+            sizeBytes: sizeValidation.sizeBytes,
+            ...(!attachment.path.startsWith('inline:') ? { localPath: attachment.path } : {}),
+            ...(previewMimeType && previewBase64Data ? { previewMimeType, previewBase64Data } : {}),
           });
         } else {
           console.warn('[CoworkPromptInput] handleSubmit: extractBase64FromDataUrl returned null', {
@@ -712,13 +860,14 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     // Resolve @media tokens into MediaAttachmentRef array
     const mediaReferences = extractMediaReferencesFromPrompt(finalPrompt, mediaLabels);
 
-    const result = await onSubmit(finalPrompt, skillPrompt, imageAtts.length > 0 ? imageAtts : undefined, mediaReferences.length > 0 ? mediaReferences : undefined);
+    const result = await onSubmit(finalPrompt, skillPrompt, imageAtts.length > 0 ? imageAtts : undefined, mediaReferences.length > 0 ? mediaReferences : undefined, selectedTextSnippets.length > 0 ? selectedTextSnippets : undefined);
     if (result === false) return;
     setValue('');
     dispatch(setDraftPrompt({ sessionId: draftKey, draft: '' }));
     dispatch(clearDraftAttachments(draftKey));
+    dispatch(clearDraftSelectedTextSnippets(draftKey));
     setImageVisionHint(false);
-  }, [value, isStreaming, disabled, isPatchingModel, onSubmit, activeSkillIds, skills, activeKitIds, marketplaceKits, installedKits, attachments, showFolderSelector, workingDirectory, dispatch, draftKey, effectiveSelectedModel?.id, modelSupportsImage, mediaLabels]);
+  }, [value, isStreaming, disabled, isPatchingModel, onSubmit, activeSkillIds, skills, activeKitIds, marketplaceKits, installedKits, attachments, showFolderSelector, workingDirectory, dispatch, draftKey, effectiveSelectedModel?.id, modelSupportsImage, mediaLabels, selectedTextSnippets, resolveSubmitModelAccessPrompt]);
 
   const handleSelectSkill = useCallback((skill: Skill) => {
     dispatch(toggleActiveSkill(skill.id));
@@ -782,6 +931,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
     let isSendCombo = false;
     switch (sendKey) {
+      case '':
+        isSendCombo = false;
+        break;
       case 'Enter':
         isSendCombo = !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey;
         break;
@@ -826,13 +978,17 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     }
   };
 
-  const containerClass = isLarge
+  const containerClass = isCompact
+    ? 'relative rounded-2xl border border-border bg-surface shadow-subtle'
+    : isLarge
     ? useHomeContextLayout
       ? 'relative rounded-2xl'
       : `relative rounded-2xl border border-border bg-surface ${showReadOnlyContext ? '' : 'shadow-card'}`
     : 'relative flex items-end gap-2 p-3 rounded-xl border border-border bg-surface';
 
-  const textareaClass = isLarge
+  const textareaClass = isCompact
+    ? `w-full resize-none bg-transparent px-4 pb-1.5 text-[14px] leading-[20px] text-foreground placeholder:dark:text-foregroundSecondary/60 placeholder:text-secondary/60 focus:outline-none min-h-[${minHeight}px] max-h-[${maxHeight}px] ${hasActiveContext ? 'pt-1.5' : 'pt-2'}`
+    : isLarge
     ? `w-full resize-none bg-transparent px-4 pb-2 text-foreground placeholder:dark:text-foregroundSecondary/60 placeholder:text-secondary/60 focus:outline-none min-h-[${minHeight}px] max-h-[${maxHeight}px] ${
       useHomeContextLayout
         ? `${hasActiveContext ? 'pt-2' : 'pt-3'} text-[14px] leading-[22px]`
@@ -1101,31 +1257,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   }, [addAttachment, effectiveSelectedModel, isAddingFile, disabled, isStreaming, modelSupportsImage]);
 
   const handleOpenAddMenu = useCallback(() => {
-    if (skillPopoverCloseTimerRef.current) {
-      clearTimeout(skillPopoverCloseTimerRef.current);
-      skillPopoverCloseTimerRef.current = null;
-    }
     setShowSkillsPopover(false);
     setShowAddMenu(prev => !prev);
   }, []);
 
   const handleOpenSkillsPopover = useCallback(() => {
-    if (skillPopoverCloseTimerRef.current) {
-      clearTimeout(skillPopoverCloseTimerRef.current);
-      skillPopoverCloseTimerRef.current = null;
-    }
     setShowAddMenu(true);
     setShowSkillsPopover(true);
-  }, []);
-
-  const handleScheduleCloseSkillsPopover = useCallback(() => {
-    if (skillPopoverCloseTimerRef.current) {
-      clearTimeout(skillPopoverCloseTimerRef.current);
-    }
-    skillPopoverCloseTimerRef.current = setTimeout(() => {
-      setShowSkillsPopover(false);
-      skillPopoverCloseTimerRef.current = null;
-    }, 320);
   }, []);
 
   const handleRemoveAttachment = useCallback((path: string) => {
@@ -1321,18 +1459,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           ref={addMenuRef}
           className="absolute bottom-full left-0 z-50 mb-2 w-48 rounded-xl border border-border bg-surface py-1 shadow-popover"
           role="menu"
-          onMouseEnter={() => {
-            if (skillPopoverCloseTimerRef.current) {
-              clearTimeout(skillPopoverCloseTimerRef.current);
-              skillPopoverCloseTimerRef.current = null;
-            }
-          }}
-          onMouseLeave={handleScheduleCloseSkillsPopover}
         >
           <button
             type="button"
             onClick={handleAddFile}
-            onMouseEnter={handleScheduleCloseSkillsPopover}
             disabled={disabled || isStreaming || isAddingFile}
             className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50"
             role="menuitem"
@@ -1340,14 +1470,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             <PaperClipIcon className="h-5 w-5 shrink-0 text-secondary" />
             <span className="min-w-0 truncate">{i18nService.t('coworkAddFile')}</span>
           </button>
-          {showSkillsPopover && (
-            <div
-              aria-hidden="true"
-              className="absolute bottom-0 left-[calc(100%-1px)] z-[55] h-80 w-40"
-              onMouseEnter={handleOpenSkillsPopover}
-              onMouseLeave={handleScheduleCloseSkillsPopover}
-            />
-          )}
           <button
             ref={skillMenuItemRef}
             type="button"
@@ -1374,8 +1496,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             anchorRef={skillMenuItemRef as React.RefObject<HTMLElement>}
             asSubmenu
             autoFocusSearch={false}
-            onMouseEnter={handleOpenSkillsPopover}
-            onMouseLeave={handleScheduleCloseSkillsPopover}
           />
         </div>
       )}
@@ -1391,6 +1511,20 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       />
     </div>
   ) : null;
+
+  const renderVoiceInputButton = (buttonClassName: string, iconClassName: string) => (
+    <VoiceInputButton
+      buttonClassName={buttonClassName}
+      iconClassName={iconClassName}
+      isLoggedIn={isLoggedIn}
+      disabled={disabled}
+      isStreaming={isStreaming}
+      isRecording={isVoiceRecording}
+      isRecognizing={isVoiceRecognizing}
+      onClick={handleVoiceInputClick}
+    />
+  );
+
   const largeInputToolActions = (
     <div className="flex items-center gap-0.5">
       {largeInputActions}
@@ -1399,6 +1533,15 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   );
   const largeSendButtonSizeClass = useCompactSendButton ? 'h-7 w-7' : 'h-8 w-8';
   const largeSendIconSizeClass = useCompactSendButton ? 'h-4 w-4' : 'h-[18px] w-[18px]';
+  const largeVoiceInputButton = !remoteManaged ? renderVoiceInputButton(
+    `flex ${largeSendButtonSizeClass} shrink-0 items-center justify-center rounded-lg`,
+    largeSendIconSizeClass,
+  ) : null;
+  const largeVoiceRecordingStatus = isVoiceRecording ? (
+    <div className="mx-1 hidden shrink-0 justify-end md:flex">
+      <VoiceInputRecordingStatus elapsedSeconds={recordingElapsedSeconds} />
+    </div>
+  ) : null;
 
   const largeSendButton = isStreaming ? (
     <button
@@ -1444,8 +1587,17 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   ) : null;
 
   const largeAttachmentPreview = hasAttachments ? (
-    <div className="max-h-[156px] overflow-y-auto px-4 pb-1 pt-3">
+    <div className={`${isCompact ? 'max-h-[88px] px-3 pb-1 pt-2' : 'max-h-[156px] px-4 pb-1 pt-3'} overflow-y-auto`}>
       {attachmentPreviewContent}
+    </div>
+  ) : null;
+
+  const selectedTextSnippetPreview = selectedTextSnippets.length > 0 ? (
+    <div className={`${isCompact ? 'px-3 pt-2' : 'px-4 pt-3'}`}>
+      <SelectedTextSnippetBadge
+        snippets={selectedTextSnippets}
+        onRemove={(snippetId) => dispatch(removeDraftSelectedTextSnippet({ draftKey, snippetId }))}
+      />
     </div>
   ) : null;
 
@@ -1457,7 +1609,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
   const activeSkillContextRow = isLarge && hasActiveContext ? (
     <div
-      className="flex cursor-text flex-wrap items-center gap-x-2 gap-y-1 px-4 pt-4"
+      className={`flex cursor-text flex-wrap items-center gap-x-2 gap-y-1 px-4 ${isCompact ? 'pt-2' : 'pt-4'}`}
       onClick={() => {
         if (!disabled) textareaRef.current?.focus();
       }}
@@ -1480,13 +1632,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     wrapperClassName?: string;
   }) => (
     <div className={wrapperClassName}>
-      {value && (
+      {value && hasMediaMentionHighlight && (
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute inset-0 overflow-hidden"
+          className="pointer-events-none absolute inset-0 z-0 overflow-hidden"
         >
           <div
-            className={`${textareaClass} whitespace-pre-wrap break-words text-foreground`}
+            className={`${textareaClass} whitespace-pre-wrap break-words text-transparent`}
             style={{
               ...style,
               transform: `translateY(-${textareaScrollTop}px)`,
@@ -1496,7 +1648,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               segment.kind === MediaMentionSegmentKind.Mention ? (
                 <span
                   key={`${segment.kind}-${idx}`}
-                  className="rounded bg-primary/15 text-primary"
+                  className="rounded bg-primary/15 text-transparent"
                 >
                   {segment.text}
                 </span>
@@ -1520,10 +1672,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         placeholder={textareaPlaceholderText}
         disabled={disabled}
         rows={rows}
-        className={textareaClass}
+        className={`${textareaClass} relative z-10`}
         style={{
           ...style,
-          color: value ? 'transparent' : undefined,
           caretColor: 'var(--lobster-text-primary)',
         }}
       />
@@ -1580,6 +1731,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   return (
     <div className="relative">
       {!isLarge && compactAttachmentPreview}
+      {!isLarge && selectedTextSnippetPreview}
       {imageVisionHint && (
         <div className="mb-2 flex items-start gap-1.5 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-2.5 py-1.5 text-xs text-amber-700 dark:text-amber-400">
           <ExclamationTriangleIcon className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
@@ -1612,6 +1764,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             <>
               <div className="relative z-10 rounded-2xl border border-border bg-surface shadow-card">
                 {largeAttachmentPreview}
+                {selectedTextSnippetPreview}
                 {activeSkillContextRow}
                 {renderMentionTextarea({
                   rows: 2,
@@ -1631,9 +1784,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   <div className="flex min-w-0 items-center gap-2">
                     {largeInputToolActions}
                   </div>
+                  {largeVoiceRecordingStatus}
                   <div className="flex shrink-0 items-center gap-2">
                     {contextUsageControl}
                     {largeModelSelector}
+                    {largeVoiceInputButton}
                     {largeSendButton}
                   </div>
                 </div>
@@ -1718,9 +1873,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           ) : (
             <>
               {largeAttachmentPreview}
+              {selectedTextSnippetPreview}
               {activeSkillContextRow}
               {renderMentionTextarea({
-                rows: 2,
+                rows: isCompact ? 1 : 2,
                 placeholder: textareaPlaceholder,
                 style: { minHeight: `${minHeight}px` },
               })}
@@ -1733,7 +1889,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   onDismiss={() => setMentionPickerOpen(false)}
                 />
               )}
-              <div className="flex items-center justify-between gap-3 px-4 pb-2 pt-1.5">
+              <div className={`flex items-center justify-between gap-3 px-4 ${isCompact ? 'pb-1.5 pt-0.5' : 'pb-2 pt-1.5'}`}>
                 <div className="flex min-w-0 items-center gap-2 relative">
                   {showFolderSelector && (
                     <>
@@ -1782,9 +1938,11 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   )}
                   {largeInputToolActions}
                 </div>
+                {largeVoiceRecordingStatus}
                 <div className="flex shrink-0 items-center gap-2">
                   {contextUsageControl}
                   {largeModelSelector}
+                  {largeVoiceInputButton}
                   {largeSendButton}
                 </div>
               </div>
@@ -1819,6 +1977,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 >
                   <PaperClipIcon className="h-5 w-5" />
                 </button>
+                {renderVoiceInputButton(
+                  'flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg',
+                  'h-5 w-5',
+                )}
               </div>
             )}
 
@@ -1858,6 +2020,21 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         )}
       </div>
       {readOnlyContextRow}
+      {modelAccessPrompt && (
+        <ModelAccessPromptModal
+          promptKind={modelAccessPrompt}
+          onClose={() => setModelAccessPrompt(null)}
+        />
+      )}
+      {showVoiceLoginPrompt && (
+        <ModelAccessPromptModal
+          promptKind={ModelAccessPromptKind.Login}
+          titleKey="voiceInputLoginTitle"
+          descriptionKey="voiceInputLoginDesc"
+          showLearnMore={false}
+          onClose={() => setShowVoiceLoginPrompt(false)}
+        />
+      )}
     </div>
   );
   }
