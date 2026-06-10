@@ -23,6 +23,7 @@ export type CoworkContinuityCapsule = {
   recentUserRequests?: string[];
   userConstraints: string[];
   decisions: string[];
+  completedFacts: string[];
   recentActions: string[];
   touchedFiles: Array<{
     path: string;
@@ -64,6 +65,7 @@ const MAX_RECENT_USER_REQUEST_CHARS = 260;
 const MAX_RECENT_USER_REQUESTS = 12;
 const MAX_USER_CONSTRAINTS = 8;
 const MAX_DECISIONS = 12;
+const MAX_COMPLETED_FACTS = 12;
 const MAX_RECENT_ACTIONS = 12;
 const MAX_TOUCHED_FILES = 20;
 const MAX_KEY_SYMBOLS = 16;
@@ -84,6 +86,7 @@ const NEXT_STEP_RE = /(?:next|下一步|继续|todo|待办|pending|后续|接下
 const FAILURE_RE = /(?:failed|failure|error|exception|timeout|失败|报错|错误|超时)[^\n\r]{0,220}/gi;
 const CONSTRAINT_RE = /(?:不要|不能|避免|必须|需要|保持|兼容|don't|do not|must|should|avoid|keep|preserve)[^\n\r。.!?]{0,180}/gi;
 const DECISION_RE = /(?:决定|确认|采用|不做|改为|方案|done|completed|implemented|fixed|decided)[^\n\r。.!?]{0,180}/gi;
+const COMPLETED_FACT_RE = /(?:已|已经|现在|当前|支持|集成|完成|就绪|正常|删除|保存在|文件在|created|added|implemented|completed|fixed|supports|ready|verified)[^\n\r。.!?]{0,180}/gi;
 
 const normalizeText = (value: string): string => value.replace(/\s+/g, ' ').trim();
 const CONTINUATION_PROMPT_RE = /^(?:继续|接着|继续吧|继续做|go on|continue|proceed|resume|next)$/i;
@@ -256,6 +259,26 @@ const extractUserQuestions = (messages: CoworkMessage[]): string[] => {
   return extractRecentUserRequests(messages).filter((content) => content.includes('?') || content.includes('？'));
 };
 
+const extractCompletedFacts = (assistantText: string): string[] => {
+  const sentenceCandidates = assistantText
+    .split(/[\n\r。.!?！？]+/g)
+    .map((sentence) => truncateText(sentence))
+    .filter(Boolean);
+  const facts: string[] = [];
+  for (const sentence of sentenceCandidates) {
+    COMPLETED_FACT_RE.lastIndex = 0;
+    if (!COMPLETED_FACT_RE.test(sentence)) continue;
+    if (NEXT_STEP_RE.test(sentence)) {
+      NEXT_STEP_RE.lastIndex = 0;
+      continue;
+    }
+    NEXT_STEP_RE.lastIndex = 0;
+    facts.push(sentence);
+    if (facts.length >= MAX_COMPLETED_FACTS) break;
+  }
+  return facts;
+};
+
 const summarizeToolResults = (messages: CoworkMessage[]): {
   verification: string[];
   recentFailures: CoworkContinuityCapsule['recentFailures'];
@@ -313,6 +336,7 @@ export const buildCoworkContinuityCapsule = (options: ContinuityCapsuleRefreshOp
     ),
     userConstraints: mergeStrings(previous?.userConstraints, extractMatches(userText, CONSTRAINT_RE, MAX_USER_CONSTRAINTS), MAX_USER_CONSTRAINTS),
     decisions: mergeStrings(previous?.decisions, extractMatches(assistantText, DECISION_RE, MAX_DECISIONS), MAX_DECISIONS),
+    completedFacts: mergeStrings(previous?.completedFacts, extractCompletedFacts(assistantText), MAX_COMPLETED_FACTS),
     recentActions: mergeStrings(previous?.recentActions, extractMatches(assistantText, DECISION_RE, MAX_RECENT_ACTIONS), MAX_RECENT_ACTIONS),
     touchedFiles: mergeFiles(previous?.touchedFiles, extractFilePaths(recentText)),
     keySymbols: previous?.keySymbols?.slice(0, MAX_KEY_SYMBOLS) ?? [],
@@ -341,6 +365,7 @@ export const formatCoworkContinuityCapsuleBridge = (capsule: CoworkContinuityCap
   pushListSection(sections, 'Recent user requests:', capsule.recentUserRequests ?? []);
   pushListSection(sections, 'User constraints:', capsule.userConstraints);
   pushListSection(sections, 'Decisions:', capsule.decisions);
+  pushListSection(sections, 'Completed facts:', capsule.completedFacts);
   pushListSection(sections, 'Recent actions:', capsule.recentActions);
   if (capsule.touchedFiles.length > 0) {
     sections.push(
@@ -376,6 +401,7 @@ export const formatCoworkMiniContinuityCapsuleBridge = (capsule: CoworkContinuit
     'Recent user requests:',
     (capsule.recentUserRequests ?? []).slice(-MAX_MINI_RECENT_USER_REQUESTS),
   );
+  pushListSection(sections, 'Completed facts:', capsule.completedFacts.slice(0, 3));
   pushListSection(sections, 'Next steps:', capsule.nextSteps.slice(0, MAX_MINI_NEXT_STEPS));
   pushListSection(sections, 'Open questions:', capsule.openQuestions.slice(0, MAX_MINI_OPEN_QUESTIONS));
 

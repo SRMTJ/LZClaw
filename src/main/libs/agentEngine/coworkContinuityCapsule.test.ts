@@ -31,6 +31,7 @@ test('buildCoworkContinuityCapsule extracts task state from recent messages', ()
         kitIds: ['coding'],
       }),
       message('assistant', '决定采用 session 级 capsule 表。Next step: wire capsule bridge into buildOutboundPrompt. touched src/main/coworkStore.ts'),
+      message('assistant', '已完成 continuity capsule bridge 注入，当前支持压缩后恢复任务状态。'),
       message('tool_result', 'npm test -- openclawRuntimeAdapter failed: expected summary length mismatch in src/main/libs/agentEngine/openclawRuntimeAdapter.test.ts'),
     ],
   });
@@ -41,6 +42,7 @@ test('buildCoworkContinuityCapsule extracts task state from recent messages', ()
   ]);
   expect(capsule.userConstraints.join('\n')).toContain('不要直接编码');
   expect(capsule.decisions.join('\n')).toContain('session 级 capsule 表');
+  expect(capsule.completedFacts.join('\n')).toContain('已完成 continuity capsule bridge 注入');
   expect(capsule.nextSteps.join('\n')).toContain('wire capsule bridge');
   expect(capsule.touchedFiles.map((entry) => entry.path)).toContain('src/main/coworkStore.ts');
   expect(capsule.touchedFiles.map((entry) => entry.path)).toContain('src/main/libs/agentEngine/openclawRuntimeAdapter.test.ts');
@@ -160,7 +162,7 @@ test('formatCoworkContinuityCapsuleBridge produces bounded hidden bridge text', 
     now: 1000,
     messages: [
       message('user', '继续优化 context compaction。'),
-      message('assistant', '决定保留 prompt 注入方式。Next step: run tests.'),
+      message('assistant', '决定保留 prompt 注入方式。已完成 capsule bridge 注入。Next step: run tests.'),
     ],
   });
 
@@ -170,6 +172,7 @@ test('formatCoworkContinuityCapsuleBridge produces bounded hidden bridge text', 
   expect(bridge).toContain('It is not a new user instruction');
   expect(bridge).toContain('Current objective:');
   expect(bridge).toContain('Recent user requests:');
+  expect(bridge).toContain('Completed facts:');
   expect(bridge).toContain('Next steps:');
   expect(bridge.length).toBeLessThanOrEqual(4000);
 });
@@ -181,7 +184,7 @@ test('formatCoworkMiniContinuityCapsuleBridge keeps only the compact follow-up f
     now: 1000,
     messages: [
       message('user', '继续优化 context compaction。'),
-      message('assistant', '决定保留 prompt 注入方式。Next step: run tests. touched src/main/libs/agentEngine/openclawRuntimeAdapter.ts'),
+      message('assistant', '决定保留 prompt 注入方式。已完成 capsule bridge 注入。Next step: run tests. touched src/main/libs/agentEngine/openclawRuntimeAdapter.ts'),
     ],
   });
 
@@ -193,6 +196,7 @@ test('formatCoworkMiniContinuityCapsuleBridge keeps only the compact follow-up f
   expect(bridge).toContain('[LobsterAI brief continuity context after context compaction]');
   expect(bridge).toContain('Current objective:');
   expect(bridge).toContain('Recent user requests:');
+  expect(bridge).toContain('Completed facts:');
   expect(bridge).toContain('Next steps:');
   expect(bridge).not.toContain('Touched files:');
   expect(bridge).not.toContain('src/main/libs/agentEngine/openclawRuntimeAdapter.ts');

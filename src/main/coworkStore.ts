@@ -837,6 +837,7 @@ export class CoworkStore {
         revision: row.revision,
         updatedAt: row.updated_at,
         lastSource: row.last_source as CoworkContinuityCapsule['lastSource'],
+        completedFacts: Array.isArray(capsule.completedFacts) ? capsule.completedFacts : [],
         ...(row.last_compacted_at != null ? { lastCompactedAt: row.last_compacted_at } : {}),
       };
     } catch (error) {

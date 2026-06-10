@@ -218,6 +218,7 @@ type CoworkContinuityCapsule = {
   currentObjective?: string;
   userConstraints: string[];
   decisions: string[];
+  completedFacts: string[];
   recentActions: string[];
   touchedFiles: Array<{
     path: string;
@@ -248,6 +249,7 @@ type CoworkContinuityCapsule = {
 - `currentObjective`：当前用户目标和完成标准。
 - `userConstraints`：用户明确说过的约束、偏好和禁区。
 - `decisions`：已经确认的设计/实现决定，避免压缩后反复推翻。
+- `completedFacts`：已经完成且可作为后续问答依据的状态事实，例如“英文版已集成到同一个 index.html 的 EN 切换里”，避免压缩后把“没有独立文件”误判为“没有完成”。
 - `recentActions`：最近已经完成的动作。
 - `touchedFiles` / `keySymbols`：最近相关文件和关键符号，只记录路径/名称和原因。
 - `verification` / `recentFailures`：跑过的命令、测试结论和失败摘要。
@@ -319,6 +321,7 @@ type CoworkContinuityCapsule = {
 
 - 从 user message 中提取显式约束，例如“不要编码”“先写 spec”“兼容 mac/windows”。
 - 从 assistant final 中提取“已完成/下一步/验证结果”这类结构化语义。
+- 从 assistant final 中提取“完成态事实”，重点保留已集成、已删除、已验证、当前支持哪些模式/语言/入口等最终状态。
 - 从 tool metadata 和消息 metadata 中提取文件路径、命令、测试结果。
 - 从已存在的 context usage / compaction diagnostic 中提取压缩相关状态。
 - 对不确定内容宁可放入 `openQuestions`，不要推断成事实。
@@ -387,7 +390,7 @@ Recent failures:
 - 同一次 compaction 后的第一轮注入完整 capsule，用于恢复任务全貌。
 - 同一次 compaction 后的后续轮只注入 mini capsule，避免每轮重复占用较多 prompt。
 - mini capsule 只包含 `currentObjective`、最近 2-3 条 `recentUserRequests`、最近 2-3 条 `nextSteps`、少量 `openQuestions`。
-- mini capsule 不包含 touched files、verification、recent failures、decisions、recent actions 等较重字段。
+- mini capsule 可包含少量 `completedFacts`，因为压缩后短问句经常依赖“已完成状态”；不包含 touched files、verification、recent failures、decisions、recent actions 等较重字段。
 - 下一次 compaction 发生后，`lastCompactedAt` 更新，重新允许第一轮完整 capsule 注入。
 - 完整 capsule 建议不超过 4000 字符，mini capsule 建议不超过 600-800 字符。
 
@@ -492,10 +495,14 @@ Git diff stat:
 
 当 session 已发生压缩后，继续会话时：
 
-1. 使用当前 user prompt + capsule `currentObjective` + `nextSteps` 作为 query。
+1. 使用当前 user prompt + capsule `currentObjective` + `nextSteps` + `completedFacts` 作为 query。
 2. 从 query 中抽取文件名、路径、命令、错误词、中英文关键词。
+   - 中文连续短句额外切 2-3 字 n-gram，避免“英文版简历的公司”整体作为一个词导致召回失败。
+   - 对常见跨语言表达做轻量同义词扩展，例如“英文/英语/EN/English”、“日语/日本語/JA”、“简历/resume”、“公司/工作经历/experience/org”。
+   - query 包含 capsule 的 `completedFacts`，让检索优先找回已完成状态的确认消息。
 3. 对 session 历史消息切片并打分。
 4. 文件名/路径命中给高分，命令和错误命中给中高分，普通关键词命中给基础分，较新的消息有轻微加权。
+   - assistant 的完成态确认消息轻微加权，例如包含“已/完成/支持/集成/正常/verified/completed/supports”的最终回复。
 5. 检索 top-K 片段，MVP 建议最多 3 条。
 6. 控制总长度，MVP 建议 1500-2000 字符；单片段建议 400-600 字符。
 7. 注入 `[LobsterAI retrieved evidence after context compaction]`。

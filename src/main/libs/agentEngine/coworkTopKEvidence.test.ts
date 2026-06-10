@@ -31,6 +31,7 @@ const makeCapsule = (overrides: Partial<CoworkContinuityCapsule> = {}): CoworkCo
   recentUserRequests: [],
   userConstraints: [],
   decisions: [],
+  completedFacts: [],
   recentActions: [],
   touchedFiles: [{ path: 'src/pages/Bakery.tsx' }],
   keySymbols: [],
@@ -96,4 +97,29 @@ test('top-k evidence bridge redacts sensitive-looking lines', () => {
 
   expect(bridge).toContain('[redacted sensitive line]');
   expect(bridge).not.toContain('super-secret-value');
+});
+
+test('top-k evidence bridge retrieves completed facts for short Chinese follow-up questions', () => {
+  const result = buildCoworkTopKEvidenceBridgeResult({
+    sessionId: 'session-1',
+    prompt: '我英文版简历的公司是哪家？',
+    capsule: makeCapsule({
+      currentObjective: '我英文版简历的公司是哪家？',
+      completedFacts: [
+        '三语切换全部正常，resume/index.html 支持中文、日本語、EN，英文内容在同一个文件中。',
+      ],
+      touchedFiles: [{ path: 'resume/index.html' }],
+    }),
+    messages: [
+      message('assistant', '三个按钮都在，默认中文。点 EN 测试：', 1),
+      message('assistant', '三语切换全部正常。现在 resume/index.html 支持三种语言：中文、日本語、EN。右上角点击即时切换，所有内容全量替换。', 2),
+      message('tool_result', 'total 56\n-rw-r--r-- 1 admin staff 28310 index.html', 3),
+      message('user', '我英文版简历的公司是哪家？', 101),
+    ],
+  });
+
+  expect(result.bridge).toContain('三语切换全部正常');
+  expect(result.bridge).toContain('EN');
+  expect(result.bridge).toContain('resume/index.html');
+  expect(result.diagnostics.injectedCount).toBeGreaterThan(0);
 });
