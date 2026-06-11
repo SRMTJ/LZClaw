@@ -1,0 +1,266 @@
+import {
+  AsrApiCode,
+  AsrLangType,
+  type AsrRealtimeEvent,
+  AsrRealtimeEventType,
+} from '../../../shared/asr/constants';
+import { VOICE_INPUT_TARGET_SAMPLE_RATE } from './constants';
+import { AsrClientError, getFallbackAsrErrorMessage } from './errors';
+import {
+  type RealtimeVoiceRecordingSession,
+  startRealtimeVoiceRecording,
+} from './realtimeAudioRecorder';
+import { buildPcm16WavHeader } from './wavEncoder';
+
+const REALTIME_FINAL_WAIT_MS = 4_000;
+
+export interface RealtimeVoiceInputSession {
+  stop: () => Promise<string>;
+  cancel: () => void;
+  maxSessionSeconds: number;
+}
+
+interface StartRealtimeVoiceInputOptions {
+  onText: (text: string) => void;
+  onError: (error: unknown) => void;
+}
+
+const combineHeaderAndChunk = (header: Uint8Array, chunk: Uint8Array): Uint8Array => {
+  const combined = new Uint8Array(header.byteLength + chunk.byteLength);
+  combined.set(header, 0);
+  combined.set(chunk, header.byteLength);
+  return combined;
+};
+
+class RealtimeRecognitionBuffer {
+  private readonly segments = new Map<number, string>();
+  private latestFallbackText = '';
+
+  update(event: AsrRealtimeEvent): string {
+    const results = event.raw?.result;
+    if (Array.isArray(results) && results.length > 0) {
+      results.forEach((item, index) => {
+        const text = item.st?.sentence;
+        if (typeof text !== 'string') return;
+        const segmentId = typeof item.seg_id === 'number' ? item.seg_id : index;
+        this.segments.set(segmentId, text);
+      });
+      return this.text;
+    }
+
+    if (typeof event.text === 'string') {
+      this.latestFallbackText = event.text;
+    }
+    return this.text;
+  }
+
+  get text(): string {
+    if (this.segments.size === 0) {
+      return this.latestFallbackText;
+    }
+    return [...this.segments.entries()]
+      .sort(([left], [right]) => left - right)
+      .map(([, text]) => text)
+      .join('');
+  }
+}
+
+const parseRealtimeMessage = (data: MessageEvent['data']): AsrRealtimeEvent | null => {
+  if (typeof data !== 'string') {
+    return null;
+  }
+  const trimmed = data.trim();
+  if (!trimmed) {
+    return null;
+  }
+  try {
+    return JSON.parse(trimmed) as AsrRealtimeEvent;
+  } catch {
+    return null;
+  }
+};
+
+const waitForOpen = (socket: WebSocket): Promise<void> => new Promise((resolve, reject) => {
+  const cleanup = () => {
+    socket.removeEventListener('open', handleOpen);
+    socket.removeEventListener('error', handleError);
+    socket.removeEventListener('close', handleClose);
+  };
+  const handleOpen = () => {
+    cleanup();
+    resolve();
+  };
+  const handleError = () => {
+    cleanup();
+    reject(new AsrClientError(getFallbackAsrErrorMessage(AsrApiCode.UpstreamError), AsrApiCode.UpstreamError));
+  };
+  const handleClose = () => {
+    cleanup();
+    reject(new AsrClientError(getFallbackAsrErrorMessage(AsrApiCode.UpstreamError), AsrApiCode.UpstreamError));
+  };
+  socket.addEventListener('open', handleOpen, { once: true });
+  socket.addEventListener('error', handleError, { once: true });
+  socket.addEventListener('close', handleClose, { once: true });
+});
+
+export const startRealtimeVoiceInput = async ({
+  onText,
+  onError,
+}: StartRealtimeVoiceInputOptions): Promise<RealtimeVoiceInputSession> => {
+  const session = await window.electron.asr.createRealtimeSession({
+    // TODO: The current product is China-first. Revisit langType selection for international releases.
+    langType: AsrLangType.ZhChs,
+  });
+  if (!session.success) {
+    throw new AsrClientError(getFallbackAsrErrorMessage(session.code), session.code);
+  }
+
+  const socket = new WebSocket(session.data.wsUrl);
+  socket.binaryType = 'arraybuffer';
+  const recognitionBuffer = new RealtimeRecognitionBuffer();
+  let recorder: RealtimeVoiceRecordingSession | null = null;
+  let firstAudioFrame = true;
+  let closed = false;
+  let terminalError: AsrClientError | null = null;
+  let resolveFinalWait: (() => void) | null = null;
+
+  const closeSocket = () => {
+    if (
+      socket.readyState === WebSocket.OPEN
+      || socket.readyState === WebSocket.CONNECTING
+    ) {
+      socket.close();
+    }
+  };
+
+  const finishFinalWait = () => {
+    if (resolveFinalWait) {
+      resolveFinalWait();
+      resolveFinalWait = null;
+    }
+  };
+
+  socket.addEventListener('message', (event) => {
+    const message = parseRealtimeMessage(event.data);
+    if (!message) return;
+
+    if (message.type === AsrRealtimeEventType.Error) {
+      terminalError = new AsrClientError(
+        getFallbackAsrErrorMessage(message.code),
+        message.code,
+      );
+      recorder?.cancel();
+      closeSocket();
+      finishFinalWait();
+      onError(terminalError);
+      return;
+    }
+
+    if (message.type === AsrRealtimeEventType.Recognition) {
+      const text = recognitionBuffer.update(message).trim();
+      if (text) {
+        onText(text);
+      }
+      const hasFinalResult = message.raw?.result?.some(item => item.st?.partial === false) ?? false;
+      if (hasFinalResult) {
+        finishFinalWait();
+      }
+      return;
+    }
+
+    if (message.type === AsrRealtimeEventType.Closed) {
+      finishFinalWait();
+    }
+  });
+
+  socket.addEventListener('error', () => {
+    if (closed) return;
+    terminalError = new AsrClientError(
+      getFallbackAsrErrorMessage(AsrApiCode.UpstreamError),
+      AsrApiCode.UpstreamError,
+    );
+    recorder?.cancel();
+    finishFinalWait();
+    onError(terminalError);
+  });
+
+  socket.addEventListener('close', () => {
+    closed = true;
+    finishFinalWait();
+  });
+
+  await waitForOpen(socket);
+  if (terminalError) {
+    closeSocket();
+    throw terminalError;
+  }
+
+  const sendPcmChunk = (chunk: Uint8Array) => {
+    if (socket.readyState !== WebSocket.OPEN) {
+      terminalError = new AsrClientError(
+        getFallbackAsrErrorMessage(AsrApiCode.UpstreamError),
+        AsrApiCode.UpstreamError,
+      );
+      recorder?.cancel();
+      finishFinalWait();
+      onError(terminalError);
+      return;
+    }
+    const payload = firstAudioFrame
+      ? combineHeaderAndChunk(buildPcm16WavHeader(VOICE_INPUT_TARGET_SAMPLE_RATE), chunk)
+      : chunk;
+    firstAudioFrame = false;
+    try {
+      socket.send(payload);
+    } catch {
+      terminalError = new AsrClientError(
+        getFallbackAsrErrorMessage(AsrApiCode.UpstreamError),
+        AsrApiCode.UpstreamError,
+      );
+      recorder?.cancel();
+      closeSocket();
+      finishFinalWait();
+      onError(terminalError);
+    }
+  };
+
+  recorder = await startRealtimeVoiceRecording({
+    chunkIntervalMillis: session.data.chunkIntervalMillis || 200,
+    onPcmChunk: sendPcmChunk,
+  });
+  if (terminalError) {
+    recorder.cancel();
+    closeSocket();
+    throw terminalError;
+  }
+
+  return {
+    maxSessionSeconds: session.data.maxSessionSeconds,
+    stop: async () => {
+      try {
+        await recorder?.stop();
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ end: 'true' }));
+        }
+        await new Promise<void>((resolve) => {
+          resolveFinalWait = resolve;
+          window.setTimeout(resolve, REALTIME_FINAL_WAIT_MS);
+        });
+      } finally {
+        closeSocket();
+      }
+      if (terminalError) {
+        throw terminalError;
+      }
+      const text = recognitionBuffer.text.trim();
+      if (!text) {
+        throw new AsrClientError(getFallbackAsrErrorMessage(AsrApiCode.RecognitionFailed), AsrApiCode.RecognitionFailed);
+      }
+      return text;
+    },
+    cancel: () => {
+      recorder?.cancel();
+      closeSocket();
+    },
+  };
+};

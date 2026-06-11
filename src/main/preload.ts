@@ -6,6 +6,7 @@ import { AppUpdateIpc } from '../shared/appUpdate/constants';
 import { ArtifactPreviewIpc } from '../shared/artifactPreview/constants';
 import {
   AsrIpcChannel,
+  type AsrRealtimeSessionRequest,
   type AsrRecognizeRequest,
 } from '../shared/asr/constants';
 import { AuthIpcChannel } from '../shared/auth/constants';
@@ -609,6 +610,8 @@ contextBridge.exposeInMainWorld('electron', {
   asr: {
     recognize: (options: AsrRecognizeRequest) =>
       ipcRenderer.invoke(AsrIpcChannel.Recognize, options),
+    createRealtimeSession: (options: AsrRealtimeSessionRequest) =>
+      ipcRenderer.invoke(AsrIpcChannel.CreateRealtimeSession, options),
   },
   artifact: {
     watchFile: (filePath: string) => ipcRenderer.invoke('artifact:watchFile', filePath),

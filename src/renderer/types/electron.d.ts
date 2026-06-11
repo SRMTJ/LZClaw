@@ -1,6 +1,8 @@
 import type { OpenClawSessionPatch } from '../../common/openclawSession';
 import type { AppUpdateCheckResult, AppUpdateRuntimeState } from '../../shared/appUpdate/constants';
 import type {
+  AsrRealtimeSessionRequest,
+  AsrRealtimeSessionResult,
   AsrRecognizeRequest,
   AsrRecognizeResult,
 } from '../../shared/asr/constants';
@@ -913,6 +915,7 @@ interface IElectronAPI {
   };
   asr: {
     recognize: (options: AsrRecognizeRequest) => Promise<AsrRecognizeResult>;
+    createRealtimeSession: (options: AsrRealtimeSessionRequest) => Promise<AsrRealtimeSessionResult>;
   };
   artifact: {
     watchFile: (filePath: string) => Promise<void>;

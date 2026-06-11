@@ -1,5 +1,6 @@
 export const AsrIpcChannel = {
   Recognize: 'asr:recognize',
+  CreateRealtimeSession: 'asr:realtime:createSession',
 } as const;
 
 export type AsrIpcChannel = typeof AsrIpcChannel[keyof typeof AsrIpcChannel];
@@ -46,3 +47,53 @@ export interface AsrRecognizeData {
 export type AsrRecognizeResult =
   | { success: true; data: AsrRecognizeData }
   | { success: false; code?: number; error?: string; message?: string };
+
+export interface AsrRealtimeSessionRequest {
+  langType?: AsrLangType;
+}
+
+export interface AsrRealtimeSessionData {
+  requestId: string;
+  wsUrl: string;
+  expiresInSeconds: number;
+  chunkIntervalMillis: number;
+  maxSessionSeconds: number;
+  maxConcurrentSessions: number;
+  usedSecondsToday: number;
+  remainingSecondsToday: number;
+  limitSecondsToday: number;
+}
+
+export type AsrRealtimeSessionResult =
+  | { success: true; data: AsrRealtimeSessionData }
+  | { success: false; code?: number; error?: string; message?: string };
+
+export const AsrRealtimeEventType = {
+  Started: 'started',
+  Recognition: 'recognition',
+  Closed: 'closed',
+  Error: 'error',
+} as const;
+
+export type AsrRealtimeEventType = typeof AsrRealtimeEventType[keyof typeof AsrRealtimeEventType];
+
+export interface AsrRealtimeRecognitionRawItem {
+  seg_id?: number;
+  st?: {
+    sentence?: string;
+    partial?: boolean;
+  };
+}
+
+export interface AsrRealtimeEvent {
+  type?: AsrRealtimeEventType | string;
+  code?: number;
+  message?: string;
+  requestId?: string;
+  text?: string;
+  raw?: {
+    action?: string;
+    errorCode?: string;
+    result?: AsrRealtimeRecognitionRawItem[];
+  };
+}

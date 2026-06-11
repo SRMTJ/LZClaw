@@ -3,6 +3,9 @@ import { ipcMain } from 'electron';
 import {
   AsrApiCode,
   AsrIpcChannel,
+  type AsrRealtimeSessionData,
+  type AsrRealtimeSessionRequest,
+  type AsrRealtimeSessionResult,
   type AsrRecognizeData,
   type AsrRecognizeRequest,
   type AsrRecognizeResult,
@@ -77,6 +80,56 @@ export function registerAsrIpcHandlers({
         return {
           success: false,
           error: error instanceof Error ? error.message : 'ASR request failed',
+        };
+      }
+    },
+  );
+
+  ipcMain.handle(
+    AsrIpcChannel.CreateRealtimeSession,
+    async (_event, options?: AsrRealtimeSessionRequest): Promise<AsrRealtimeSessionResult> => {
+      try {
+        const tokens = getAuthTokens();
+        if (!tokens) {
+          return { success: false, code: AsrApiCode.Unauthorized, error: 'Unauthorized' };
+        }
+
+        const params = new URLSearchParams();
+        if (options?.langType) {
+          params.set('langType', options.langType);
+        }
+
+        const serverBaseUrl = getServerApiBaseUrl();
+        const resp = await fetchWithAuth(`${serverBaseUrl}/api/asr/realtime/sessions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
+          },
+          body: params.toString(),
+        });
+        const body = await resp.json().catch((): null => null) as {
+          code?: number;
+          message?: string;
+          data?: unknown;
+        } | null;
+
+        if (resp.ok && body?.code === 0 && body.data) {
+          return { success: true, data: body.data as AsrRealtimeSessionData };
+        }
+
+        console.warn(`[ASR] realtime session request was rejected with code ${body?.code ?? resp.status} and HTTP status ${resp.status}`);
+
+        return {
+          success: false,
+          code: body?.code ?? resp.status,
+          error: body?.message || resp.statusText || 'ASR realtime session request failed',
+          message: body?.message,
+        };
+      } catch (error) {
+        console.warn('[ASR] realtime session request failed:', error);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'ASR realtime session request failed',
         };
       }
     },
