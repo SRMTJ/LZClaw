@@ -40,6 +40,17 @@ export type HtmlShareConfigurableStatus =
   | typeof HtmlShareStatus.Live
   | typeof HtmlShareStatus.Disabled;
 
+export const HtmlShareDisabledSource = {
+  User: 'user',
+  Admin: 'admin',
+  Moderation: 'moderation',
+  ActiveLimit: 'active_limit',
+  System: 'system',
+} as const;
+
+export type HtmlShareDisabledSource =
+  (typeof HtmlShareDisabledSource)[keyof typeof HtmlShareDisabledSource];
+
 export const HtmlShareErrorCode = {
   ReopenUnavailable: 41304,
   SubscriptionRequired: 41307,

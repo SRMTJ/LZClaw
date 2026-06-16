@@ -20,6 +20,7 @@ import type {
 import type {
   HtmlShareAccessMode,
   HtmlShareConfigurableStatus,
+  HtmlShareDisabledSource,
   HtmlShareSourceType,
   HtmlShareStatus,
 } from '../../shared/htmlShare/constants';
@@ -368,6 +369,8 @@ interface HtmlShareResult {
   contentUpdatedAt?: string;
   disabledAt?: string | null;
   disabledReason?: string | null;
+  disabledSource?: HtmlShareDisabledSource | null;
+  restoredByUpdate?: boolean;
   error?: string;
   code?: number;
   warnings?: string[];

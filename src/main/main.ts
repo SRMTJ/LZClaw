@@ -72,7 +72,6 @@ import {
   HtmlShareAccessMode,
   type HtmlShareAccessMode as HtmlShareAccessModeValue,
   type HtmlShareConfigurableStatus,
-  HtmlShareErrorCode,
   HtmlShareIpc,
   HtmlShareSourceType,
   HtmlShareStatus,
@@ -4897,9 +4896,6 @@ if (!gotTheLock) {
     let archivePath: string | undefined;
     try {
       const options = sanitizeUpdateFromHtmlFileInput(input);
-      if (options.currentStatus === HtmlShareStatus.Disabled) {
-        return { success: false, code: HtmlShareErrorCode.DisabledCannotUpdate };
-      }
       const clientSourceKey = buildHtmlShareClientSourceKey(options.filePath);
       const packaged = await packageHtmlFile(options.filePath);
       archivePath = packaged.archivePath;
@@ -5025,9 +5021,6 @@ if (!gotTheLock) {
     let archivePath: string | undefined;
     try {
       const options = sanitizeUpdateFromArtifactFileInput(input);
-      if (options.currentStatus === HtmlShareStatus.Disabled) {
-        return { success: false, code: HtmlShareErrorCode.DisabledCannotUpdate };
-      }
       const clientSourceKey = buildArtifactShareClientSourceKey(options);
       const packaged = await packageArtifactFile({
         sourceType: options.sourceType,

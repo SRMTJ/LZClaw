@@ -4,6 +4,8 @@ import {
   HtmlShareAccessMode,
   type HtmlShareAccessMode as HtmlShareAccessModeValue,
   type HtmlShareConfigurableStatus,
+  HtmlShareDisabledSource,
+  type HtmlShareDisabledSource as HtmlShareDisabledSourceValue,
   HtmlShareErrorCode,
   HtmlShareSourceType,
   HtmlShareStatus,
@@ -141,6 +143,7 @@ interface HtmlShareDialogState {
   selectedAccessMode?: HtmlShareAccessModeValue;
   status?: HtmlShareStatusValue;
   targetStatus?: HtmlShareConfigurableStatus;
+  disabledSource?: HtmlShareDisabledSourceValue | null;
   statusError?: string;
   contentUpdateStatus?: HtmlShareContentUpdateStatus;
 }
@@ -152,6 +155,7 @@ interface ExistingHtmlShareInfo {
   shareCode?: string;
   shareCodeUnavailable?: boolean;
   status?: HtmlShareStatusValue;
+  disabledSource?: HtmlShareDisabledSourceValue | null;
 }
 
 interface HtmlShareLookupState {
@@ -168,6 +172,7 @@ function getExistingHtmlShareInfo(
     shareCode?: string;
     shareCodeUnavailable?: boolean;
     status?: HtmlShareStatusValue;
+    disabledSource?: HtmlShareDisabledSourceValue | null;
   } | null | undefined,
 ): ExistingHtmlShareInfo | null {
   if (!share?.shareId || !share.url) return null;
@@ -178,6 +183,7 @@ function getExistingHtmlShareInfo(
     shareCode: share.shareCode,
     shareCodeUnavailable: share.shareCodeUnavailable,
     status: share.status,
+    disabledSource: share.disabledSource,
   };
 }
 
@@ -597,6 +603,11 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
       !isHtmlShareStatusUpdating &&
       htmlShareDialog.status !== HtmlShareStatus.Disabled &&
       htmlShareDialog.status !== HtmlShareStatus.Failed,
+  );
+  const canRestoreActiveLimitDisabledHtmlShare = Boolean(
+    htmlShareDialog?.kind === HtmlShareDialogKind.Existing &&
+      htmlShareDialog.status === HtmlShareStatus.Disabled &&
+      htmlShareDialog.disabledSource === HtmlShareDisabledSource.ActiveLimit,
   );
   const isHtmlShareContentUpdateDisabled = Boolean(
     isHtmlShareStatusUpdating ||
@@ -1189,6 +1200,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
         shareCode: share.shareCode,
         shareCodeUnavailable: share.shareCodeUnavailable,
         status: share.status,
+        disabledSource: share.disabledSource,
         targetStatus: getConfigurableHtmlShareStatus(share.status),
       });
     },
@@ -1216,6 +1228,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
         shareCode?: string;
         shareCodeUnavailable?: boolean;
         status?: HtmlShareStatusValue;
+        disabledSource?: HtmlShareDisabledSourceValue | null;
       } | null | undefined,
     );
     if (!existingShare) return;
@@ -1270,6 +1283,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
         shareCode: shouldUseHtmlShareCode(accessMode) ? result.shareCode : undefined,
         shareCodeUnavailable: result.shareCodeUnavailable,
         status: result.status,
+        disabledSource: result.disabledSource,
       });
     },
     [],
@@ -1335,12 +1349,14 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     });
   }, []);
 
-  const updateHtmlShare = useCallback(async () => {
+  const updateHtmlShare = useCallback(async (options?: { allowActiveLimitRestore?: boolean }) => {
+    const allowActiveLimitRestore = options?.allowActiveLimitRestore === true;
     if (
       !htmlSharePendingRequest ||
       !htmlShareDialog?.shareId ||
       isHtmlSharing ||
-      isHtmlShareContentUpdateDisabled
+      (isHtmlShareContentUpdateDisabled &&
+        !(allowActiveLimitRestore && canRestoreActiveLimitDisabledHtmlShare))
     )
       return;
     const request = htmlSharePendingRequest;
@@ -1359,7 +1375,9 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
       }
       return {
         ...previous,
-        contentUpdateStatus: HtmlShareContentUpdateStatus.Updating,
+        contentUpdateStatus: allowActiveLimitRestore
+          ? previous.contentUpdateStatus
+          : HtmlShareContentUpdateStatus.Updating,
         statusError: undefined,
       };
     });
@@ -1418,8 +1436,11 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
           shareCodeUnavailable: result.shareCodeUnavailable,
           status: resultStatus,
           targetStatus: resultStatus,
+          disabledSource: result.disabledSource ?? undefined,
           statusError: undefined,
-          contentUpdateStatus: HtmlShareContentUpdateStatus.Complete,
+          contentUpdateStatus: allowActiveLimitRestore
+            ? undefined
+            : HtmlShareContentUpdateStatus.Complete,
         };
       });
     } catch (error) {
@@ -1449,6 +1470,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     htmlShareDialog?.status,
     htmlShareDialog?.selectedAccessMode,
     htmlSharePendingRequest,
+    canRestoreActiveLimitDisabledHtmlShare,
     isHtmlShareContentUpdateDisabled,
     isHtmlSharing,
     rememberHtmlShare,
@@ -1490,6 +1512,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
         shareCode: shouldUseHtmlShareCode(resultAccessMode) ? result.shareCode : undefined,
         shareCodeUnavailable: result.shareCodeUnavailable,
         status: result.status ?? htmlShareDialog.status,
+        disabledSource: result.disabledSource ?? htmlShareDialog.disabledSource,
       };
       rememberHtmlShare(request.lookupKey, refreshedShare);
       setHtmlShareDialog(previous => {
@@ -1510,6 +1533,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
           shareCodeUnavailable: refreshedShare.shareCodeUnavailable,
           status: refreshedShare.status,
           targetStatus: getConfigurableHtmlShareStatus(refreshedShare.status),
+          disabledSource: refreshedShare.disabledSource ?? undefined,
           statusError: undefined,
         };
       });
@@ -1544,6 +1568,20 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     const nextStatus =
       previousStatus === HtmlShareStatus.Live ? HtmlShareStatus.Disabled : HtmlShareStatus.Live;
     const request = htmlSharePendingRequest;
+    const restoreActiveLimitByUpdate =
+      previousStatus === HtmlShareStatus.Disabled &&
+      nextStatus === HtmlShareStatus.Live &&
+      canRestoreActiveLimitDisabledHtmlShare;
+
+    if (restoreActiveLimitByUpdate) {
+      setIsHtmlShareStatusUpdating(true);
+      try {
+        await updateHtmlShare({ allowActiveLimitRestore: true });
+      } finally {
+        setIsHtmlShareStatusUpdating(false);
+      }
+      return;
+    }
 
     setIsHtmlShareStatusUpdating(true);
     setHtmlShareDialog(previous => {
@@ -1600,6 +1638,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
         shareCodeUnavailable:
           refreshedShare?.shareCodeUnavailable ?? result.shareCodeUnavailable,
         status: resultStatus,
+        disabledSource: refreshedShare?.disabledSource ?? result.disabledSource,
       };
       if (request) {
         rememberHtmlShare(request.lookupKey, refreshedResult);
@@ -1624,6 +1663,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
             refreshedResult.shareCodeUnavailable ?? previous.shareCodeUnavailable,
           status: resultStatus,
           targetStatus: resultStatus,
+          disabledSource: refreshedResult.disabledSource ?? undefined,
           statusError: undefined,
         };
       });
@@ -1651,8 +1691,10 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   }, [
     htmlShareDialog,
     htmlSharePendingRequest,
+    canRestoreActiveLimitDisabledHtmlShare,
     isHtmlShareStatusUpdating,
     rememberHtmlShare,
+    updateHtmlShare,
   ]);
 
   const handleShareHtmlArtifact = useCallback(async () => {
@@ -1824,7 +1866,21 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   const isHtmlShareStoppedDialog =
     isHtmlShareExistingDialog &&
     htmlShareDialog.targetStatus === HtmlShareStatus.Disabled;
+  const isHtmlShareActiveLimitStoppedDialog =
+    isHtmlShareStoppedDialog &&
+    htmlShareDialog.disabledSource === HtmlShareDisabledSource.ActiveLimit;
+  const htmlShareStoppedNotice =
+    !isHtmlShareStoppedDialog
+      ? undefined
+      : htmlShareDialog.disabledSource === HtmlShareDisabledSource.ActiveLimit
+        ? t('htmlShareStoppedByActiveLimitNotice')
+        : htmlShareDialog.disabledSource === HtmlShareDisabledSource.Admin
+          ? t('htmlShareStoppedByAdminNotice')
+          : htmlShareDialog.disabledSource === HtmlShareDisabledSource.Moderation
+            ? t('htmlShareStoppedByModerationNotice')
+            : t('htmlShareStoppedNotice');
   const isHtmlShareFileUpdateDisabled = isHtmlSharing || isHtmlShareContentUpdateDisabled;
+  const htmlShareUpdateActionLabel = t('htmlShareUpdate');
   const htmlShareSelectedAccessMode = normalizeHtmlShareAccessMode(
     htmlShareDialog?.selectedAccessMode ?? htmlShareDialog?.accessMode,
   );
@@ -1843,6 +1899,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   const isHtmlShareAvailabilityActionDisabled = Boolean(
     !htmlShareDialog?.shareId ||
       isHtmlShareStatusUpdating ||
+      isHtmlSharing ||
       !htmlShareDialog.targetStatus,
   );
   const htmlShareAvailabilityActionLabel =
@@ -2133,8 +2190,14 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
                   {t('htmlShare')}
                 </div>
                 {isHtmlShareStoppedDialog ? (
-                  <div className="mt-2 text-sm font-medium leading-5 text-red-500">
-                    {t('htmlShareStoppedNotice')}
+                  <div
+                    className={
+                      isHtmlShareActiveLimitStoppedDialog
+                        ? 'mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm leading-5 text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200'
+                        : 'mt-2 text-sm font-medium leading-5 text-red-500'
+                    }
+                  >
+                    {htmlShareStoppedNotice}
                   </div>
                 ) : (
                   <div className="mt-3 text-sm leading-5 text-muted">
@@ -2213,24 +2276,31 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
                 )}
 
                 {isHtmlShareExistingDialog && (
-                  <div className="mt-5 flex items-center gap-2">
-                    <span className="text-base font-medium text-foreground">
-                      {t('htmlShareUpdateFile')}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={updateHtmlShare}
-                      disabled={isHtmlShareFileUpdateDisabled}
-                      title={
-                        htmlShareDialog.targetStatus === HtmlShareStatus.Disabled
-                          ? t('htmlShareDisabledCannotUpdate')
-                          : undefined
-                      }
-                      className="inline-flex h-7 items-center gap-1 rounded-md border border-border px-2 text-sm text-secondary transition-colors hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      <RefreshIcon />
-                      {t('htmlShareUpdate')}
-                    </button>
+                  <div className="mt-5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-base font-medium text-foreground">
+                        {t('htmlShareUpdateFile')}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void updateHtmlShare();
+                        }}
+                        disabled={isHtmlShareFileUpdateDisabled}
+                        title={
+                          htmlShareDialog.targetStatus === HtmlShareStatus.Disabled &&
+                          !canRestoreActiveLimitDisabledHtmlShare
+                            ? t('htmlShareDisabledCannotUpdate')
+                            : htmlShareDialog.targetStatus === HtmlShareStatus.Disabled
+                              ? t('htmlShareActiveLimitCannotUpdate')
+                            : undefined
+                        }
+                        className="inline-flex h-7 items-center gap-1 rounded-md border border-border px-2 text-sm text-secondary transition-colors hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <RefreshIcon />
+                        {htmlShareUpdateActionLabel}
+                      </button>
+                    </div>
                     {htmlShareDialog.contentUpdateStatus &&
                       htmlShareDialog.contentUpdateStatus !==
                         HtmlShareContentUpdateStatus.Failed && (
