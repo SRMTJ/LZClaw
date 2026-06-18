@@ -18,6 +18,7 @@ import {
 } from './gatewayLogRotation';
 import { getCodexHomeDir } from './openaiCodexAuth';
 import { cleanupStaleThirdPartyPluginsFromBundledDir, listLocalOpenClawExtensionIds,syncLocalOpenClawExtensionsIntoRuntime } from './openclawLocalExtensions';
+import { ensureOpenClawWorkerShims } from './openclawWorkerShims';
 import { appendPythonRuntimeToEnv } from './pythonRuntime';
 
 const gwDiagTs = (): string => {
@@ -762,6 +763,7 @@ export class OpenClawEngineManager extends EventEmitter {
     if (fs.existsSync(bundlePath)) {
       console.log('[OpenClaw] ensureBareEntryFiles: bundle exists, skipping dist extraction');
       this.ensureControlUiFiles(runtimeRoot);
+      this.ensureOpenClawWorkerShimsForBundle(runtimeRoot);
       console.log(`[OpenClaw] ensureBareEntryFiles: completed in ${Date.now() - t0}ms`);
       return;
     }
@@ -824,6 +826,26 @@ export class OpenClawEngineManager extends EventEmitter {
       console.log('[OpenClaw] Extracted dist/control-ui/');
     } catch (err) {
       console.error('[OpenClaw] Failed to extract dist/control-ui/ from gateway.asar:', err);
+    }
+  }
+
+  private ensureOpenClawWorkerShimsForBundle(runtimeRoot: string): void {
+    try {
+      const result = ensureOpenClawWorkerShims(runtimeRoot);
+      const changedCount = result.created.length + result.updated.length;
+      if (changedCount > 0) {
+        console.log(`[OpenClaw] Ensured ${changedCount} worker shim(s) for bundled gateway.`);
+      }
+      if (result.missingTargets.length > 0) {
+        console.warn(`[OpenClaw] Skipped ${result.missingTargets.length} worker shim(s) because target files are missing.`);
+      }
+      if (result.protectedExisting.length > 0) {
+        console.warn(
+          `[OpenClaw] Skipped ${result.protectedExisting.length} worker shim(s) because existing files are not LobsterAI shims.`,
+        );
+      }
+    } catch (error) {
+      console.warn('[OpenClaw] Failed to ensure worker shims for bundled gateway:', error);
     }
   }
 
