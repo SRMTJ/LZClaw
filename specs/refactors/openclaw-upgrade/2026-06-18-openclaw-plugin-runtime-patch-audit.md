@@ -457,3 +457,102 @@ file:///Users/yangwn/a.jpg
 4. `scripts/openclaw-plugin-patches/dingtalk.cjs` 的 DingTalk `file://` patch 明确只在 `process.platform === 'win32'` 时重写；macOS/Linux 保留 `file://${p}`，对 `/Users/...` 会自然得到 `file:///Users/...`。
 
 仍需注意的风险是：代码库里还有一些解析器会手动剥离 `file://` 或 `localfile://` 前缀。已看到的核心解析器通常只在正则确认 Windows drive letter 时剥离前导 `/`，并已有 Unix path 单测覆盖；因此目前没有发现需要为 macOS 额外改动的点。后续如果发现 macOS 上的本地媒体无法显示，应优先检查是否产生了 `localfile://Users/...` 这种缺少第三个斜杠的非规范 URL。
+
+## 11. 2026-06-22 插件升级后 post-install patch 复核
+
+DingTalk 升级到 `0.8.23`、Lark/Feishu 升级到 `2026.6.10` 后，重新复核了 `scripts/openclaw-plugin-patches/` 下各渠道 patch 是否仍作用于 OpenClaw gateway 实际加载路径。
+
+### 11.1 DingTalk runtime 入口变化
+
+`@dingtalk-real-ai/dingtalk-connector@0.8.23` 的 `package.json#openclaw.extensions` 指向：
+
+```json
+["./dist/index.mjs"]
+```
+
+该版本会把 `src/core/message-handler.ts` 与 `src/utils/agent.ts` 的逻辑 bundle 到 hash 命名的 dist 文件中：
+
+```text
+dingtalk-connector/dist/message-handler-0NLKAqHU.mjs
+```
+
+因此只修改 `src/core/message-handler.ts` 或 `src/utils/agent.ts` 不足以影响实际运行时。
+
+已调整 `scripts/openclaw-plugin-patches/dingtalk.cjs`：
+
+1. 扫描 `dist/message-handler-*.mjs`。
+2. 对 dist message handler 同步应用 Windows `file://` 图片 URL 修复。
+3. 对 dist message handler 同步应用 `accountId: "*"` wildcard 修复。
+4. 对 dist message handler 内联的 `resolveAgentWorkspaceDir()` 同步应用 `agents.defaults.workspace` fallback 修复。
+
+当前 runtime 静态确认：
+
+```text
+dingtalk-connector/dist/message-handler-*.mjs contains file:///${n}
+dingtalk-connector/dist/message-handler-*.mjs contains match.accountId !== "*"
+dingtalk-connector/dist/message-handler-*.mjs contains dingtalk_agent_workspace_defaults_patch
+dingtalk-connector/dist/message-handler-*.mjs reads cfg.agents?.defaults?.workspace
+```
+
+新增测试：
+
+```text
+tests/openclaw-plugin-patches-dingtalk.test.ts
+```
+
+覆盖 hash dist 文件发现、Windows file URL 修复、dist workspace resolver 修复。
+
+### 11.2 Weixin patch 复核
+
+微信插件仍声明：
+
+```json
+{
+  "runtimeExtensions": ["./dist/index.js"]
+}
+```
+
+`weixin.cjs` 已同时覆盖 source 与 dist：
+
+```text
+openclaw-weixin/src/channel.ts
+openclaw-weixin/dist/src/channel.js
+openclaw-weixin/src/messaging/process-message.ts
+openclaw-weixin/dist/src/messaging/process-message.js
+```
+
+重新应用 patch 后，当前 runtime 静态确认：
+
+```text
+openclaw-weixin/dist/src/channel.js contains gatewayMethods
+openclaw-weixin/dist/src/messaging/process-message.js contains chanCfg_dmPolicy_patch
+openclaw-weixin/dist/src/messaging/process-message.js contains list.includes('*')
+```
+
+未发现新的 `src`/`dist` 旁路失效点。
+
+### 11.3 Lark/Feishu patch 复核
+
+`@larksuite/openclaw-lark@2026.6.10` 当前 `openclaw.extensions` 指向 `./index.js`，而 root `index.js` 直接 `require("./src/...")`。因此 `lark.cjs` 对 `src/messaging/outbound/media.js` 的文件名编码 patch 仍作用于实际运行路径。
+
+重新应用 patch 后，当前 runtime 静态确认：
+
+```text
+openclaw-lark/setup-entry.js contains listAccountIds / resolveAccount
+openclaw-lark/openclaw.plugin.json contains contracts.tools including feishu_doc_media
+openclaw-lark/src/messaging/outbound/media.js contains fixLatin1GarbledUtf8
+```
+
+未发现新的 dist 旁路失效点。
+
+### 11.4 验证
+
+已执行：
+
+```bash
+node --check scripts/openclaw-plugin-patches/dingtalk.cjs
+npx vitest run tests/openclaw-plugin-patches-dingtalk.test.ts
+node -e "const path=require('path'); const {applyOpenClawPluginPatches}=require('./scripts/openclaw-plugin-patches/index.cjs'); applyOpenClawPluginPatches({runtimeExtensionsDir:path.join(process.cwd(),'vendor/openclaw-runtime/current/third-party-extensions'), log: console.log});"
+```
+
+注意：这些 patch 作用于 runtime 文件，但运行中的 OpenClaw gateway 不会热重载已 import 的插件模块。验证 DingTalk 图片消息、DingTalk 入站图片 workspace、微信扫码/入站授权、Feishu setup metadata 前，需要重启 OpenClaw gateway 或整个 Electron dev 进程。
