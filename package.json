@@ -14,17 +14,17 @@
       {
         "id": "dingtalk-connector",
         "npm": "@dingtalk-real-ai/dingtalk-connector",
-        "version": "0.8.16"
+        "version": "0.8.23"
       },
       {
         "id": "openclaw-lark",
         "npm": "@larksuite/openclaw-lark",
-        "version": "2026.4.8"
+        "version": "2026.6.10"
       },
       {
         "id": "wecom-openclaw-plugin",
         "npm": "@wecom/wecom-openclaw-plugin",
-        "version": "2026.4.22"
+        "version": "2026.5.25"
       },
       {
         "id": "openclaw-weixin",
@@ -34,7 +34,7 @@
       {
         "id": "moltbot-popo",
         "npm": "moltbot-popo",
-        "version": "2.1.8",
+        "version": "2.1.13",
         "registry": "https://npm.nie.netease.com",
         "optional": true
       },
