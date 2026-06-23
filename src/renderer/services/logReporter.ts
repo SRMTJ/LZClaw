@@ -1,4 +1,5 @@
 import { store } from '../store';
+import { configService } from './config';
 
 export const LogReporterEndpoint = {
   YoudaoAnalyzer: 'https://rlogs.youdao.com/rlog.php',
@@ -9,7 +10,7 @@ export const LogReporterProduct = {
 } as const;
 
 export const LogReporterCategory = {
-  Event: 'event',
+  Actions: 'actions',
 } as const;
 
 export const LogReporterActionPrefix = {
@@ -34,7 +35,7 @@ export type LogEventParams = Record<string, LogParamValue> & {
 
 const logCommons = {
   _npid: LogReporterProduct.LobsterAI,
-  _ncat: LogReporterCategory.Event,
+  _ncat: LogReporterCategory.Actions,
 } as const;
 
 export interface BuildLogUrlOptions {
@@ -77,6 +78,11 @@ export const buildLogUrl = (
 };
 
 export const reportYdAnalyzer = async (params: LogEventParams): Promise<boolean> => {
+  if (configService.getConfig().usageAnalyticsEnabled === false) {
+    writeReporterLog('debug', `skipped event ${params.action} because usage analytics is disabled`);
+    return false;
+  }
+
   if (!params.action.trim()) {
     writeReporterLog('warn', 'skipped an event without an action');
     return false;

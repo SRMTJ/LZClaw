@@ -2981,6 +2981,7 @@ type AppConfigSettings = {
   language?: string;
   useSystemProxy?: boolean;
   sqliteAutoBackupEnabled?: boolean;
+  usageAnalyticsEnabled?: boolean;
   notificationSettings?: Partial<NotificationSettings>;
   browserWebAccess?: Partial<BrowserWebAccessConfig>;
 };

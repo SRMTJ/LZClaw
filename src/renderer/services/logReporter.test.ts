@@ -12,6 +12,15 @@ vi.mock('../store', () => ({
   },
 }));
 
+vi.mock('./config', () => ({
+  configService: {
+    getConfig: vi.fn(() => ({
+      usageAnalyticsEnabled: true,
+    })),
+  },
+}));
+
+import { configService } from './config';
 import {
   buildLogUrl,
   LogReporterAction,
@@ -28,7 +37,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-test('builds a Youdao Analyzer URL with common and event parameters', () => {
+test('builds a Youdao Analyzer URL with common action parameters', () => {
   const result = new URL(buildLogUrl(
     {
       action: `${LogReporterActionPrefix.LobsterAI}skill_enabled`,
@@ -43,7 +52,7 @@ test('builds a Youdao Analyzer URL with common and event parameters', () => {
 
   expect(result.origin + result.pathname).toBe(LogReporterEndpoint.YoudaoAnalyzer);
   expect(result.searchParams.get('_npid')).toBe(LogReporterProduct.LobsterAI);
-  expect(result.searchParams.get('_ncat')).toBe(LogReporterCategory.Event);
+  expect(result.searchParams.get('_ncat')).toBe(LogReporterCategory.Actions);
   expect(result.searchParams.get('action')).toBe('lobsterai_skill_enabled');
   expect(result.searchParams.get('skillId')).toBe('xlsx');
   expect(result.searchParams.get('enabled')).toBe('true');
@@ -67,7 +76,7 @@ test('does not allow event parameters to override common parameters', () => {
   ));
 
   expect(result.searchParams.get('_npid')).toBe(LogReporterProduct.LobsterAI);
-  expect(result.searchParams.get('_ncat')).toBe(LogReporterCategory.Event);
+  expect(result.searchParams.get('_ncat')).toBe(LogReporterCategory.Actions);
   expect(result.searchParams.get('log_Usid')).toBe('trusted-user');
   expect(result.searchParams.get('uts')).toBe('2');
 });
@@ -143,6 +152,26 @@ test('returns false when the Electron API bridge throws', async () => {
   await expect(reportYdAnalyzer({
     action: LogReporterAction.PlanModeEnabled,
   })).resolves.toBe(false);
+});
+
+test('skips sending when usage analytics is disabled', async () => {
+  vi.mocked(configService.getConfig).mockReturnValue({
+    usageAnalyticsEnabled: false,
+  } as ReturnType<typeof configService.getConfig>);
+  const fetchMock = vi.fn();
+  vi.stubGlobal('window', {
+    electron: {
+      api: {
+        fetch: fetchMock,
+      },
+    },
+  });
+  vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+
+  await expect(reportYdAnalyzer({
+    action: LogReporterAction.PlanModeEnabled,
+  })).resolves.toBe(false);
+  expect(fetchMock).not.toHaveBeenCalled();
 });
 
 test('rejects an event without the LobsterAI action prefix before sending', async () => {
