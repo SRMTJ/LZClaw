@@ -48,6 +48,14 @@ describe('parseProposedPlanBlock', () => {
       didNormalizePlanText: true,
     });
   });
+
+  test('normalizes section labels followed by Chinese connector text', () => {
+    expect(parseProposedPlanBlock('<proposed_plan>\nSummary为「麦田烘焙」制作单页展示网页。\n</proposed_plan>')).toEqual({
+      visibleText: '',
+      planText: '## Summary\n\n为「麦田烘焙」制作单页展示网页。',
+      didNormalizePlanText: true,
+    });
+  });
 });
 
 describe('normalizeProposedPlanMarkdown', () => {
@@ -55,6 +63,7 @@ describe('normalizeProposedPlanMarkdown', () => {
     expect(normalizeProposedPlanMarkdown([
       '**Summary:** 生成科普内容。',
       '## Implementation Approach: Use structured sections.',
+      '**Summary** 为客户创建单页网站。',
       'Key Changes: Add examples.',
     ].join('\n'))).toBe([
       '## Summary',
@@ -63,6 +72,9 @@ describe('normalizeProposedPlanMarkdown', () => {
       '## Implementation Approach',
       '',
       'Use structured sections.',
+      '## Summary',
+      '',
+      '为客户创建单页网站。',
       '## Key Changes',
       '',
       'Add examples.',

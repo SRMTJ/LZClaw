@@ -2,7 +2,7 @@ const OPEN_TAG_PATTERN = /<proposed_plan\b[^>]*>/i;
 const CLOSE_TAG_PATTERN = /<\/proposed_plan\s*>/i;
 const OPEN_TAG_PREFIX = '<proposed_plan';
 const FENCE_PATTERN = /^\s*(```|~~~)/;
-const PLAN_SECTION_LABEL_PATTERN = /^(?:(#{1,6})\s*)?(?:\*\*)?(Summary|Implementation Approach|Key Changes|Validation|Assumptions or Questions)\s*[:：](?:\*\*)?\s+(.+)$/i;
+const PLAN_SECTION_LABEL_PATTERN = /^(?:(#{1,6})\s*)?(?:\*\*)?(Summary|Implementation Approach|Key Changes|Validation|Assumptions or Questions)(?:\*\*)?(?:\s*[:：](?:\*\*)?\s+|\s*(?=为))(.+)$/i;
 
 export interface ProposedPlanParseResult {
   visibleText: string;
