@@ -87,11 +87,6 @@ import {
   type LocalWebService,
   LocalWebServicesIpc,
 } from '../shared/localWebServices/constants';
-import {
-  ShareDeploymentIpc,
-  type ShareDeploymentCreateNodeInput,
-  ShareDeploymentPackageManager,
-} from '../shared/shareDeployment/constants';
 import { canonicalizeMediaModelId, mediaModelDisplayName } from '../shared/mediaModelAliases';
 import { normalizeNotificationSettings, type NotificationSettings } from '../shared/notifications/constants';
 import {
@@ -100,8 +95,15 @@ import {
 } from '../shared/openclawEngine/constants';
 import { PlatformRegistry } from '../shared/platform';
 import { OpenClawProviderId, ProviderName } from '../shared/providers';
+import {
+  type ShareDeploymentCreateNodeInput,
+  type ShareDeploymentGetByLocalServiceInput,
+  ShareDeploymentIpc,
+  ShareDeploymentKind,
+  ShareDeploymentPackageManager,
+} from '../shared/shareDeployment/constants';
 import type { ShellOpenFailureReason as ShellOpenFailureReasonType } from '../shared/shell/constants';
-import { ShellOpenFailureReason } from '../shared/shell/constants';
+import { type ShellGetBrowserAppsInput, ShellIpc, ShellOpenFailureReason } from '../shared/shell/constants';
 import { AgentManager } from './agentManager';
 import { APP_NAME, APP_USER_MODEL_ID, DB_FILENAME } from './appConstants';
 import { authQuotaGateStateFromQuota, AuthSubscriptionStatus, createDefaultAuthQuotaGateState, normalizeAuthQuota } from './authQuota';
@@ -237,17 +239,6 @@ import {
   parseManagedSessionKey,
 } from './libs/openclawChannelSessionSync';
 import {
-  analyzeNodeServiceProjectDirectory,
-  detectNodeServiceProjectCandidates,
-} from './libs/shareDeployment/nodeServiceProjectAnalyzer';
-import { packageNodeServiceDeployment } from './libs/shareDeployment/nodeServiceDeploymentPackager';
-import {
-  buildNodeDeploymentClientSourceKey,
-  getNodeDeployment,
-  getNodeDeploymentByLocalService,
-  uploadNodeDeployment,
-} from './libs/shareDeployment/shareDeploymentClient';
-import {
   classifyAppConfigChange,
   classifyCoworkConfigChange,
   classifyImOpenClawConfigChange,
@@ -281,6 +272,19 @@ import { migrateMainAgentWorkspace } from './libs/openclawWorkspaceMigration';
 import { isHiddenUserPluginId } from './libs/pluginManager';
 import { ensurePythonRuntimeReady } from './libs/pythonRuntime';
 import { sanitizeUrlForLog, serializeForLog } from './libs/sanitizeForLog';
+import { packageNodeServiceDeployment } from './libs/shareDeployment/nodeServiceDeploymentPackager';
+import {
+  analyzeNodeServiceProjectDirectory,
+  detectNodeServiceProjectCandidates,
+} from './libs/shareDeployment/nodeServiceProjectAnalyzer';
+import {
+  buildNodeDeploymentClientSourceKey,
+  buildStaticDeploymentClientSourceKey,
+  getNodeDeployment,
+  getNodeDeploymentByLocalService,
+  uploadNodeDeployment,
+  uploadStaticDeployment,
+} from './libs/shareDeployment/shareDeploymentClient';
 import { SqliteBackupTrigger } from './libs/sqliteBackup/constants';
 import { SqliteBackupManager } from './libs/sqliteBackup/sqliteBackupManager';
 import { runStartupCacheWarmup } from './libs/startupCacheWarmup';
@@ -453,11 +457,6 @@ interface ShareDeploymentAnalyzeProjectDirectoryInput {
   localServiceUrl?: string;
 }
 
-interface ShareDeploymentGetByLocalServiceInput {
-  sessionId: string;
-  localServiceUrl: string;
-}
-
 function sanitizeHtmlShareString(
   value: unknown,
   fieldName: string,
@@ -483,6 +482,22 @@ function sanitizeOptionalHtmlShareString(
 ): string | undefined {
   if (value === undefined || value === null) return undefined;
   return sanitizeHtmlShareString(value, fieldName, maxLength);
+}
+
+function sanitizeOptionalShareDeploymentCommand(
+  value: unknown,
+  fieldName: string,
+  maxLength = 512,
+): string {
+  if (value === undefined || value === null) return '';
+  if (typeof value !== 'string') {
+    throw new Error(`${fieldName} must be a string.`);
+  }
+  const trimmed = value.trim();
+  if (trimmed.length > maxLength) {
+    throw new Error(`${fieldName} is too long.`);
+  }
+  return trimmed;
 }
 
 function sanitizeHtmlShareTitle(value: unknown): string {
@@ -707,7 +722,8 @@ function sanitizeShareDeploymentCreateNodeInput(input: unknown): ShareDeployment
     projectDirectory: sanitizeHtmlShareString(source.projectDirectory, 'projectDirectory', 4096),
     accessMode: sanitizeHtmlShareAccessMode(source.accessMode, HtmlShareAccessMode.Code),
     nodeVersion: sanitizeHtmlShareString(source.nodeVersion, 'nodeVersion', 32),
-    installCommand: sanitizeHtmlShareString(source.installCommand, 'installCommand', 512),
+    installCommand: sanitizeOptionalShareDeploymentCommand(source.installCommand, 'installCommand'),
+    buildCommand: sanitizeOptionalShareDeploymentCommand(source.buildCommand, 'buildCommand'),
     startCommand: sanitizeHtmlShareString(source.startCommand, 'startCommand', 512),
     port: sanitizeShareDeploymentPort(source.port),
   };
@@ -723,6 +739,18 @@ function sanitizeShareDeploymentGetByLocalServiceInput(
   return {
     sessionId: sanitizeHtmlShareString(source.sessionId, 'sessionId', 128),
     localServiceUrl: sanitizeHtmlShareString(source.localServiceUrl, 'localServiceUrl', 2048),
+    projectDirectory: sanitizeOptionalHtmlShareString(source.projectDirectory, 'projectDirectory', 4096),
+  };
+}
+
+function sanitizeShellGetBrowserAppsInput(input: unknown): ShellGetBrowserAppsInput {
+  if (input === undefined || input === null) return {};
+  if (typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('Invalid browser app lookup request.');
+  }
+  const source = input as Record<string, unknown>;
+  return {
+    projectDirectory: sanitizeOptionalHtmlShareString(source.projectDirectory, 'projectDirectory', 4096),
   };
 }
 
@@ -5288,6 +5316,7 @@ if (!gotTheLock) {
         packageManager: ShareDeploymentPackageManager.Unknown,
         nodeVersion: '20',
         installCommand: 'npm ci',
+        buildCommand: '',
         startCommand: '',
         totalFiles: 0,
         totalBytes: 0,
@@ -5308,27 +5337,57 @@ if (!gotTheLock) {
       const packaged = await packageNodeServiceDeployment({
         projectDirectory: options.projectDirectory,
         localServiceUrl: options.localServiceUrl,
+        installCommand: options.installCommand,
+        buildCommand: options.buildCommand,
+        startCommand: options.startCommand,
+        port: options.port,
       });
       archivePath = packaged.archivePath;
-      const clientSourceKey = buildNodeDeploymentClientSourceKey({
-        sessionId: options.sessionId,
-        localServiceUrl: options.localServiceUrl,
-      });
-      const result = await uploadNodeDeployment(
-        getServerApiBaseUrl(),
-        getHtmlSharePublicBaseUrl(),
-        fetchWithAuth,
-        {
-          ...options,
-          archivePath: packaged.archivePath,
-          sourceSha256: packaged.sourceSha256,
-          analysis: packaged.analysis,
-          archiveBytes: packaged.archiveBytes,
-          clientSourceKey,
-        },
-      );
+      const isStaticDeployment = packaged.deploymentKind === ShareDeploymentKind.StaticSite;
+      const clientSourceKey = isStaticDeployment
+        ? buildStaticDeploymentClientSourceKey({
+            sessionId: options.sessionId,
+            localServiceUrl: options.localServiceUrl,
+            projectDirectory: options.projectDirectory,
+          })
+        : buildNodeDeploymentClientSourceKey({
+            sessionId: options.sessionId,
+            localServiceUrl: options.localServiceUrl,
+            projectDirectory: options.projectDirectory,
+          });
+      const result = isStaticDeployment
+        ? await uploadStaticDeployment(
+            getServerApiBaseUrl(),
+            getHtmlSharePublicBaseUrl(),
+            fetchWithAuth,
+            {
+              ...options,
+              archivePath: packaged.archivePath,
+              sourceSha256: packaged.sourceSha256,
+              analysis: packaged.analysis,
+              archiveBytes: packaged.archiveBytes,
+              clientSourceKey,
+              deploymentKind: ShareDeploymentKind.StaticSite,
+              entryFile: packaged.entryFile ?? 'index.html',
+              spaFallback: packaged.spaFallback ?? true,
+            },
+          )
+        : await uploadNodeDeployment(
+            getServerApiBaseUrl(),
+            getHtmlSharePublicBaseUrl(),
+            fetchWithAuth,
+            {
+              ...options,
+              archivePath: packaged.archivePath,
+              sourceSha256: packaged.sourceSha256,
+              analysis: packaged.analysis,
+              archiveBytes: packaged.archiveBytes,
+              clientSourceKey,
+              deploymentKind: ShareDeploymentKind.NodeService,
+            },
+          );
       console.debug(
-        `[ShareDeployment] node deployment request finished with success ${result.success} and code ${result.code ?? 'none'}`,
+        `[ShareDeployment] local service deployment request finished with kind ${packaged.deploymentKind} success ${result.success} and code ${result.code ?? 'none'}`,
       );
       return result;
     } catch (error) {
@@ -8992,7 +9051,7 @@ if (!gotTheLock) {
   };
 
   // Shell handlers - 打开文件/文件夹
-  ipcMain.handle('shell:openPath', async (_event, filePath: string) => {
+  ipcMain.handle(ShellIpc.OpenPath, async (_event, filePath: string) => {
     try {
       const normalizedPath = normalizeWindowsShellPath(filePath);
       const result = await shell.openPath(normalizedPath);
@@ -9010,7 +9069,7 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('shell:showItemInFolder', async (_event, filePath: string) => {
+  ipcMain.handle(ShellIpc.ShowItemInFolder, async (_event, filePath: string) => {
     try {
       const normalizedPath = normalizeWindowsShellPath(filePath);
       try {
@@ -9035,7 +9094,7 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('shell:openExternal', async (_event, url: string) => {
+  ipcMain.handle(ShellIpc.OpenExternal, async (_event, url: string) => {
     try {
       await shell.openExternal(url);
       return { success: true };
@@ -9044,7 +9103,7 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('shell:openHtmlInBrowser', async (_event, htmlContent: string) => {
+  ipcMain.handle(ShellIpc.OpenHtmlInBrowser, async (_event, htmlContent: string) => {
     try {
       const tmpDir = path.join(os.tmpdir(), 'lobsterai-preview');
       fs.mkdirSync(tmpDir, { recursive: true });
@@ -9057,7 +9116,7 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('shell:getAppsForFile', async (_event, filePath: string) => {
+  ipcMain.handle(ShellIpc.GetAppsForFile, async (_event, filePath: string) => {
     try {
       const { getAppsForFile } = await import('./shellApps');
       const apps = await getAppsForFile(filePath);
@@ -9071,7 +9130,22 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('shell:openPathWithApp', async (_event, filePath: string, appPath: string) => {
+  ipcMain.handle(ShellIpc.GetBrowserApps, async (_event, input: unknown) => {
+    try {
+      const options = sanitizeShellGetBrowserAppsInput(input);
+      const { getBrowserApps } = await import('./shellApps');
+      const apps = await getBrowserApps(options);
+      return { success: true, apps };
+    } catch (error) {
+      return {
+        success: false,
+        apps: [],
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  });
+
+  ipcMain.handle(ShellIpc.OpenPathWithApp, async (_event, filePath: string, appPath: string) => {
     const normalizedPath = normalizeWindowsShellPath(filePath);
     try {
       const { openFileWithApp } = await import('./shellApps');
@@ -9083,6 +9157,22 @@ if (!gotTheLock) {
         normalizedPath,
         error instanceof Error ? error.message : 'Unknown error',
       );
+    }
+  });
+
+  ipcMain.handle(ShellIpc.OpenUrlWithApp, async (_event, url: string, appPath: string) => {
+    try {
+      const { openUrlWithApp } = await import('./shellApps');
+      await openUrlWithApp(url, appPath);
+      return { success: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      console.warn('[Shell] failed to open URL with selected app:', url, appPath, error);
+      return {
+        success: false,
+        error: message,
+        reason: ShellOpenFailureReason.OpenFailed,
+      };
     }
   });
 

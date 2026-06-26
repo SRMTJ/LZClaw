@@ -10,6 +10,7 @@ export interface LocalWebService {
   host: string;
   port: number;
   online: boolean;
+  projectDirectory?: string;
 }
 
 export interface ListLocalWebServicesOptions {

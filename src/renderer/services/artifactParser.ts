@@ -29,6 +29,14 @@ export function normalizeFilePathForDedup(p: string): string {
   return normalized.replace(/\\/g, '/').toLowerCase();
 }
 
+export function normalizeProjectDirectoryForDedup(projectDirectory: string): string {
+  let normalized = projectDirectory.trim().replace(/\\/g, '/');
+  while (normalized.length > 1 && normalized.endsWith('/')) {
+    normalized = normalized.slice(0, -1);
+  }
+  return normalized.toLowerCase();
+}
+
 const getArtifactIdentityKeys = (artifact: Artifact): string[] => {
   const keys: string[] = [];
   if (artifact.filePath) {
@@ -40,6 +48,14 @@ const getArtifactIdentityKeys = (artifact: Artifact): string[] => {
   }
   if ((artifact.type === 'image' || artifact.type === 'video') && artifact.content?.trim()) {
     keys.push(`url:${artifact.type}:${artifact.content.trim()}`);
+  }
+  if (artifact.type === ArtifactTypeValue.LocalService) {
+    const localServiceUrl = artifact.url?.trim() || artifact.content?.trim();
+    if (localServiceUrl) {
+      const projectDirectory = artifact.localService?.projectDirectory?.trim();
+      const projectKey = projectDirectory ? normalizeProjectDirectoryForDedup(projectDirectory) : '';
+      keys.push(`local-service:${projectKey}:${normalizeLocalServiceUrlForDedup(localServiceUrl)}`);
+    }
   }
   const fileName = artifact.fileName?.trim() || artifact.title?.trim();
   if (artifact.type === 'video' && fileName) {
@@ -200,6 +216,8 @@ const BINARY_DOCUMENT_EXTENSIONS = new Set(['.docx', '.xlsx', '.pptx', '.pdf', '
 const LOCAL_SERVICE_URL_RE = /\bhttps?:\/\/(?:localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0|\[::1\])(?::\d{1,5})?(?:\/[^\s<>"'`)\]]*)?/gi;
 const MARKDOWN_LINK_RE = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/gi;
 const LOCAL_SERVICE_TRAILING_PUNCTUATION_RE = /[.,;:!?，。；：！？、]+$/;
+const PROJECT_DIRECTORY_LABEL_RE = /(?:项目目录|项目路径|工程目录|工作目录|project\s+directory|project\s+path|working\s+directory)\s*[:：]\s*([^\n]+)/gi;
+const CD_COMMAND_RE = /(?:^|\n)\s*(?:[$>]\s*)?cd(?:\s+\/d)?\s+(?:"([^"]+)"|'([^']+)'|`([^`]+)`|([^\n;&|]+))/gi;
 
 
 export function getArtifactTypeFromExtension(ext: string): ArtifactType | null {
@@ -229,6 +247,103 @@ function trimLocalServiceUrl(rawUrl: string): string {
   return url.replace(LOCAL_SERVICE_TRAILING_PUNCTUATION_RE, '');
 }
 
+function decodeProjectDirectoryFileUrl(value: string): string {
+  const trimmed = value.trim();
+  if (!/^file:/i.test(trimmed)) return '';
+  try {
+    const parsed = new URL(trimmed);
+    let pathname = decodeURIComponent(parsed.pathname);
+    if (/^\/[A-Za-z]:/.test(pathname)) {
+      pathname = pathname.slice(1);
+    }
+    return pathname;
+  } catch {
+    return '';
+  }
+}
+
+function cleanProjectDirectoryCandidate(value: string): string {
+  let candidate = value.trim();
+  const markdownLinkMatch = candidate.match(/^\[\s*`?([^`\]\n]+?)`?\s*\]\(([^)\n]+)\)/);
+  if (markdownLinkMatch) {
+    const linkText = markdownLinkMatch[1].trim();
+    const hrefPath = decodeProjectDirectoryFileUrl(markdownLinkMatch[2]);
+    candidate = isAbsoluteProjectDirectoryCandidate(linkText) || linkText.includes('/') || linkText.includes('\\')
+      ? linkText
+      : hrefPath || linkText;
+  }
+
+  return candidate
+    .trim()
+    .replace(/^`+|`+$/g, '')
+    .replace(/[，。；;,.]+$/g, '')
+    .trim();
+}
+
+function isAbsoluteProjectDirectoryCandidate(value: string): boolean {
+  return /^\/[^/]/.test(value) ||
+    /^[A-Za-z]:[\\/]/.test(value) ||
+    /^\\\\/.test(value) ||
+    /^~\//.test(value);
+}
+
+function isPlausibleProjectDirectoryCandidate(value: string): boolean {
+  if (!value) return false;
+  if (/^[`[\](){}<>]+$/.test(value)) return false;
+  return isAbsoluteProjectDirectoryCandidate(value) ||
+    value.includes('/') ||
+    value.includes('\\') ||
+    /^[\w.-]+$/.test(value);
+}
+
+function resolveRelativeProjectDirectory(candidate: string, baseDirectory?: string): string {
+  const base = baseDirectory?.trim();
+  if (!base || isAbsoluteProjectDirectoryCandidate(candidate)) return candidate;
+  if (!candidate || candidate.startsWith('$')) return candidate;
+
+  const separator = base.includes('\\') && !base.includes('/') ? '\\' : '/';
+  const normalizedBase = base.replace(/[\\/]+$/g, '');
+  const combined = `${normalizedBase}${separator}${candidate}`;
+  const parts = combined.replace(/\\/g, '/').split('/');
+  const resolvedParts: string[] = [];
+  const prefix = combined.startsWith('/') ? '/' : '';
+
+  for (const part of parts) {
+    if (!part || part === '.') continue;
+    if (part === '..') {
+      resolvedParts.pop();
+      continue;
+    }
+    resolvedParts.push(part);
+  }
+
+  return `${prefix}${resolvedParts.join('/')}`;
+}
+
+function extractProjectDirectoryFromText(messageContent: string, fallbackProjectDirectory?: string): string {
+  let detected = '';
+
+  const labelRe = new RegExp(PROJECT_DIRECTORY_LABEL_RE.source, 'gi');
+  let labelMatch: RegExpExecArray | null;
+  while ((labelMatch = labelRe.exec(messageContent)) !== null) {
+    const candidate = cleanProjectDirectoryCandidate(labelMatch[1]);
+    if (isPlausibleProjectDirectoryCandidate(candidate)) detected = candidate;
+  }
+
+  const cdRe = new RegExp(CD_COMMAND_RE.source, 'gi');
+  let cdMatch: RegExpExecArray | null;
+  while ((cdMatch = cdRe.exec(messageContent)) !== null) {
+    const candidate = cleanProjectDirectoryCandidate(
+      cdMatch[1] || cdMatch[2] || cdMatch[3] || cdMatch[4] || '',
+    );
+    if (isPlausibleProjectDirectoryCandidate(candidate)) detected = candidate;
+  }
+
+  return detected
+    ? resolveRelativeProjectDirectory(detected, fallbackProjectDirectory)
+    : fallbackProjectDirectory?.trim() || '';
+}
+
 export function normalizeLocalServiceUrlForDedup(url: string): string {
   try {
     const parsed = new URL(trimLocalServiceUrl(url));
@@ -236,6 +351,15 @@ export function normalizeLocalServiceUrlForDedup(url: string): string {
     return `${parsed.protocol}//${parsed.host.toLowerCase()}${pathname}${parsed.search}${parsed.hash}`;
   } catch {
     return trimLocalServiceUrl(url).toLowerCase();
+  }
+}
+
+export function normalizeLocalServiceOrigin(url: string): string {
+  try {
+    const parsed = new URL(trimLocalServiceUrl(url));
+    return parsed.origin.toLowerCase();
+  } catch {
+    return trimLocalServiceUrl(url).replace(/\/+$/, '').toLowerCase();
   }
 }
 
@@ -274,11 +398,13 @@ export function parseLocalServiceUrlsFromText(
   messageContent: string,
   messageId: string,
   sessionId: string,
+  context?: { projectDirectory?: string },
 ): Artifact[] {
   if (!messageContent) return [];
 
   const artifacts: Artifact[] = [];
   const seenUrls = new Set<string>();
+  const projectDirectory = extractProjectDirectoryFromText(messageContent, context?.projectDirectory);
   let index = 0;
 
   const addUrl = (rawUrl: string, linkText?: string) => {
@@ -297,6 +423,13 @@ export function parseLocalServiceUrlsFromText(
       title: buildLocalServiceTitle(url, linkText),
       content: url,
       url,
+      localService: {
+        url,
+        origin: normalizeLocalServiceOrigin(url),
+        ...(projectDirectory
+          ? { projectDirectory }
+          : {}),
+      },
       createdAt: Date.now(),
     });
     index++;

@@ -21,6 +21,7 @@ export const HtmlShareSourceType = {
   MarkdownFile: 'markdown_file',
   MermaidFile: 'mermaid_file',
   NodeServiceDeployment: 'node_service_deployment',
+  StaticServiceDeployment: 'static_service_deployment',
 } as const;
 
 export type HtmlShareSourceType = (typeof HtmlShareSourceType)[keyof typeof HtmlShareSourceType];

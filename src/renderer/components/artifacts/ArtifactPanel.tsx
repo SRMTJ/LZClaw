@@ -13,6 +13,7 @@ import {
 } from '@shared/htmlShare/constants';
 import type { LocalWebService } from '@shared/localWebServices/constants';
 import {
+  ShareDeploymentCandidateSource,
   type ShareDeploymentProjectAnalysis,
   type ShareDeploymentRecord,
   ShareDeploymentStatus,
@@ -75,6 +76,8 @@ const COPYABLE_IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg']);
 
 const PANEL_CLOSE_DRAG_THRESHOLD = 48;
 const FILE_LIST_DRAWER_TRANSITION_MS = 180;
+const NODE_DEPLOYMENT_PROJECT_DIRECTORY_STORAGE_PREFIX =
+  'lobsterai:node-deployment-project-directory:';
 
 const HtmlSharePhase = {
   Idle: 'idle',
@@ -123,6 +126,7 @@ type HtmlSharePendingSource =
   (typeof HtmlSharePendingSource)[keyof typeof HtmlSharePendingSource];
 
 const NodeDeploymentDialogKind = {
+  AccessMode: 'accessMode',
   Confirm: 'confirm',
   Status: 'status',
   Result: 'result',
@@ -142,6 +146,25 @@ const NodeDeploymentPhase = {
 } as const;
 
 type NodeDeploymentPhase = (typeof NodeDeploymentPhase)[keyof typeof NodeDeploymentPhase];
+
+const NodeDeploymentProgressStep = {
+  Prepare: 'prepare',
+  Check: 'check',
+  Upload: 'upload',
+  Deploy: 'deploy',
+  Complete: 'complete',
+} as const;
+
+type NodeDeploymentProgressStep =
+  (typeof NodeDeploymentProgressStep)[keyof typeof NodeDeploymentProgressStep];
+
+const NODE_DEPLOYMENT_PROGRESS_STEPS: readonly NodeDeploymentProgressStep[] = [
+  NodeDeploymentProgressStep.Prepare,
+  NodeDeploymentProgressStep.Check,
+  NodeDeploymentProgressStep.Upload,
+  NodeDeploymentProgressStep.Deploy,
+  NodeDeploymentProgressStep.Complete,
+];
 
 interface HtmlSharePendingRequest {
   source: HtmlSharePendingSource;
@@ -190,6 +213,12 @@ interface HtmlShareLookupState {
   share?: ExistingHtmlShareInfo;
 }
 
+interface NodeDeploymentLookupState {
+  sourceKey: string;
+  isLoading: boolean;
+  deployment?: ShareDeploymentRecord | null;
+}
+
 interface NodeDeploymentDialogState {
   kind: NodeDeploymentDialogKind;
   phase: NodeDeploymentPhase;
@@ -201,10 +230,35 @@ interface NodeDeploymentDialogState {
   accessMode?: HtmlShareAccessModeValue;
   nodeVersion?: string;
   installCommand?: string;
+  buildCommand?: string;
   startCommand?: string;
   port?: string;
   deployment?: ShareDeploymentRecord | null;
   error?: string;
+}
+
+interface BrowserLocalServiceContext {
+  artifactId?: string;
+  url: string;
+  origin: string;
+  projectDirectory?: string;
+}
+
+function isNodeDeploymentDialogForLocalService(
+  dialog: NodeDeploymentDialogState | null,
+  localService: LocalWebService | null,
+): boolean {
+  if (!dialog?.localService || !localService) return false;
+  return (
+    normalizeLocalServiceOriginForCompare(dialog.localService.url) ===
+    normalizeLocalServiceOriginForCompare(localService.url)
+  );
+}
+
+function isSubmittedNodeDeploymentDialog(dialog: NodeDeploymentDialogState | null): boolean {
+  if (!dialog) return false;
+  if (dialog.kind === NodeDeploymentDialogKind.Result) return true;
+  return dialog.kind === NodeDeploymentDialogKind.Status && dialog.phase !== NodeDeploymentPhase.Checking;
 }
 
 function getExistingHtmlShareInfo(
@@ -249,6 +303,85 @@ function shouldUseHtmlShareCode(
   accessMode?: HtmlShareAccessModeValue,
 ): boolean {
   return normalizeHtmlShareAccessMode(accessMode) === HtmlShareAccessMode.Code;
+}
+
+function normalizeNodeDeploymentProjectDirectoryForCompare(value?: string): string {
+  let normalized = value?.trim().replace(/\\/g, '/') || '';
+  while (normalized.length > 1 && normalized.endsWith('/')) {
+    normalized = normalized.slice(0, -1);
+  }
+  return normalized;
+}
+
+function normalizeLocalServiceOriginForCompare(value?: string): string {
+  if (!value) return '';
+  try {
+    return new URL(value.trim()).origin.toLowerCase();
+  } catch {
+    return value.trim().replace(/\/+$/, '').toLowerCase();
+  }
+}
+
+function getNodeDeploymentLookupKey(
+  sessionId: string,
+  localServiceUrl: string,
+  projectDirectory?: string,
+): string {
+  const origin = normalizeLocalServiceOriginForCompare(localServiceUrl);
+  const directory = normalizeNodeDeploymentProjectDirectoryForCompare(projectDirectory);
+  return `${sessionId}:${origin}:${directory}`;
+}
+
+function getNodeDeploymentProjectDirectoryStorageKey(
+  sessionId: string,
+  localServiceUrl: string,
+): string {
+  return `${NODE_DEPLOYMENT_PROJECT_DIRECTORY_STORAGE_PREFIX}${sessionId}:${normalizeLocalServiceOriginForCompare(localServiceUrl)}`;
+}
+
+function getLegacyNodeDeploymentProjectDirectoryStorageKey(
+  sessionId: string,
+  localServiceUrl: string,
+): string {
+  return `${NODE_DEPLOYMENT_PROJECT_DIRECTORY_STORAGE_PREFIX}${sessionId}:${localServiceUrl}`;
+}
+
+function readNodeDeploymentProjectDirectory(
+  sessionId: string,
+  localServiceUrl?: string,
+): string | undefined {
+  if (!localServiceUrl || typeof window === 'undefined') return undefined;
+  try {
+    const value = window.localStorage
+      .getItem(getNodeDeploymentProjectDirectoryStorageKey(sessionId, localServiceUrl))
+      ?.trim();
+    if (value) return value;
+
+    return window.localStorage
+      .getItem(getLegacyNodeDeploymentProjectDirectoryStorageKey(sessionId, localServiceUrl))
+      ?.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeNodeDeploymentProjectDirectory(
+  sessionId: string,
+  localServiceUrl: string,
+  projectDirectory?: string,
+): void {
+  const value = projectDirectory?.trim();
+  if (!value || typeof window === 'undefined') return;
+  try {
+    const key = getNodeDeploymentProjectDirectoryStorageKey(sessionId, localServiceUrl);
+    window.localStorage.setItem(key, value);
+    const legacyKey = getLegacyNodeDeploymentProjectDirectoryStorageKey(sessionId, localServiceUrl);
+    if (legacyKey !== key) {
+      window.localStorage.setItem(legacyKey, value);
+    }
+  } catch {
+    // Local cache is best-effort only.
+  }
 }
 
 function getHtmlShareFailureMessage(
@@ -300,6 +433,30 @@ function getNodeDeploymentStatusLabel(status?: ShareDeploymentStatus): string {
   }
 }
 
+function getNodeDeploymentPhaseStatusLabel(
+  phase?: NodeDeploymentPhase,
+  status?: ShareDeploymentStatus,
+): string {
+  if (status) return getNodeDeploymentStatusLabel(status);
+  switch (phase) {
+    case NodeDeploymentPhase.Checking:
+      return t('nodeDeploymentProgressPrepare');
+    case NodeDeploymentPhase.Analyzing:
+      return t('nodeDeploymentProgressCheck');
+    case NodeDeploymentPhase.Uploading:
+      return t('nodeDeploymentProgressUpload');
+    case NodeDeploymentPhase.Deploying:
+      return t('nodeDeploymentProgressDeploy');
+    case NodeDeploymentPhase.Live:
+      return t('nodeDeploymentStatusLive');
+    case NodeDeploymentPhase.Failed:
+      return t('nodeDeploymentStatusFailed');
+    case NodeDeploymentPhase.Idle:
+    default:
+      return t('nodeDeploymentStatusUnknown');
+  }
+}
+
 function isNodeDeploymentPending(status?: ShareDeploymentStatus): boolean {
   return status === ShareDeploymentStatus.Queued || status === ShareDeploymentStatus.Deploying;
 }
@@ -323,6 +480,245 @@ function getNodeDeploymentStatusMessage(deployment?: ShareDeploymentRecord | nul
       return t('nodeDeploymentPreparingMessage');
   }
 }
+
+function getNodeDeploymentProgressStepLabel(step: NodeDeploymentProgressStep): string {
+  switch (step) {
+    case NodeDeploymentProgressStep.Prepare:
+      return t('nodeDeploymentProgressPrepare');
+    case NodeDeploymentProgressStep.Check:
+      return t('nodeDeploymentProgressCheck');
+    case NodeDeploymentProgressStep.Upload:
+      return t('nodeDeploymentProgressUpload');
+    case NodeDeploymentProgressStep.Deploy:
+      return t('nodeDeploymentProgressDeploy');
+    case NodeDeploymentProgressStep.Complete:
+      return t('nodeDeploymentProgressComplete');
+    default:
+      return '';
+  }
+}
+
+function getNodeDeploymentProgressIndex(
+  phase?: NodeDeploymentPhase,
+  status?: ShareDeploymentStatus,
+): number {
+  switch (status) {
+    case ShareDeploymentStatus.Live:
+    case ShareDeploymentStatus.Stopped:
+    case ShareDeploymentStatus.Expired:
+      return NODE_DEPLOYMENT_PROGRESS_STEPS.length - 1;
+    case ShareDeploymentStatus.Queued:
+    case ShareDeploymentStatus.Deploying:
+    case ShareDeploymentStatus.DeployFailed:
+      return 3;
+    default:
+      break;
+  }
+
+  switch (phase) {
+    case NodeDeploymentPhase.Checking:
+      return 0;
+    case NodeDeploymentPhase.Analyzing:
+      return 1;
+    case NodeDeploymentPhase.Uploading:
+      return 2;
+    case NodeDeploymentPhase.Deploying:
+      return 3;
+    case NodeDeploymentPhase.Live:
+      return NODE_DEPLOYMENT_PROGRESS_STEPS.length - 1;
+    case NodeDeploymentPhase.Failed:
+      return 2;
+    case NodeDeploymentPhase.Idle:
+    default:
+      return 0;
+  }
+}
+
+function isNodeDeploymentProgressComplete(
+  phase?: NodeDeploymentPhase,
+  status?: ShareDeploymentStatus,
+): boolean {
+  return (
+    status === ShareDeploymentStatus.Live ||
+    status === ShareDeploymentStatus.Stopped ||
+    status === ShareDeploymentStatus.Expired ||
+    phase === NodeDeploymentPhase.Live
+  );
+}
+
+function isNodeDeploymentProgressFailed(
+  phase?: NodeDeploymentPhase,
+  status?: ShareDeploymentStatus,
+): boolean {
+  return status === ShareDeploymentStatus.DeployFailed || phase === NodeDeploymentPhase.Failed;
+}
+
+function getNodeDeploymentProgressStepState(
+  stepIndex: number,
+  currentStepIndex: number,
+  isComplete: boolean,
+  isFailed: boolean,
+): 'active' | 'done' | 'failed' | 'pending' {
+  if (isFailed) {
+    if (stepIndex < currentStepIndex) return 'done';
+    if (stepIndex === currentStepIndex) return 'failed';
+    return 'pending';
+  }
+  if (isComplete || stepIndex < currentStepIndex) return 'done';
+  if (stepIndex === currentStepIndex) return 'active';
+  return 'pending';
+}
+
+interface NodeDeploymentStatusCardProps {
+  phase?: NodeDeploymentPhase;
+  deployment?: ShareDeploymentRecord | null;
+  statusLabel: string;
+  message?: string;
+}
+
+// Status summary card: current-status badge, URL, share code, and message.
+// The segmented progress bar is rendered separately by NodeDeploymentProgressSteps.
+const NodeDeploymentStatusCard: React.FC<NodeDeploymentStatusCardProps> = ({
+  phase,
+  deployment,
+  statusLabel,
+  message,
+}) => {
+  const isComplete = isNodeDeploymentProgressComplete(phase, deployment?.status);
+  const isFailed = isNodeDeploymentProgressFailed(phase, deployment?.status);
+
+  return (
+    <div className="rounded-lg border border-border bg-surface px-3 py-3">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-xs font-medium text-secondary">
+          {t('nodeDeploymentCurrentStatus')}
+        </span>
+        <span
+          className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+            isFailed
+              ? 'bg-red-500/10 text-red-500'
+              : isComplete
+                ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-300'
+                : 'bg-primary/10 text-primary'
+          }`}
+        >
+          {statusLabel}
+        </span>
+      </div>
+
+      {deployment?.url && (
+        <div className="mt-3 break-all text-sm leading-5 text-foreground">
+          {deployment.url}
+        </div>
+      )}
+      {deployment && shouldUseHtmlShareCode(deployment.accessMode) && deployment.shareCode && (
+        <div className="mt-3 text-sm leading-5 text-foreground">
+          <span className="text-muted">{t('htmlShareCode')}</span>
+          <span className="ml-2 font-medium">{deployment.shareCode}</span>
+        </div>
+      )}
+      {deployment &&
+        shouldUseHtmlShareCode(deployment.accessMode) &&
+        deployment.shareCodeUnavailable && (
+        <div className="mt-3 text-xs leading-5 text-muted">
+          {t('htmlShareCodeUnavailable')}
+        </div>
+      )}
+      {message && (
+        <div className="mt-3 whitespace-pre-wrap break-words text-sm leading-5 text-secondary">
+          {message}
+        </div>
+      )}
+    </div>
+  );
+};
+
+interface NodeDeploymentProgressStepsProps {
+  phase?: NodeDeploymentPhase;
+  status?: ShareDeploymentStatus;
+}
+
+// Segmented deployment progress bar. Rendered below the redeploy action so it
+// reads as live feedback for the deploy/redeploy step rather than a static header.
+const NodeDeploymentProgressSteps: React.FC<NodeDeploymentProgressStepsProps> = ({
+  phase,
+  status,
+}) => {
+  const currentStepIndex = getNodeDeploymentProgressIndex(phase, status);
+  const isComplete = isNodeDeploymentProgressComplete(phase, status);
+  const isFailed = isNodeDeploymentProgressFailed(phase, status);
+
+  return (
+    <div className="overflow-x-auto pb-1">
+      <div className="flex">
+        {NODE_DEPLOYMENT_PROGRESS_STEPS.map((step, index) => {
+          const state = getNodeDeploymentProgressStepState(
+            index,
+            currentStepIndex,
+            isComplete,
+            isFailed,
+          );
+          const colors =
+            state === 'failed'
+              ? {
+                  segment: 'bg-red-500 text-white',
+                }
+              : state === 'active'
+                ? {
+                    segment: 'bg-blue-500 text-white',
+                  }
+                : state === 'done'
+                  ? {
+                      segment: 'bg-[#339b56] text-white',
+                    }
+                  : {
+                      // Opaque muted neutral — NOT bg-foreground/10. The pills
+                      // overlap, so a translucent pending fill stacks with the
+                      // next pending pill and shows a darker seam. color-mix
+                      // keeps the same tint while staying fully opaque.
+                      segment:
+                        'bg-[color-mix(in_srgb,var(--lobster-foreground)_10%,var(--lobster-background))] text-secondary',
+                    };
+          return (
+            <div
+              key={step}
+              style={{
+                zIndex: NODE_DEPLOYMENT_PROGRESS_STEPS.length - index,
+              }}
+              className={`relative inline-flex h-9 min-w-[112px] flex-1 items-center justify-center gap-2 border-[1.5px] border-background px-4 text-sm font-semibold transition-colors ${
+                index === 0 ? 'rounded-full' : 'rounded-r-full -ml-7 pl-10'
+              } ${colors.segment}`}
+            >
+              <span className="relative z-10 whitespace-nowrap">
+                {getNodeDeploymentProgressStepLabel(step)}
+              </span>
+              {state === 'active' && (
+                <span className="relative z-10 h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent" />
+              )}
+              {state === 'done' && (
+                <svg
+                  className="relative z-10 h-4 w-4 shrink-0"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M3.25 8.2l3 3L12.75 4.7" />
+                </svg>
+              )}
+              {state === 'failed' && (
+                <span className="relative z-10 h-2.5 w-2.5 shrink-0 rounded-full bg-current" />
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
 
 function formatDeploymentBytes(bytes?: number): string {
   if (!bytes || bytes <= 0) return '0 B';
@@ -495,10 +891,12 @@ interface ArtifactPanelProps {
   isPanelExpanded?: boolean;
   browserAddress?: string;
   browserUrl?: string;
+  browserLocalServiceContext?: BrowserLocalServiceContext | null;
   browserHtmlArtifactId?: string | null;
   onBrowserAddressChange?: (value: string) => void;
   onBrowserUrlChange?: (value: string) => void;
   onBrowserTitleChange?: (value: string) => void;
+  onBrowserLocalServiceContextChange?: (context: BrowserLocalServiceContext | null) => void;
   onOpenFileListTab?: () => void;
   onOpenBrowserTab?: () => void;
   onOpenHtmlFileInBrowser?: (artifact: Artifact) => void;
@@ -568,10 +966,12 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   isPanelExpanded = false,
   browserAddress: controlledBrowserAddress,
   browserUrl: controlledBrowserUrl,
+  browserLocalServiceContext,
   browserHtmlArtifactId,
   onBrowserAddressChange,
   onBrowserUrlChange,
   onBrowserTitleChange,
+  onBrowserLocalServiceContextChange,
   onOpenFileListTab,
   onOpenBrowserTab,
   onOpenHtmlFileInBrowser,
@@ -594,9 +994,14 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   const [htmlSharePendingRequest, setHtmlSharePendingRequest] =
     useState<HtmlSharePendingRequest | null>(null);
   const [htmlShareLookup, setHtmlShareLookup] = useState<HtmlShareLookupState | null>(null);
+  const [nodeDeploymentLookup, setNodeDeploymentLookup] =
+    useState<NodeDeploymentLookupState | null>(null);
   const [nodeDeploymentDialog, setNodeDeploymentDialog] =
     useState<NodeDeploymentDialogState | null>(null);
+  const [isNodeDeploymentDialogOpen, setIsNodeDeploymentDialogOpen] = useState(false);
+  const [isNodeDeploymentAdvancedOpen, setIsNodeDeploymentAdvancedOpen] = useState(false);
   const [isNodeDeploymentBusy, setIsNodeDeploymentBusy] = useState(false);
+  const [isNodeDeploymentStatusUpdating, setIsNodeDeploymentStatusUpdating] = useState(false);
   const [isHtmlShareStatusUpdating, setIsHtmlShareStatusUpdating] = useState(false);
   const [htmlShareCopyStatus, setHtmlShareCopyStatus] =
     useState<HtmlShareCopyStatus>(HtmlShareCopyStatus.Idle);
@@ -610,6 +1015,8 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   const fileListDrawerAnimationFrameRef = useRef<number | undefined>(undefined);
   const fileListDrawerCloseTimeoutRef = useRef<number | undefined>(undefined);
   const htmlShareCopyStatusTimerRef = useRef<number | undefined>(undefined);
+  const nodeDeploymentAnalysisRunIdRef = useRef(0);
+  const nodeDeploymentActionRunIdRef = useRef(0);
 
   const previewableArtifacts = artifacts.filter(a => PREVIEWABLE_ARTIFACT_TYPES.has(a.type));
   const artifactsById = useMemo(
@@ -690,6 +1097,31 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   const browserLocalService = isBrowserTabActive
     ? parseLocalServiceUrl(browserUrl || browserAddress)
     : null;
+  const browserLocalServiceUrl = browserLocalService?.url;
+  const browserLocalServiceOrigin = browserLocalServiceUrl
+    ? normalizeLocalServiceOriginForCompare(browserLocalServiceUrl)
+    : '';
+  const contextLocalServiceOrigin = browserLocalServiceContext
+    ? normalizeLocalServiceOriginForCompare(browserLocalServiceContext.origin || browserLocalServiceContext.url)
+    : '';
+  const browserLocalServiceProjectDirectory = browserLocalServiceOrigin &&
+    browserLocalServiceOrigin === contextLocalServiceOrigin
+    ? browserLocalServiceContext?.projectDirectory?.trim() ||
+      readNodeDeploymentProjectDirectory(sessionId, browserLocalServiceUrl)
+    : readNodeDeploymentProjectDirectory(sessionId, browserLocalServiceUrl);
+  const selectedNodeDeploymentLookupKey = browserLocalServiceUrl
+    ? getNodeDeploymentLookupKey(sessionId, browserLocalServiceUrl, browserLocalServiceProjectDirectory)
+    : undefined;
+  const selectedNodeDeployment =
+    selectedNodeDeploymentLookupKey &&
+    nodeDeploymentLookup?.sourceKey === selectedNodeDeploymentLookupKey
+      ? nodeDeploymentLookup.deployment
+      : undefined;
+  const hasActiveNodeDeploymentStatus = Boolean(
+    selectedNodeDeployment ||
+      (isNodeDeploymentDialogForLocalService(nodeDeploymentDialog, browserLocalService) &&
+        isSubmittedNodeDeploymentDialog(nodeDeploymentDialog)),
+  );
   const isHtmlSharing =
     htmlSharePhase === HtmlSharePhase.Checking ||
     htmlSharePhase === HtmlSharePhase.Packing ||
@@ -712,13 +1144,20 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
       hasShareableArtifactSource(htmlShareArtifact, selectedShareSourceType),
   );
   const canShareLocalService = Boolean(browserLocalService);
-  const nodeDeploymentButtonTitle = isNodeDeploymentBusy
-    ? t('nodeDeploymentPreparing')
-    : t('nodeDeploymentShare');
+  const nodeDeploymentButtonTitle = hasActiveNodeDeploymentStatus
+    ? t('nodeDeploymentStatusTitle')
+    : isNodeDeploymentBusy
+      ? t('nodeDeploymentPreparing')
+      : selectedNodeDeployment
+        ? t('htmlShareUpdateShare')
+        : t('nodeDeploymentShare');
   const browserShareButtonTitle = canShareHtmlArtifact
     ? htmlShareButtonTitle
     : nodeDeploymentButtonTitle;
   const browserCanShare = canShareHtmlArtifact || canShareLocalService;
+  const browserHasExistingShare = canShareHtmlArtifact
+    ? Boolean(selectedHtmlShare)
+    : hasActiveNodeDeploymentStatus;
   const browserHtmlAutoRefreshFilePath =
     isBrowserTabActive && browserHtmlArtifact?.type === ArtifactTypeValue.Html
       ? browserHtmlArtifact.filePath
@@ -799,6 +1238,19 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
       onBrowserUrlChange?.(value);
     },
     [onBrowserUrlChange],
+  );
+
+  const handleBrowserLocalServiceOpen = useCallback(
+    (service: LocalWebService) => {
+      onBrowserLocalServiceContextChange?.({
+        url: service.url,
+        origin: normalizeLocalServiceOriginForCompare(service.url),
+        ...(service.projectDirectory?.trim()
+          ? { projectDirectory: service.projectDirectory.trim() }
+          : {}),
+      });
+    },
+    [onBrowserLocalServiceContextChange],
   );
 
   const openFileListDrawer = useCallback(() => {
@@ -995,12 +1447,99 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   ]);
 
   useEffect(() => {
+    if (
+      !browserLocalServiceUrl ||
+      !selectedNodeDeploymentLookupKey ||
+      !authState.isLoggedIn ||
+      authState.quota?.subscriptionStatus !== 'active'
+    ) {
+      setNodeDeploymentLookup(null);
+      return;
+    }
+
+    let isCancelled = false;
+    const shareDeploymentApi = window.electron?.shareDeployment;
+
+    setNodeDeploymentLookup(previous => {
+      if (previous?.sourceKey === selectedNodeDeploymentLookupKey && previous.deployment) {
+        return previous;
+      }
+      return { sourceKey: selectedNodeDeploymentLookupKey, isLoading: true };
+    });
+
+    if (!shareDeploymentApi) {
+      setNodeDeploymentLookup({
+        sourceKey: selectedNodeDeploymentLookupKey,
+        isLoading: false,
+      });
+      return () => {
+        isCancelled = true;
+      };
+    }
+
+    shareDeploymentApi
+      .getByLocalService({
+        sessionId,
+        localServiceUrl: browserLocalServiceUrl,
+        projectDirectory: browserLocalServiceProjectDirectory,
+      })
+      .then(result => {
+        if (isCancelled) return;
+        const deployment = result?.success ? result.deployment : null;
+        setNodeDeploymentLookup(previous => {
+          if (
+            !deployment &&
+            previous?.sourceKey === selectedNodeDeploymentLookupKey &&
+            previous.deployment
+          ) {
+            return previous;
+          }
+          return {
+            sourceKey: selectedNodeDeploymentLookupKey,
+            isLoading: false,
+            deployment: deployment ?? null,
+          };
+        });
+      })
+      .catch(() => {
+        if (isCancelled) return;
+        setNodeDeploymentLookup(previous => {
+          if (previous?.sourceKey === selectedNodeDeploymentLookupKey && previous.deployment) {
+            return previous;
+          }
+          return {
+            sourceKey: selectedNodeDeploymentLookupKey,
+            isLoading: false,
+            deployment: null,
+          };
+        });
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [
+    authState.isLoggedIn,
+    authState.quota?.subscriptionStatus,
+    browserLocalServiceUrl,
+    browserLocalServiceProjectDirectory,
+    selectedNodeDeploymentLookupKey,
+    sessionId,
+  ]);
+
+  useEffect(() => {
     if (htmlShareCopyStatusTimerRef.current !== undefined) {
       window.clearTimeout(htmlShareCopyStatusTimerRef.current);
       htmlShareCopyStatusTimerRef.current = undefined;
     }
     setHtmlShareCopyStatus(HtmlShareCopyStatus.Idle);
   }, [htmlShareDialog?.shareId, htmlShareDialog?.url]);
+
+  useEffect(() => {
+    if (nodeDeploymentDialog?.kind !== NodeDeploymentDialogKind.Confirm) {
+      setIsNodeDeploymentAdvancedOpen(false);
+    }
+  }, [nodeDeploymentDialog?.kind]);
 
   useEffect(() => {
     if (selectedArtifact) return;
@@ -1365,6 +1904,18 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     });
   }, []);
 
+  const rememberNodeDeployment = useCallback((
+    sourceKey: string | undefined,
+    deployment: ShareDeploymentRecord | null | undefined,
+  ) => {
+    if (!sourceKey || !deployment) return;
+    setNodeDeploymentLookup({
+      sourceKey,
+      isLoading: false,
+      deployment,
+    });
+  }, []);
+
   const handleHtmlShareResult = useCallback(
     (
       result: Awaited<
@@ -1415,7 +1966,21 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     [],
   );
 
-  const openNodeDeploymentStatusDialog = useCallback((deployment: ShareDeploymentRecord) => {
+  const openNodeDeploymentStatusDialog = useCallback((
+    deployment: ShareDeploymentRecord,
+    context?: Partial<Pick<
+      NodeDeploymentDialogState,
+      | 'localService'
+      | 'projectDirectory'
+      | 'analysis'
+      | 'accessMode'
+      | 'nodeVersion'
+      | 'installCommand'
+      | 'buildCommand'
+      | 'startCommand'
+      | 'port'
+    >>,
+  ) => {
     setNodeDeploymentDialog({
       kind: NodeDeploymentDialogKind.Status,
       phase:
@@ -1426,8 +1991,9 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
             : NodeDeploymentPhase.Deploying,
       title: t('nodeDeploymentStatusTitle'),
       message: getNodeDeploymentStatusMessage(deployment),
+      ...context,
       deployment,
-      accessMode: normalizeHtmlShareAccessMode(deployment.accessMode),
+      accessMode: normalizeHtmlShareAccessMode(context?.accessMode ?? deployment.accessMode),
     });
   }, []);
 
@@ -1445,13 +2011,81 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
       projectDirectory,
       analysis,
       accessMode: HtmlShareAccessMode.Code,
-      nodeVersion: analysis?.nodeVersion || '20',
+      nodeVersion: '20',
       installCommand: analysis?.installCommand || 'npm ci',
+      buildCommand: analysis?.buildCommand || '',
       startCommand: analysis?.startCommand || '',
-      port: String(analysis?.port || localService.port),
+      port: String(localService.port),
     }),
     [],
   );
+
+  const openNodeDeploymentAccessModeDialog = useCallback((
+    localService: LocalWebService,
+    projectDirectory: string,
+    accessMode: HtmlShareAccessModeValue = HtmlShareAccessMode.Code,
+  ) => {
+    setNodeDeploymentDialog({
+      kind: NodeDeploymentDialogKind.AccessMode,
+      phase: NodeDeploymentPhase.Idle,
+      title: t('htmlShareCreateDialogTitle'),
+      message: shouldUseHtmlShareCode(accessMode)
+        ? t('htmlShareCodeViewHint')
+        : t('htmlSharePublicViewHint'),
+      localService,
+      projectDirectory,
+      accessMode,
+      port: String(localService.port),
+    });
+  }, []);
+
+  const checkLocalServiceAvailable = useCallback(async (localService: LocalWebService): Promise<boolean> => {
+    const localWebServicesApi = window.electron?.artifact?.listLocalWebServices;
+    if (!localWebServicesApi) return false;
+    try {
+      const services = await localWebServicesApi({ preferredPorts: [localService.port] });
+      return services.some(service => service.port === localService.port && service.online);
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const openLocalServiceUnavailableDialog = useCallback((
+    localService: LocalWebService,
+    projectDirectory?: string,
+  ) => {
+    setIsNodeDeploymentDialogOpen(true);
+    setNodeDeploymentDialog({
+      kind: NodeDeploymentDialogKind.Result,
+      phase: NodeDeploymentPhase.Failed,
+      title: t('nodeDeploymentLocalServiceUnavailableTitle'),
+      message: t('nodeDeploymentLocalServiceUnavailableMessage'),
+      localService,
+      projectDirectory,
+    });
+  }, []);
+
+  const confirmNodeDeploymentAccessMode = useCallback(() => {
+    const currentDialog = nodeDeploymentDialog;
+    if (
+      !currentDialog ||
+      currentDialog.kind !== NodeDeploymentDialogKind.AccessMode ||
+      !currentDialog.localService
+    ) {
+      return;
+    }
+
+    setNodeDeploymentDialog({
+      ...buildNodeDeploymentConfirmDialog(
+        currentDialog.localService,
+        currentDialog.projectDirectory || '',
+      ),
+      accessMode: normalizeHtmlShareAccessMode(currentDialog.accessMode),
+    });
+  }, [
+    buildNodeDeploymentConfirmDialog,
+    nodeDeploymentDialog,
+  ]);
 
   const analyzeNodeDeploymentProject = useCallback(
     async (localService: LocalWebService, projectDirectory: string) => {
@@ -1464,11 +2098,87 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     [],
   );
 
+  const validateNodeDeploymentProjectDirectory = useCallback(
+    async (localService: LocalWebService, projectDirectory?: string) => {
+      const normalizedProjectDirectory = projectDirectory?.trim();
+      if (!normalizedProjectDirectory) return undefined;
+      const analysis = await analyzeNodeDeploymentProject(localService, normalizedProjectDirectory);
+      return analysis?.success
+        ? analysis.projectDirectory || normalizedProjectDirectory
+        : undefined;
+    },
+    [analyzeNodeDeploymentProject],
+  );
+
+  const resolveNodeDeploymentProjectDirectory = useCallback(
+    async (localService: LocalWebService, preferredProjectDirectory?: string) => {
+      const detected = await window.electron?.shareDeployment?.detectProjectCandidates({
+        localServiceUrl: localService.url,
+        workingDirectory,
+      });
+      const processDirectory = detected?.candidates
+        ?.find(candidate => candidate.source === ShareDeploymentCandidateSource.Process)
+        ?.directory
+        ?.trim();
+      if (processDirectory) return processDirectory;
+
+      const validPreferredProjectDirectory = await validateNodeDeploymentProjectDirectory(
+        localService,
+        preferredProjectDirectory,
+      );
+      if (validPreferredProjectDirectory) return validPreferredProjectDirectory;
+
+      const detectedDirectory = detected?.candidates?.[0]?.directory?.trim();
+      if (detectedDirectory) return detectedDirectory;
+
+      const validWorkingDirectory = await validateNodeDeploymentProjectDirectory(
+        localService,
+        workingDirectory,
+      );
+      return validWorkingDirectory || workingDirectory.trim() || '';
+    },
+    [
+      validateNodeDeploymentProjectDirectory,
+      workingDirectory,
+    ],
+  );
+
   const handleShareLocalServiceDeployment = useCallback(async () => {
-    if (!browserLocalService || isNodeDeploymentBusy || isHtmlSharing) return;
+    if (!browserLocalService || isHtmlSharing) return;
+    if (
+      nodeDeploymentDialog &&
+      (isNodeDeploymentBusy ||
+        isNodeDeploymentDialogForLocalService(nodeDeploymentDialog, browserLocalService))
+    ) {
+      setIsNodeDeploymentDialogOpen(true);
+      return;
+    }
+    if (isNodeDeploymentBusy) return;
     if (!(await ensureHtmlShareAllowed())) return;
+    const runId = nodeDeploymentActionRunIdRef.current + 1;
+    nodeDeploymentActionRunIdRef.current = runId;
+    const storedProjectDirectory =
+      browserLocalServiceProjectDirectory ||
+      readNodeDeploymentProjectDirectory(
+        sessionId,
+        browserLocalService.url,
+      );
+    if (selectedNodeDeployment) {
+      setIsNodeDeploymentDialogOpen(true);
+      openNodeDeploymentStatusDialog(selectedNodeDeployment, {
+        localService: browserLocalService,
+        projectDirectory: storedProjectDirectory,
+      });
+      return;
+    }
+
+    if (!(await checkLocalServiceAvailable(browserLocalService))) {
+      openLocalServiceUnavailableDialog(browserLocalService, storedProjectDirectory);
+      return;
+    }
 
     setIsNodeDeploymentBusy(true);
+    setIsNodeDeploymentDialogOpen(true);
     setNodeDeploymentDialog({
       kind: NodeDeploymentDialogKind.Status,
       phase: NodeDeploymentPhase.Checking,
@@ -1478,32 +2188,39 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     });
 
     try {
+      const projectDirectory = await resolveNodeDeploymentProjectDirectory(
+        browserLocalService,
+        storedProjectDirectory,
+      );
+      if (nodeDeploymentActionRunIdRef.current !== runId) return;
+      const lookupKey = getNodeDeploymentLookupKey(
+        sessionId,
+        browserLocalService.url,
+        projectDirectory,
+      );
       const existing = await window.electron?.shareDeployment?.getByLocalService({
         sessionId,
         localServiceUrl: browserLocalService.url,
+        projectDirectory,
       });
+      if (nodeDeploymentActionRunIdRef.current !== runId) return;
       if (existing?.success && existing.deployment) {
-        openNodeDeploymentStatusDialog(existing.deployment);
+        writeNodeDeploymentProjectDirectory(
+          sessionId,
+          browserLocalService.url,
+          projectDirectory,
+        );
+        rememberNodeDeployment(lookupKey, existing.deployment);
+        openNodeDeploymentStatusDialog(existing.deployment, {
+          localService: browserLocalService,
+          projectDirectory,
+        });
         return;
       }
 
-      const detected = await window.electron?.shareDeployment?.detectProjectCandidates({
-        localServiceUrl: browserLocalService.url,
-        workingDirectory,
-      });
-      const detectedDirectory = detected?.candidates?.[0]?.directory;
-      const projectDirectory = detectedDirectory || workingDirectory.trim();
-      let analysis: ShareDeploymentProjectAnalysis | undefined;
-      if (projectDirectory) {
-        setNodeDeploymentDialog(previous => previous
-          ? { ...previous, phase: NodeDeploymentPhase.Analyzing, message: t('nodeDeploymentAnalyzingProject') }
-          : previous);
-        analysis = await analyzeNodeDeploymentProject(browserLocalService, projectDirectory);
-      }
-      setNodeDeploymentDialog(
-        buildNodeDeploymentConfirmDialog(browserLocalService, projectDirectory, analysis),
-      );
+      openNodeDeploymentAccessModeDialog(browserLocalService, projectDirectory);
     } catch (error) {
+      if (nodeDeploymentActionRunIdRef.current !== runId) return;
       setNodeDeploymentDialog({
         kind: NodeDeploymentDialogKind.Result,
         phase: NodeDeploymentPhase.Failed,
@@ -1512,18 +2229,100 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
         localService: browserLocalService,
       });
     } finally {
-      setIsNodeDeploymentBusy(false);
+      if (nodeDeploymentActionRunIdRef.current === runId) {
+        setIsNodeDeploymentBusy(false);
+      }
     }
   }, [
-    analyzeNodeDeploymentProject,
     browserLocalService,
-    buildNodeDeploymentConfirmDialog,
+    browserLocalServiceProjectDirectory,
+    checkLocalServiceAvailable,
     ensureHtmlShareAllowed,
     isHtmlSharing,
     isNodeDeploymentBusy,
+    nodeDeploymentDialog,
+    openLocalServiceUnavailableDialog,
     openNodeDeploymentStatusDialog,
+    openNodeDeploymentAccessModeDialog,
+    rememberNodeDeployment,
+    resolveNodeDeploymentProjectDirectory,
+    selectedNodeDeployment,
     sessionId,
-    workingDirectory,
+  ]);
+
+  const retryNodeDeployment = useCallback(async () => {
+    const currentDialog = nodeDeploymentDialog;
+    const localService = currentDialog?.localService ?? browserLocalService;
+    if (!localService || isNodeDeploymentBusy) return;
+
+    const runId = nodeDeploymentActionRunIdRef.current + 1;
+    nodeDeploymentActionRunIdRef.current = runId;
+    setIsNodeDeploymentBusy(true);
+    setNodeDeploymentDialog(previous => previous
+      ? {
+          ...previous,
+          kind: NodeDeploymentDialogKind.Status,
+          phase: NodeDeploymentPhase.Analyzing,
+          title: t('nodeDeploymentPreparingTitle'),
+          message: t('nodeDeploymentAnalyzingProject'),
+          localService,
+          error: undefined,
+        }
+      : previous);
+
+    try {
+      const storedProjectDirectory = readNodeDeploymentProjectDirectory(sessionId, localService.url);
+      if (!(await checkLocalServiceAvailable(localService))) {
+        openLocalServiceUnavailableDialog(
+          localService,
+          currentDialog?.projectDirectory?.trim() || storedProjectDirectory,
+        );
+        return;
+      }
+      const projectDirectory = await resolveNodeDeploymentProjectDirectory(
+        localService,
+        currentDialog?.projectDirectory?.trim() || storedProjectDirectory,
+      );
+      if (nodeDeploymentActionRunIdRef.current !== runId) return;
+      const confirmDialog = buildNodeDeploymentConfirmDialog(localService, projectDirectory);
+      const deployment = currentDialog?.deployment;
+      setNodeDeploymentDialog({
+        ...confirmDialog,
+        accessMode: normalizeHtmlShareAccessMode(
+          currentDialog?.accessMode ?? deployment?.accessMode ?? confirmDialog.accessMode,
+        ),
+        nodeVersion: currentDialog?.nodeVersion ?? deployment?.runtimeVersion ?? confirmDialog.nodeVersion,
+        installCommand: currentDialog?.installCommand ?? deployment?.installCommand ?? confirmDialog.installCommand,
+        buildCommand: currentDialog?.buildCommand ?? deployment?.buildCommand ?? confirmDialog.buildCommand,
+        startCommand: currentDialog?.startCommand ?? deployment?.startCommand ?? confirmDialog.startCommand,
+        port: currentDialog?.port ?? (deployment?.targetPort ? String(deployment.targetPort) : confirmDialog.port),
+      });
+    } catch (error) {
+      if (nodeDeploymentActionRunIdRef.current !== runId) return;
+      setNodeDeploymentDialog(previous => ({
+        kind: NodeDeploymentDialogKind.Result,
+        phase: NodeDeploymentPhase.Failed,
+        title: t('nodeDeploymentFailedTitle'),
+        message: error instanceof Error ? error.message : t('nodeDeploymentAnalyzeFailed'),
+        localService,
+        projectDirectory: currentDialog?.projectDirectory,
+        analysis: previous?.analysis,
+        accessMode: previous?.accessMode,
+      }));
+    } finally {
+      if (nodeDeploymentActionRunIdRef.current === runId) {
+        setIsNodeDeploymentBusy(false);
+      }
+    }
+  }, [
+    browserLocalService,
+    buildNodeDeploymentConfirmDialog,
+    checkLocalServiceAvailable,
+    isNodeDeploymentBusy,
+    nodeDeploymentDialog,
+    openLocalServiceUnavailableDialog,
+    resolveNodeDeploymentProjectDirectory,
+    sessionId,
   ]);
 
   const chooseNodeDeploymentProjectDirectory = useCallback(async () => {
@@ -1532,40 +2331,21 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     const result = await window.electron?.dialog?.selectDirectory();
     if (!result?.success || !result.path) return;
 
-    setIsNodeDeploymentBusy(true);
     setNodeDeploymentDialog(previous => previous
       ? {
           ...previous,
-          phase: NodeDeploymentPhase.Analyzing,
           projectDirectory: result.path || previous.projectDirectory,
-          message: t('nodeDeploymentAnalyzingProject'),
+          analysis: undefined,
+          error: undefined,
         }
       : previous);
-    try {
-      const analysis = await analyzeNodeDeploymentProject(currentDialog.localService, result.path);
-      setNodeDeploymentDialog(
-        buildNodeDeploymentConfirmDialog(currentDialog.localService, result.path, analysis),
-      );
-    } catch (error) {
-      setNodeDeploymentDialog(previous => previous
-        ? {
-            ...previous,
-            phase: NodeDeploymentPhase.Failed,
-            error: error instanceof Error ? error.message : t('nodeDeploymentAnalyzeFailed'),
-          }
-        : previous);
-    } finally {
-      setIsNodeDeploymentBusy(false);
-    }
   }, [
-    analyzeNodeDeploymentProject,
-    buildNodeDeploymentConfirmDialog,
     isNodeDeploymentBusy,
     nodeDeploymentDialog,
   ]);
 
   const updateNodeDeploymentDialogField = useCallback(
-    (field: 'nodeVersion' | 'installCommand' | 'startCommand' | 'port', value: string) => {
+    (field: 'nodeVersion' | 'installCommand' | 'buildCommand' | 'startCommand' | 'port', value: string) => {
       setNodeDeploymentDialog(previous => {
         if (!previous || previous.kind !== NodeDeploymentDialogKind.Confirm) return previous;
         return {
@@ -1589,58 +2369,137 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     });
   }, []);
 
-  const reanalyzeNodeDeploymentProjectDirectory = useCallback(async () => {
-    const currentDialog = nodeDeploymentDialog;
-    if (
-      !currentDialog?.localService ||
-      !currentDialog.projectDirectory?.trim() ||
-      isNodeDeploymentBusy
-    ) {
-      return;
+  const nodeDeploymentAutoAnalysisLocalService =
+    nodeDeploymentDialog?.kind === NodeDeploymentDialogKind.Confirm
+      ? nodeDeploymentDialog.localService
+      : undefined;
+  const nodeDeploymentAutoAnalysisProjectDirectory =
+    nodeDeploymentDialog?.kind === NodeDeploymentDialogKind.Confirm
+      ? normalizeNodeDeploymentProjectDirectoryForCompare(nodeDeploymentDialog.projectDirectory)
+      : '';
+  const nodeDeploymentAutoAnalysisResultDirectory =
+    nodeDeploymentDialog?.kind === NodeDeploymentDialogKind.Confirm
+      ? normalizeNodeDeploymentProjectDirectoryForCompare(nodeDeploymentDialog.analysis?.projectDirectory)
+      : undefined;
+
+  useEffect(() => {
+    if (!nodeDeploymentAutoAnalysisLocalService || !nodeDeploymentAutoAnalysisProjectDirectory) {
+      return undefined;
     }
 
-    setIsNodeDeploymentBusy(true);
-    setNodeDeploymentDialog(previous => previous
-      ? { ...previous, phase: NodeDeploymentPhase.Analyzing, message: t('nodeDeploymentAnalyzingProject') }
-      : previous);
-    try {
-      const analysis = await analyzeNodeDeploymentProject(
-        currentDialog.localService,
-        currentDialog.projectDirectory,
-      );
-      setNodeDeploymentDialog(
-        buildNodeDeploymentConfirmDialog(
-          currentDialog.localService,
-          currentDialog.projectDirectory,
-          analysis,
-        ),
-      );
-    } catch (error) {
-      setNodeDeploymentDialog(previous => previous
-        ? {
-            ...previous,
-            phase: NodeDeploymentPhase.Failed,
-            error: error instanceof Error ? error.message : t('nodeDeploymentAnalyzeFailed'),
-          }
-        : previous);
-    } finally {
-      setIsNodeDeploymentBusy(false);
+    const projectDirectory = nodeDeploymentAutoAnalysisProjectDirectory;
+    if (nodeDeploymentAutoAnalysisResultDirectory === projectDirectory) {
+      return undefined;
     }
+
+    let isCancelled = false;
+    let runId: number | undefined;
+    const timer = window.setTimeout(() => {
+      runId = nodeDeploymentAnalysisRunIdRef.current + 1;
+      nodeDeploymentAnalysisRunIdRef.current = runId;
+      setIsNodeDeploymentBusy(true);
+      setNodeDeploymentDialog(previous => {
+        if (
+          !previous ||
+          previous.kind !== NodeDeploymentDialogKind.Confirm ||
+          normalizeNodeDeploymentProjectDirectoryForCompare(previous.projectDirectory) !== projectDirectory
+        ) {
+          return previous;
+        }
+        return {
+          ...previous,
+          phase: NodeDeploymentPhase.Analyzing,
+          message: t('nodeDeploymentAnalyzingProject'),
+          error: undefined,
+        };
+      });
+
+      void analyzeNodeDeploymentProject(nodeDeploymentAutoAnalysisLocalService, projectDirectory)
+        .then(analysis => {
+          if (isCancelled) return;
+          setNodeDeploymentDialog(previous => {
+            if (
+              !previous ||
+              previous.kind !== NodeDeploymentDialogKind.Confirm ||
+              normalizeNodeDeploymentProjectDirectoryForCompare(previous.projectDirectory) !== projectDirectory
+            ) {
+              return previous;
+            }
+            const nextDialog = buildNodeDeploymentConfirmDialog(
+              nodeDeploymentAutoAnalysisLocalService,
+              projectDirectory,
+              analysis,
+            );
+            return {
+              ...nextDialog,
+              accessMode: previous.accessMode ?? nextDialog.accessMode,
+            };
+          });
+        })
+        .catch(error => {
+          if (isCancelled) return;
+          setNodeDeploymentDialog(previous => {
+            if (
+              !previous ||
+              previous.kind !== NodeDeploymentDialogKind.Confirm ||
+              normalizeNodeDeploymentProjectDirectoryForCompare(previous.projectDirectory) !== projectDirectory
+            ) {
+              return previous;
+            }
+            return {
+              ...previous,
+              phase: NodeDeploymentPhase.Failed,
+              error: error instanceof Error ? error.message : t('nodeDeploymentAnalyzeFailed'),
+            };
+          });
+        })
+        .finally(() => {
+          if (nodeDeploymentAnalysisRunIdRef.current === runId) {
+            setIsNodeDeploymentBusy(false);
+          }
+        });
+    }, 500);
+
+    return () => {
+      isCancelled = true;
+      window.clearTimeout(timer);
+      if (runId !== undefined && nodeDeploymentAnalysisRunIdRef.current === runId) {
+        setIsNodeDeploymentBusy(false);
+      }
+    };
   }, [
     analyzeNodeDeploymentProject,
     buildNodeDeploymentConfirmDialog,
-    isNodeDeploymentBusy,
-    nodeDeploymentDialog,
+    nodeDeploymentAutoAnalysisLocalService,
+    nodeDeploymentAutoAnalysisProjectDirectory,
+    nodeDeploymentAutoAnalysisResultDirectory,
   ]);
 
   const selectNodeDeploymentAccessMode = useCallback((accessMode: HtmlShareAccessModeValue) => {
     setNodeDeploymentDialog(previous => {
-      if (!previous || previous.kind !== NodeDeploymentDialogKind.Confirm) return previous;
+      if (
+        !previous ||
+        (previous.kind !== NodeDeploymentDialogKind.AccessMode &&
+          previous.kind !== NodeDeploymentDialogKind.Confirm &&
+          previous.kind !== NodeDeploymentDialogKind.Status)
+      ) {
+        return previous;
+      }
       return {
         ...previous,
         accessMode,
+        message: previous.kind === NodeDeploymentDialogKind.AccessMode
+          ? shouldUseHtmlShareCode(accessMode)
+            ? t('htmlShareCodeViewHint')
+            : t('htmlSharePublicViewHint')
+          : previous.message,
+        error: undefined,
       };
     });
+  }, []);
+
+  const closeNodeDeploymentDialog = useCallback(() => {
+    setIsNodeDeploymentDialogOpen(false);
   }, []);
 
   const submitNodeDeployment = useCallback(async () => {
@@ -1656,6 +2515,8 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     }
     if (currentDialog.analysis?.blockers.length) return;
 
+    const runId = nodeDeploymentActionRunIdRef.current + 1;
+    nodeDeploymentActionRunIdRef.current = runId;
     const port = Number(currentDialog.port);
     if (!Number.isInteger(port) || port <= 0 || port > 65535) {
       setNodeDeploymentDialog(previous => previous
@@ -1663,8 +2524,13 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
         : previous);
       return;
     }
+    if (!(await checkLocalServiceAvailable(currentDialog.localService))) {
+      openLocalServiceUnavailableDialog(currentDialog.localService, currentDialog.projectDirectory);
+      return;
+    }
 
     setIsNodeDeploymentBusy(true);
+    setIsNodeDeploymentDialogOpen(true);
     setNodeDeploymentDialog(previous => previous
       ? {
           ...previous,
@@ -1684,15 +2550,41 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
         projectDirectory: currentDialog.projectDirectory,
         accessMode: normalizeHtmlShareAccessMode(currentDialog.accessMode),
         nodeVersion: currentDialog.nodeVersion || currentDialog.analysis?.nodeVersion || '20',
-        installCommand: currentDialog.installCommand || currentDialog.analysis?.installCommand || 'npm ci',
+        installCommand: currentDialog.installCommand ?? currentDialog.analysis?.installCommand ?? 'npm ci',
+        buildCommand: currentDialog.buildCommand ?? currentDialog.analysis?.buildCommand ?? '',
         startCommand: currentDialog.startCommand || currentDialog.analysis?.startCommand || 'npm run start',
         port,
       });
+      if (nodeDeploymentActionRunIdRef.current !== runId) return;
       if (!result?.success || !result.deployment) {
         throw new Error(result?.error || t('nodeDeploymentFailedMessage'));
       }
-      openNodeDeploymentStatusDialog(result.deployment);
+      writeNodeDeploymentProjectDirectory(
+        sessionId,
+        currentDialog.localService.url,
+        currentDialog.projectDirectory,
+      );
+      rememberNodeDeployment(
+        getNodeDeploymentLookupKey(
+          sessionId,
+          currentDialog.localService.url,
+          currentDialog.projectDirectory,
+        ),
+        result.deployment,
+      );
+      openNodeDeploymentStatusDialog(result.deployment, {
+        localService: currentDialog.localService,
+        projectDirectory: currentDialog.projectDirectory,
+        analysis: currentDialog.analysis,
+        accessMode: currentDialog.accessMode,
+        nodeVersion: currentDialog.nodeVersion,
+        installCommand: currentDialog.installCommand,
+        buildCommand: currentDialog.buildCommand,
+        startCommand: currentDialog.startCommand,
+        port: currentDialog.port,
+      });
     } catch (error) {
+      if (nodeDeploymentActionRunIdRef.current !== runId) return;
       setNodeDeploymentDialog({
         kind: NodeDeploymentDialogKind.Result,
         phase: NodeDeploymentPhase.Failed,
@@ -1702,23 +2594,230 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
         projectDirectory: currentDialog.projectDirectory,
         analysis: currentDialog.analysis,
         accessMode: currentDialog.accessMode,
+        nodeVersion: currentDialog.nodeVersion,
+        installCommand: currentDialog.installCommand,
+        buildCommand: currentDialog.buildCommand,
+        startCommand: currentDialog.startCommand,
+        port: currentDialog.port,
       });
     } finally {
-      setIsNodeDeploymentBusy(false);
+      if (nodeDeploymentActionRunIdRef.current === runId) {
+        setIsNodeDeploymentBusy(false);
+      }
     }
   }, [
+    checkLocalServiceAvailable,
     isNodeDeploymentBusy,
     nodeDeploymentDialog,
+    openLocalServiceUnavailableDialog,
     openNodeDeploymentStatusDialog,
+    rememberNodeDeployment,
     sessionId,
   ]);
 
-  useEffect(() => {
-    const deployment = nodeDeploymentDialog?.deployment;
+  const updateNodeDeploymentAccessMode = useCallback(async () => {
+    const currentDialog = nodeDeploymentDialog;
+    const deployment = currentDialog?.deployment;
     if (
-      nodeDeploymentDialog?.kind !== NodeDeploymentDialogKind.Status ||
-      !deployment?.deploymentId ||
-      !isNodeDeploymentPending(deployment.status)
+      !deployment?.shareId ||
+      currentDialog?.kind !== NodeDeploymentDialogKind.Status ||
+      isNodeDeploymentStatusUpdating
+    ) {
+      return;
+    }
+    const accessMode = normalizeHtmlShareAccessMode(currentDialog.accessMode ?? deployment.accessMode);
+    if (accessMode === normalizeHtmlShareAccessMode(deployment.accessMode)) return;
+
+    setIsNodeDeploymentStatusUpdating(true);
+    setNodeDeploymentDialog(previous => previous
+      ? { ...previous, error: undefined }
+      : previous);
+    try {
+      const result = await window.electron?.htmlShare?.updateAccessMode({
+        shareId: deployment.shareId,
+        accessMode,
+      });
+      if (!result?.success) {
+        throw new Error(getHtmlShareFailureMessage(result));
+      }
+      const resultAccessMode = normalizeHtmlShareAccessMode(result.accessMode ?? accessMode);
+      rememberNodeDeployment(
+        currentDialog.localService
+          ? `${sessionId}:${currentDialog.localService.url}`
+          : selectedNodeDeploymentLookupKey,
+        {
+          ...deployment,
+          accessMode: resultAccessMode,
+          shareCode: shouldUseHtmlShareCode(resultAccessMode) ? result.shareCode : undefined,
+          shareCodeUnavailable: result.shareCodeUnavailable,
+          shareStatus: result.status ?? deployment.shareStatus,
+          disabledSource: result.disabledSource ?? deployment.disabledSource,
+        },
+      );
+      setNodeDeploymentDialog(previous => {
+        if (
+          !previous ||
+          previous.kind !== NodeDeploymentDialogKind.Status
+        ) {
+          return previous;
+        }
+        const previousDeployment = previous.deployment;
+        if (!previousDeployment || previousDeployment.shareId !== deployment.shareId) {
+          return previous;
+        }
+        return {
+          ...previous,
+          message: t('nodeDeploymentAccessModeUpdateComplete'),
+          accessMode: resultAccessMode,
+          deployment: {
+            ...previousDeployment,
+            accessMode: resultAccessMode,
+            shareCode: shouldUseHtmlShareCode(resultAccessMode) ? result.shareCode : undefined,
+            shareCodeUnavailable: result.shareCodeUnavailable,
+            shareStatus: result.status ?? previousDeployment.shareStatus,
+            disabledSource: result.disabledSource ?? previousDeployment.disabledSource,
+          },
+          error: undefined,
+        };
+      });
+    } catch (error) {
+      setNodeDeploymentDialog(previous => previous
+        ? {
+            ...previous,
+            error: error instanceof Error ? error.message : t('htmlShareAccessModeUpdateFailed'),
+          }
+        : previous);
+    } finally {
+      setIsNodeDeploymentStatusUpdating(false);
+    }
+  }, [
+    isNodeDeploymentStatusUpdating,
+    nodeDeploymentDialog,
+    rememberNodeDeployment,
+    selectedNodeDeploymentLookupKey,
+    sessionId,
+  ]);
+
+  const toggleNodeDeploymentShareStatus = useCallback(async () => {
+    const currentDialog = nodeDeploymentDialog;
+    const deployment = currentDialog?.deployment;
+    if (
+      !deployment?.shareId ||
+      currentDialog?.kind !== NodeDeploymentDialogKind.Status ||
+      isNodeDeploymentStatusUpdating
+    ) {
+      return;
+    }
+    const currentShareStatus =
+      getConfigurableHtmlShareStatus(deployment.shareStatus) ?? HtmlShareStatus.Live;
+    const nextShareStatus =
+      currentShareStatus === HtmlShareStatus.Live ? HtmlShareStatus.Disabled : HtmlShareStatus.Live;
+    if (nextShareStatus === HtmlShareStatus.Live) {
+      await retryNodeDeployment();
+      return;
+    }
+
+    setIsNodeDeploymentStatusUpdating(true);
+    setNodeDeploymentDialog(previous => previous
+      ? {
+          ...previous,
+          deployment: previous.deployment
+            ? { ...previous.deployment, shareStatus: nextShareStatus }
+            : previous.deployment,
+          error: undefined,
+        }
+      : previous);
+    try {
+      const result = await window.electron?.htmlShare?.updateStatus({
+        shareId: deployment.shareId,
+        status: nextShareStatus,
+      });
+      if (!result?.success) {
+        throw new Error(getHtmlShareFailureMessage(result));
+      }
+      const resultShareStatus =
+        getConfigurableHtmlShareStatus(result.status) ?? nextShareStatus;
+      const resultAccessMode = normalizeHtmlShareAccessMode(
+        result.accessMode ?? deployment.accessMode,
+      );
+      const resultDeploymentStatus = resultShareStatus === HtmlShareStatus.Disabled
+        ? ShareDeploymentStatus.Stopped
+        : deployment.status;
+      rememberNodeDeployment(
+        currentDialog.localService
+          ? `${sessionId}:${currentDialog.localService.url}`
+          : selectedNodeDeploymentLookupKey,
+        {
+          ...deployment,
+          status: resultDeploymentStatus,
+          accessMode: resultAccessMode,
+          shareCode: shouldUseHtmlShareCode(resultAccessMode) ? result.shareCode : undefined,
+          shareCodeUnavailable: result.shareCodeUnavailable,
+          shareStatus: resultShareStatus,
+          disabledSource: result.disabledSource ?? undefined,
+        },
+      );
+      setNodeDeploymentDialog(previous => {
+        if (
+          !previous ||
+          previous.kind !== NodeDeploymentDialogKind.Status
+        ) {
+          return previous;
+        }
+        const previousDeployment = previous.deployment;
+        if (!previousDeployment || previousDeployment.shareId !== deployment.shareId) {
+          return previous;
+        }
+        return {
+          ...previous,
+          message:
+            resultShareStatus === HtmlShareStatus.Disabled
+              ? t('nodeDeploymentShareDisabledMessage')
+              : t('nodeDeploymentShareEnabledMessage'),
+          accessMode: resultAccessMode,
+          deployment: {
+            ...previousDeployment,
+            status: resultDeploymentStatus,
+            accessMode: resultAccessMode,
+            shareCode: shouldUseHtmlShareCode(resultAccessMode) ? result.shareCode : undefined,
+            shareCodeUnavailable: result.shareCodeUnavailable,
+            shareStatus: resultShareStatus,
+            disabledSource: result.disabledSource ?? undefined,
+          },
+          error: undefined,
+        };
+      });
+    } catch (error) {
+      setNodeDeploymentDialog(previous => previous
+        ? {
+            ...previous,
+            deployment: previous.deployment
+              ? { ...previous.deployment, shareStatus: currentShareStatus }
+              : previous.deployment,
+            error: error instanceof Error ? error.message : t('htmlShareStatusUpdateFailed'),
+          }
+        : previous);
+    } finally {
+      setIsNodeDeploymentStatusUpdating(false);
+    }
+  }, [
+    isNodeDeploymentStatusUpdating,
+    nodeDeploymentDialog,
+    rememberNodeDeployment,
+    retryNodeDeployment,
+    selectedNodeDeploymentLookupKey,
+    sessionId,
+  ]);
+
+  const pollingDeploymentId = nodeDeploymentDialog?.deployment?.deploymentId;
+  const pollingDeploymentStatus = nodeDeploymentDialog?.deployment?.status;
+  const pollingDeploymentDialogKind = nodeDeploymentDialog?.kind;
+
+  useEffect(() => {
+    if (
+      pollingDeploymentDialogKind !== NodeDeploymentDialogKind.Status ||
+      !pollingDeploymentId ||
+      !isNodeDeploymentPending(pollingDeploymentStatus)
     ) {
       return undefined;
     }
@@ -1726,14 +2825,14 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     let isCancelled = false;
     const timer = window.setInterval(() => {
       void window.electron?.shareDeployment
-        ?.get(deployment.deploymentId)
+        ?.get(pollingDeploymentId)
         .then(result => {
           if (isCancelled || !result?.success || !result.deployment) return;
           const refreshedDeployment = result.deployment;
           setNodeDeploymentDialog(previous => {
             if (
               previous?.kind !== NodeDeploymentDialogKind.Status ||
-              previous.deployment?.deploymentId !== deployment.deploymentId
+              previous.deployment?.deploymentId !== pollingDeploymentId
             ) {
               return previous;
             }
@@ -1749,7 +2848,14 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
               deployment: {
                 ...refreshedDeployment,
                 url: refreshedDeployment.url || previous.deployment?.url,
+                accessMode: refreshedDeployment.accessMode || previous.deployment?.accessMode,
                 shareCode: refreshedDeployment.shareCode || previous.deployment?.shareCode,
+                shareCodeUnavailable:
+                  refreshedDeployment.shareCodeUnavailable ??
+                  previous.deployment?.shareCodeUnavailable,
+                shareStatus: refreshedDeployment.shareStatus || previous.deployment?.shareStatus,
+                disabledSource:
+                  refreshedDeployment.disabledSource ?? previous.deployment?.disabledSource,
               },
             };
           });
@@ -1762,9 +2868,9 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
       window.clearInterval(timer);
     };
   }, [
-    nodeDeploymentDialog?.deployment?.deploymentId,
-    nodeDeploymentDialog?.deployment?.status,
-    nodeDeploymentDialog?.kind,
+    pollingDeploymentDialogKind,
+    pollingDeploymentId,
+    pollingDeploymentStatus,
   ]);
 
   const createHtmlShare = useCallback(async (request: HtmlSharePendingRequest) => {
@@ -2425,6 +3531,8 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
         : shouldUseHtmlShareCode(htmlShareDialog?.accessMode) && htmlShareDialog?.shareCode
           ? t('htmlShareCopyLinkAndCode')
           : t('htmlShareCopyLink');
+  const isNodeDeploymentAccessModeDialog =
+    nodeDeploymentDialog?.kind === NodeDeploymentDialogKind.AccessMode;
   const isNodeDeploymentConfirmDialog =
     nodeDeploymentDialog?.kind === NodeDeploymentDialogKind.Confirm;
   const isNodeDeploymentStatusDialog =
@@ -2441,12 +3549,70 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
       nodeDeploymentAnalysis?.blockers.length,
   );
   const nodeDeployment = nodeDeploymentDialog?.deployment;
+  const nodeDeploymentShareStatus =
+    getConfigurableHtmlShareStatus(nodeDeployment?.shareStatus) ?? HtmlShareStatus.Live;
+  const isNodeDeploymentShareDisabled =
+    nodeDeploymentShareStatus === HtmlShareStatus.Disabled;
+  const isNodeDeploymentAccessModeChanged = Boolean(
+    isNodeDeploymentStatusDialog &&
+      nodeDeployment &&
+      nodeDeploymentSelectedAccessMode !== normalizeHtmlShareAccessMode(nodeDeployment.accessMode),
+  );
+  const canShowNodeDeploymentAccessModeControls = Boolean(
+    isNodeDeploymentAccessModeDialog ||
+      (isNodeDeploymentStatusDialog && nodeDeployment?.shareId),
+  );
+  const isNodeDeploymentAccessModeActionDisabled = Boolean(
+    !isNodeDeploymentAccessModeChanged ||
+      isNodeDeploymentBusy ||
+      isNodeDeploymentStatusUpdating ||
+      isNodeDeploymentShareDisabled,
+  );
+  const canToggleNodeDeploymentShareStatus = Boolean(
+    isNodeDeploymentStatusDialog &&
+      nodeDeployment?.shareId &&
+      !isNodeDeploymentBusy &&
+      !isNodeDeploymentStatusUpdating,
+  );
+  const nodeDeploymentShareAvailabilityActionLabel = isNodeDeploymentShareDisabled
+    ? t('nodeDeploymentRedeployAndShare')
+    : t('htmlShareStopSharing');
+  const nodeDeploymentShareAvailabilityActionClassName = isNodeDeploymentShareDisabled
+    ? 'inline-flex h-9 min-w-[96px] items-center justify-center whitespace-nowrap rounded-md bg-primary px-3 text-sm text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60'
+    : 'inline-flex h-9 min-w-[96px] items-center justify-center whitespace-nowrap rounded-md border border-border bg-background px-3 text-sm text-secondary transition-colors hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60';
   const canCopyNodeDeploymentLink = Boolean(
     nodeDeployment?.url &&
       nodeDeployment.status === ShareDeploymentStatus.Live &&
+      !isNodeDeploymentShareDisabled &&
+      !isNodeDeploymentAccessModeChanged &&
       !isNodeDeploymentBusy,
   );
-  const nodeDeploymentStatusLabel = getNodeDeploymentStatusLabel(nodeDeployment?.status);
+  const nodeDeploymentCopyButtonLabel =
+    htmlShareCopyStatus === HtmlShareCopyStatus.Failed
+      ? t('copyFailed')
+      : htmlShareCopyStatus === HtmlShareCopyStatus.Copied
+        ? t('copied')
+        : shouldUseHtmlShareCode(nodeDeployment?.accessMode) && nodeDeployment?.shareCode
+          ? t('htmlShareCopyLinkAndCode')
+          : t('htmlShareCopyLink');
+  const canRetryNodeDeployment = Boolean(
+    !isNodeDeploymentBusy &&
+      nodeDeploymentDialog &&
+      (nodeDeployment?.status === ShareDeploymentStatus.Live ||
+        nodeDeployment?.status === ShareDeploymentStatus.DeployFailed ||
+        nodeDeployment?.status === ShareDeploymentStatus.Stopped ||
+        nodeDeployment?.status === ShareDeploymentStatus.Expired ||
+        (nodeDeploymentDialog.kind === NodeDeploymentDialogKind.Result &&
+          nodeDeploymentDialog.phase === NodeDeploymentPhase.Failed)) &&
+      (nodeDeploymentDialog.localService || browserLocalService),
+  );
+  const canShowNodeDeploymentFooterRedeploy = Boolean(
+    canRetryNodeDeployment && !isNodeDeploymentStatusDialog,
+  );
+  const nodeDeploymentStatusLabel = getNodeDeploymentPhaseStatusLabel(
+    nodeDeploymentDialog?.phase,
+    nodeDeployment?.status,
+  );
 
   return (
     <>
@@ -2678,14 +3844,15 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
             sessionArtifacts={artifacts}
             canShare={browserCanShare}
             shareButtonTitle={browserShareButtonTitle}
-            hasExistingShare={Boolean(selectedHtmlShare)}
-            isSharing={isHtmlSharing || isNodeDeploymentBusy}
+            hasExistingShare={browserHasExistingShare}
+            isSharing={canShareHtmlArtifact ? isHtmlSharing : false}
             onShare={canShareHtmlArtifact ? handleShareHtmlArtifact : handleShareLocalServiceDeployment}
             autoRefreshFilePath={browserHtmlAutoRefreshFilePath}
             localHtmlPreviewUrl={browserHtmlPreviewUrl}
             onAddressChange={handleBrowserAddressChange}
             onCurrentUrlChange={handleBrowserUrlChange}
             onTitleChange={onBrowserTitleChange}
+            onLocalServiceOpen={handleBrowserLocalServiceOpen}
             onAnnotationCaptured={onBrowserAnnotationCaptured}
           />
         ) : (
@@ -2944,13 +4111,13 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
           </div>,
           document.body,
         )}
-      {nodeDeploymentDialog &&
+      {nodeDeploymentDialog && isNodeDeploymentDialogOpen &&
         createPortal(
           <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/35 px-4">
             <div className="relative flex max-h-[88vh] w-full max-w-[560px] flex-col overflow-hidden rounded-xl border border-border bg-background shadow-2xl">
               <button
                 type="button"
-                onClick={() => setNodeDeploymentDialog(null)}
+                onClick={closeNodeDeploymentDialog}
                 className="absolute right-4 top-4 z-10 rounded-md p-1 text-muted transition-colors hover:bg-surface hover:text-foreground"
                 aria-label={t('close')}
                 title={t('close')}
@@ -2967,19 +4134,54 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
               </div>
 
               <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-                {isNodeDeploymentConfirmDialog ? (
+                {isNodeDeploymentAccessModeDialog ? (
                   <div className="space-y-4">
-                    {nodeDeploymentDialog.localService && (
-                      <div className="rounded-lg border border-border bg-surface px-3 py-2">
-                        <div className="text-xs font-medium text-secondary">
-                          {t('nodeDeploymentLocalService')}
+                    {canShowNodeDeploymentAccessModeControls && (
+                      <div>
+                        <div className="mb-2 text-sm font-medium text-foreground">
+                          {t('htmlShareAccessMode')}
                         </div>
-                        <div className="mt-1 break-all text-sm text-foreground">
-                          {nodeDeploymentDialog.localService.url}
+                        <div className="grid grid-cols-2 gap-2">
+                          {[
+                            {
+                              mode: HtmlShareAccessMode.Code,
+                              label: t('htmlShareAccessModeCode'),
+                              hint: t('htmlShareAccessModeCodeHint'),
+                            },
+                            {
+                              mode: HtmlShareAccessMode.Public,
+                              label: t('htmlShareAccessModePublic'),
+                              hint: t('htmlShareAccessModePublicHint'),
+                            },
+                          ].map(option => {
+                            const isSelected = nodeDeploymentSelectedAccessMode === option.mode;
+                            return (
+                              <button
+                                key={option.mode}
+                                type="button"
+                                onClick={() => selectNodeDeploymentAccessMode(option.mode)}
+                                disabled={isNodeDeploymentBusy}
+                                className={`min-h-[82px] rounded-lg border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                                  isSelected
+                                    ? 'border-primary bg-primary/10 text-foreground'
+                                    : 'border-border bg-surface text-secondary hover:border-primary/40 hover:text-foreground'
+                                }`}
+                              >
+                                <span className="block text-sm font-medium leading-5">
+                                  {option.label}
+                                </span>
+                                <span className="mt-1 block text-xs leading-4 text-muted">
+                                  {option.hint}
+                                </span>
+                              </button>
+                            );
+                          })}
                         </div>
                       </div>
                     )}
-
+                  </div>
+                ) : isNodeDeploymentConfirmDialog ? (
+                  <div className="space-y-4">
                     <div>
                       <label className="mb-1.5 block text-xs font-medium text-secondary">
                         {t('nodeDeploymentProjectDirectory')}
@@ -3000,108 +4202,54 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
                         >
                           {t('nodeDeploymentChooseDirectory')}
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => void reanalyzeNodeDeploymentProjectDirectory()}
-                          disabled={isNodeDeploymentBusy || !nodeDeploymentDialog.projectDirectory?.trim()}
-                          className="inline-flex h-9 shrink-0 items-center justify-center rounded-md border border-border px-3 text-sm text-secondary transition-colors hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {isNodeDeploymentBusy ? t('nodeDeploymentAnalyzing') : t('nodeDeploymentAnalyzeAction')}
-                        </button>
                       </div>
                     </div>
-
-                    <div className="grid grid-cols-2 gap-3">
-                      <label className="block">
-                        <span className="mb-1.5 block text-xs font-medium text-secondary">
-                          {t('nodeDeploymentNodeVersion')}
-                        </span>
-                        <input
-                          type="text"
-                          value={nodeDeploymentDialog.nodeVersion || ''}
-                          onChange={event => updateNodeDeploymentDialogField('nodeVersion', event.target.value)}
-                          className="h-9 w-full rounded-md border border-border bg-surface px-2 text-sm text-foreground outline-none focus:border-primary"
-                        />
-                      </label>
-                      <label className="block">
-                        <span className="mb-1.5 block text-xs font-medium text-secondary">
-                          {t('nodeDeploymentPort')}
-                        </span>
-                        <input
-                          type="number"
-                          min={1}
-                          max={65535}
-                          value={nodeDeploymentDialog.port || ''}
-                          onChange={event => updateNodeDeploymentDialogField('port', event.target.value)}
-                          className="h-9 w-full rounded-md border border-border bg-surface px-2 text-sm text-foreground outline-none focus:border-primary"
-                        />
-                      </label>
-                    </div>
-
-                    <label className="block">
-                      <span className="mb-1.5 block text-xs font-medium text-secondary">
-                        {t('nodeDeploymentInstallCommand')}
-                      </span>
-                      <input
-                        type="text"
-                        value={nodeDeploymentDialog.installCommand || ''}
-                        onChange={event => updateNodeDeploymentDialogField('installCommand', event.target.value)}
-                        className="h-9 w-full rounded-md border border-border bg-surface px-2 text-sm text-foreground outline-none focus:border-primary"
-                      />
-                    </label>
-
-                    <label className="block">
-                      <span className="mb-1.5 block text-xs font-medium text-secondary">
-                        {t('nodeDeploymentStartCommand')}
-                      </span>
-                      <input
-                        type="text"
-                        value={nodeDeploymentDialog.startCommand || ''}
-                        onChange={event => updateNodeDeploymentDialogField('startCommand', event.target.value)}
-                        className="h-9 w-full rounded-md border border-border bg-surface px-2 text-sm text-foreground outline-none focus:border-primary"
-                      />
-                    </label>
 
                     <div>
-                      <div className="mb-2 text-xs font-medium text-secondary">
-                        {t('htmlShareAccessMode')}
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        {[
-                          {
-                            mode: HtmlShareAccessMode.Code,
-                            label: t('htmlShareAccessModeCode'),
-                            hint: t('htmlShareAccessModeCodeHint'),
-                          },
-                          {
-                            mode: HtmlShareAccessMode.Public,
-                            label: t('htmlShareAccessModePublic'),
-                            hint: t('htmlShareAccessModePublicHint'),
-                          },
-                        ].map(option => {
-                          const isSelected = nodeDeploymentSelectedAccessMode === option.mode;
-                          return (
-                            <button
-                              key={option.mode}
-                              type="button"
-                              onClick={() => selectNodeDeploymentAccessMode(option.mode)}
-                              disabled={isNodeDeploymentBusy}
-                              className={`min-h-[72px] rounded-lg border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-                                isSelected
-                                  ? 'border-primary bg-primary/10 text-foreground'
-                                  : 'border-border bg-surface text-secondary hover:border-primary/40 hover:text-foreground'
-                              }`}
-                            >
-                              <span className="block text-sm font-medium leading-5">
-                                {option.label}
-                              </span>
-                              <span className="mt-1 block text-xs leading-4 text-muted">
-                                {option.hint}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setIsNodeDeploymentAdvancedOpen(value => !value)}
+                        className="inline-flex h-8 items-center rounded-md border border-border px-3 text-sm text-secondary transition-colors hover:bg-surface hover:text-foreground"
+                      >
+                        {t('nodeDeploymentAdvancedSettings')}
+                      </button>
+                      {isNodeDeploymentAdvancedOpen && (
+                        <div className="mt-3 space-y-3 rounded-lg border border-border bg-surface p-3">
+                          <label className="block">
+                            <span className="mb-1.5 block text-xs font-medium text-secondary">
+                              {t('nodeDeploymentStartCommand')}
+                            </span>
+                            <input
+                              type="text"
+                              value={nodeDeploymentDialog.startCommand || ''}
+                              onChange={event => updateNodeDeploymentDialogField('startCommand', event.target.value)}
+                              className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm text-foreground outline-none focus:border-primary"
+                            />
+                          </label>
+                          <label className="block">
+                            <span className="mb-1.5 block text-xs font-medium text-secondary">
+                              {t('nodeDeploymentBuildCommand')}
+                            </span>
+                            <input
+                              type="text"
+                              value={nodeDeploymentDialog.buildCommand || ''}
+                              onChange={event => updateNodeDeploymentDialogField('buildCommand', event.target.value)}
+                              className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm text-foreground outline-none focus:border-primary"
+                            />
+                          </label>
+                          <label className="block">
+                            <span className="mb-1.5 block text-xs font-medium text-secondary">
+                              {t('nodeDeploymentInstallCommand')}
+                            </span>
+                            <input
+                              type="text"
+                              value={nodeDeploymentDialog.installCommand || ''}
+                              onChange={event => updateNodeDeploymentDialogField('installCommand', event.target.value)}
+                              className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm text-foreground outline-none focus:border-primary"
+                            />
+                          </label>
+                        </div>
+                      )}
                     </div>
 
                     {nodeDeploymentAnalysis && (
@@ -3135,35 +4283,105 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    {isNodeDeploymentStatusDialog && nodeDeployment && (
-                      <div className="rounded-lg border border-border bg-surface px-3 py-3">
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="text-xs font-medium text-secondary">
-                            {t('nodeDeploymentCurrentStatus')}
-                          </span>
-                          <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
-                            {nodeDeploymentStatusLabel}
-                          </span>
-                        </div>
-                        {nodeDeployment.url && (
-                          <div className="mt-3 break-all text-sm leading-5 text-foreground">
-                            {nodeDeployment.url}
-                          </div>
-                        )}
-                        {shouldUseHtmlShareCode(nodeDeployment.accessMode) && nodeDeployment.shareCode && (
-                          <div className="mt-3 text-sm leading-5 text-foreground">
-                            <span className="text-muted">{t('htmlShareCode')}</span>
-                            <span className="ml-2 font-medium">{nodeDeployment.shareCode}</span>
-                          </div>
-                        )}
+                    {isNodeDeploymentStatusDialog && nodeDeployment && isNodeDeploymentShareDisabled && (
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm leading-5 text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+                        {nodeDeployment.disabledSource === HtmlShareDisabledSource.Admin
+                          ? t('htmlShareStoppedByAdminNotice')
+                          : nodeDeployment.disabledSource === HtmlShareDisabledSource.Moderation
+                            ? t('htmlShareStoppedByModerationNotice')
+                            : t('nodeDeploymentShareDisabledMessage')}
                       </div>
                     )}
-                    <div className="whitespace-pre-wrap break-words text-sm leading-6 text-secondary">
-                      {nodeDeploymentDialog.message}
-                    </div>
-                    {nodeDeployment?.expiresAt && (
-                      <div className="text-xs leading-5 text-muted">
-                        {t('nodeDeploymentExpiresAt').replace('{time}', nodeDeployment.expiresAt)}
+                    {isNodeDeploymentStatusDialog && (
+                      <NodeDeploymentStatusCard
+                        phase={nodeDeploymentDialog.phase}
+                        deployment={nodeDeployment}
+                        statusLabel={nodeDeploymentStatusLabel}
+                        message={nodeDeploymentDialog.message}
+                      />
+                    )}
+                    {isNodeDeploymentStatusDialog && nodeDeployment && (
+                      <>
+                        {canShowNodeDeploymentAccessModeControls && (
+                          <div>
+                            <div className="mb-2 text-xs font-medium text-secondary">
+                              {t('htmlShareAccessMode')}
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                              {[
+                                {
+                                  mode: HtmlShareAccessMode.Code,
+                                  label: t('htmlShareAccessModeCode'),
+                                  hint: t('htmlShareAccessModeCodeHint'),
+                                },
+                                {
+                                  mode: HtmlShareAccessMode.Public,
+                                  label: t('htmlShareAccessModePublic'),
+                                  hint: t('htmlShareAccessModePublicHint'),
+                                },
+                              ].map(option => {
+                                const isSelected = nodeDeploymentSelectedAccessMode === option.mode;
+                                return (
+                                  <button
+                                    key={option.mode}
+                                    type="button"
+                                    onClick={() => selectNodeDeploymentAccessMode(option.mode)}
+                                    disabled={
+                                      isNodeDeploymentBusy ||
+                                      isNodeDeploymentStatusUpdating ||
+                                      isNodeDeploymentShareDisabled
+                                    }
+                                    className={`min-h-[72px] rounded-lg border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                                      isSelected
+                                        ? 'border-primary bg-primary/10 text-foreground'
+                                        : 'border-border bg-surface text-secondary hover:border-primary/40 hover:text-foreground'
+                                    }`}
+                                  >
+                                    <span className="block text-sm font-medium leading-5">
+                                      {option.label}
+                                    </span>
+                                    <span className="mt-1 block text-xs leading-4 text-muted">
+                                      {option.hint}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-base font-medium text-foreground">
+                              {t('nodeDeploymentUpdateFile')}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => void retryNodeDeployment()}
+                              disabled={!canRetryNodeDeployment}
+                              className="inline-flex h-7 items-center gap-1 rounded-md border border-border px-2 text-sm text-secondary transition-colors hover:bg-surface hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              <RefreshIcon />
+                              {isNodeDeploymentBusy ? t('nodeDeploymentPreparing') : t('nodeDeploymentRetry')}
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                    {isNodeDeploymentStatusDialog && (
+                      <NodeDeploymentProgressSteps
+                        phase={nodeDeploymentDialog.phase}
+                        status={nodeDeployment?.status}
+                      />
+                    )}
+                    {!isNodeDeploymentStatusDialog && (
+                      <div className="whitespace-pre-wrap break-words text-sm leading-6 text-secondary">
+                        {nodeDeploymentDialog.message}
+                      </div>
+                    )}
+                    {nodeDeploymentDialog.error && (
+                      <div className="text-xs leading-5 text-red-500">
+                        {nodeDeploymentDialog.error}
                       </div>
                     )}
                   </div>
@@ -3171,13 +4389,25 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
               </div>
 
               <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border px-5 py-4">
-                <button
-                  type="button"
-                  onClick={() => setNodeDeploymentDialog(null)}
-                  className="inline-flex h-9 min-w-[80px] items-center justify-center rounded-md border border-border px-3 text-sm text-secondary transition-colors hover:bg-surface hover:text-foreground"
-                >
-                  {t('close')}
-                </button>
+                {isNodeDeploymentAccessModeDialog && (
+                  <button
+                    type="button"
+                    onClick={confirmNodeDeploymentAccessMode}
+                    disabled={isNodeDeploymentBusy || !nodeDeploymentDialog.localService}
+                    className="inline-flex h-9 min-w-[104px] items-center justify-center rounded-md bg-primary px-3 text-sm text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {t('htmlShareCreateAction')}
+                  </button>
+                )}
+                {isNodeDeploymentConfirmDialog && (
+                  <button
+                    type="button"
+                    onClick={closeNodeDeploymentDialog}
+                    className="inline-flex h-9 min-w-[80px] items-center justify-center rounded-md border border-border px-3 text-sm text-secondary transition-colors hover:bg-surface hover:text-foreground"
+                  >
+                    {t('close')}
+                  </button>
+                )}
                 {isNodeDeploymentConfirmDialog && (
                   <button
                     type="button"
@@ -3186,6 +4416,39 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
                     className="inline-flex h-9 min-w-[104px] items-center justify-center rounded-md bg-primary px-3 text-sm text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {isNodeDeploymentBusy ? t('nodeDeploymentSubmitting') : t('nodeDeploymentSubmit')}
+                  </button>
+                )}
+                {isNodeDeploymentStatusDialog && nodeDeployment?.shareId && (
+                  <button
+                    type="button"
+                    onClick={() => void toggleNodeDeploymentShareStatus()}
+                    disabled={!canToggleNodeDeploymentShareStatus}
+                    className={nodeDeploymentShareAvailabilityActionClassName}
+                  >
+                    {isNodeDeploymentStatusUpdating
+                      ? t('htmlShareStatusUpdating')
+                      : nodeDeploymentShareAvailabilityActionLabel}
+                  </button>
+                )}
+                {isNodeDeploymentStatusDialog && isNodeDeploymentAccessModeChanged && (
+                  <button
+                    type="button"
+                    onClick={() => void updateNodeDeploymentAccessMode()}
+                    disabled={isNodeDeploymentAccessModeActionDisabled}
+                    className="inline-flex h-9 min-w-[128px] items-center justify-center whitespace-nowrap rounded-md bg-primary px-3 text-sm text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isNodeDeploymentStatusUpdating
+                      ? t('htmlShareAccessModeUpdating')
+                      : t('htmlShareAccessModeUpdateAction')}
+                  </button>
+                )}
+                {canShowNodeDeploymentFooterRedeploy && (
+                  <button
+                    type="button"
+                    onClick={() => void retryNodeDeployment()}
+                    className="inline-flex h-9 min-w-[104px] items-center justify-center rounded-md bg-primary px-3 text-sm text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {t('nodeDeploymentRetry')}
                   </button>
                 )}
                 {canCopyNodeDeploymentLink && (
@@ -3201,7 +4464,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
                     }
                     className="inline-flex h-9 min-w-[104px] items-center justify-center rounded-md bg-primary px-3 text-sm text-primary-foreground transition-colors hover:bg-primary/90"
                   >
-                    {htmlShareCopyButtonLabel}
+                    {nodeDeploymentCopyButtonLabel}
                   </button>
                 )}
               </div>
@@ -3492,7 +4755,11 @@ function isLocalServiceHostname(hostname: string): boolean {
   );
 }
 
-function parseLocalServiceUrl(rawUrl: string | undefined, title?: string): LocalWebService | null {
+function parseLocalServiceUrl(
+  rawUrl: string | undefined,
+  title?: string,
+  projectDirectory?: string,
+): LocalWebService | null {
   if (!rawUrl) return null;
   try {
     const parsed = new URL(rawUrl.trim());
@@ -3506,6 +4773,7 @@ function parseLocalServiceUrl(rawUrl: string | undefined, title?: string): Local
       host: parsed.hostname,
       port,
       online: false,
+      ...(projectDirectory?.trim() ? { projectDirectory: projectDirectory.trim() } : {}),
     };
   } catch {
     return null;
@@ -3514,30 +4782,36 @@ function parseLocalServiceUrl(rawUrl: string | undefined, title?: string): Local
 
 function parseLocalServiceArtifact(artifact: Artifact): LocalWebService | null {
   if (artifact.type !== ArtifactTypeValue.LocalService) return null;
-  return parseLocalServiceUrl(artifact.url || artifact.content, artifact.title);
+  return parseLocalServiceUrl(
+    artifact.url || artifact.content,
+    artifact.title,
+    artifact.localService?.projectDirectory,
+  );
 }
 
 function getSessionLocalServices(artifacts: Artifact[] | undefined): LocalWebService[] {
-  const byPort = new Map<number, LocalWebService>();
+  const byKey = new Map<string, LocalWebService>();
   for (const artifact of artifacts ?? []) {
     const service = parseLocalServiceArtifact(artifact);
-    if (!service || byPort.has(service.port)) continue;
-    byPort.set(service.port, service);
+    if (!service) continue;
+    const key = getNodeDeploymentLookupKey('', service.url, service.projectDirectory);
+    if (byKey.has(key)) continue;
+    byKey.set(key, service);
   }
-  return Array.from(byPort.values());
+  return Array.from(byKey.values());
 }
 
 function mergeLocalServices(
   sessionServices: LocalWebService[],
   discoveredServices: LocalWebService[],
 ): LocalWebService[] {
-  const byPort = new Map<number, LocalWebService>();
+  const byKey = new Map<string, LocalWebService>();
   const discoveredByPort = new Map(discoveredServices.map(service => [service.port, service]));
 
   for (const sessionService of sessionServices) {
     const discovered = discoveredByPort.get(sessionService.port);
-    byPort.set(
-      sessionService.port,
+    byKey.set(
+      getNodeDeploymentLookupKey('', sessionService.url, sessionService.projectDirectory),
       discovered
         ? {
             ...sessionService,
@@ -3551,12 +4825,13 @@ function mergeLocalServices(
   }
 
   for (const discoveredService of discoveredServices) {
-    if (!byPort.has(discoveredService.port)) {
-      byPort.set(discoveredService.port, discoveredService);
+    const key = getNodeDeploymentLookupKey('', discoveredService.url);
+    if (!byKey.has(key)) {
+      byKey.set(key, discoveredService);
     }
   }
 
-  return Array.from(byPort.values()).slice(0, LocalServiceDisplay.Limit);
+  return Array.from(byKey.values()).slice(0, LocalServiceDisplay.Limit);
 }
 
 interface BrowserAnnotationLabels {
@@ -3789,6 +5064,7 @@ interface BrowserTabContentProps {
   onAddressChange: (value: string) => void;
   onCurrentUrlChange: (value: string) => void;
   onTitleChange?: (value: string) => void;
+  onLocalServiceOpen?: (service: LocalWebService) => void;
   onAnnotationCaptured?: (payload: BrowserAnnotationPayload) => void;
 }
 
@@ -3806,6 +5082,7 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
   onAddressChange,
   onCurrentUrlChange,
   onTitleChange,
+  onLocalServiceOpen,
   onAnnotationCaptured,
 }) => {
   const [isLoading, setIsLoading] = useState(false);
@@ -4206,11 +5483,12 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
 
   const handleOpenLocalService = useCallback(
     (service: LocalWebService) => {
+      onLocalServiceOpen?.(service);
       onTitleChange?.('');
       onCurrentUrlChange(service.url);
       onAddressChange(service.url);
     },
-    [onAddressChange, onCurrentUrlChange, onTitleChange],
+    [onAddressChange, onCurrentUrlChange, onLocalServiceOpen, onTitleChange],
   );
 
   const handleAddressKeyDown = useCallback(

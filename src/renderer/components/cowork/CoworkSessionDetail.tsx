@@ -14,7 +14,7 @@ import {
   type CoworkSelectedTextValidationError,
   normalizeCoworkSelectedTextSnippets,
 } from '../../../shared/cowork/selectedText';
-import { dedupeArtifactsForDisplay, normalizeFilePathForDedup, normalizeLocalServiceUrlForDedup, parseFileLinksFromMessage, parseFilePathsFromText, parseLocalServiceUrlsFromText, parseMediaTokensFromText, parseRemoteImageArtifactsFromText, parseToolArtifact, parseToolResultMediaArtifacts, shouldParseFilePathsFromToolResult, stripFileLinksFromText } from '../../services/artifactParser';
+import { dedupeArtifactsForDisplay, normalizeFilePathForDedup, normalizeLocalServiceOrigin, normalizeLocalServiceUrlForDedup, parseFileLinksFromMessage, parseFilePathsFromText, parseLocalServiceUrlsFromText, parseMediaTokensFromText, parseRemoteImageArtifactsFromText, parseToolArtifact, parseToolResultMediaArtifacts, shouldParseFilePathsFromToolResult, stripFileLinksFromText } from '../../services/artifactParser';
 import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
 import { RootState } from '../../store';
@@ -94,6 +94,13 @@ interface CoworkSessionDetailProps {
   onToggleSidebar?: () => void;
   onNewChat?: () => void;
   updateBadge?: React.ReactNode;
+}
+
+interface BrowserLocalServiceContext {
+  artifactId?: string;
+  url: string;
+  origin: string;
+  projectDirectory?: string;
 }
 
 const AUTO_SCROLL_THRESHOLD = 120;
@@ -1152,6 +1159,8 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const [browserPreviewAddress, setBrowserPreviewAddress] = useState('');
   const [browserPreviewUrl, setBrowserPreviewUrl] = useState('');
   const [browserPreviewTitle, setBrowserPreviewTitle] = useState('');
+  const [browserLocalServiceContext, setBrowserLocalServiceContext] =
+    useState<BrowserLocalServiceContext | null>(null);
   const [browserHtmlPreviewArtifactId, setBrowserHtmlPreviewArtifactId] = useState<string | null>(null);
   const [showArtifactAddMenu, setShowArtifactAddMenu] = useState(false);
   const [artifactAddMenuPosition, setArtifactAddMenuPosition] = useState<{ left: number; top: number } | null>(null);
@@ -1172,6 +1181,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const browserPreviewAddressBySessionRef = useRef<Record<string, string>>({});
   const browserPreviewUrlBySessionRef = useRef<Record<string, string>>({});
   const browserPreviewTitleBySessionRef = useRef<Record<string, string>>({});
+  const browserLocalServiceContextBySessionRef = useRef<Record<string, BrowserLocalServiceContext>>({});
   const browserHtmlPreviewArtifactIdBySessionRef = useRef<Record<string, string>>({});
   const browserHtmlPreviewSessionIdBySessionRef = useRef<Record<string, string>>({});
   const browserHtmlPreviewUrlBySessionRef = useRef<Record<string, string>>({});
@@ -1317,6 +1327,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     setBrowserPreviewAddress(sessionId ? browserPreviewAddressBySessionRef.current[sessionId] ?? '' : '');
     setBrowserPreviewUrl(sessionId ? browserPreviewUrlBySessionRef.current[sessionId] ?? '' : '');
     setBrowserPreviewTitle(sessionId ? browserPreviewTitleBySessionRef.current[sessionId] ?? '' : '');
+    setBrowserLocalServiceContext(sessionId ? browserLocalServiceContextBySessionRef.current[sessionId] ?? null : null);
     setBrowserHtmlPreviewArtifactId(sessionId ? browserHtmlPreviewArtifactIdBySessionRef.current[sessionId] ?? null : null);
     setIsArtifactPanelExpanded(false);
     setIsExpandedPromptInputHidden(false);
@@ -1364,6 +1375,16 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     }
   }, [sessionId]);
 
+  const setSessionBrowserLocalServiceContext = useCallback((context: BrowserLocalServiceContext | null) => {
+    setBrowserLocalServiceContext(context);
+    if (!sessionId) return;
+    if (context) {
+      browserLocalServiceContextBySessionRef.current[sessionId] = context;
+    } else {
+      delete browserLocalServiceContextBySessionRef.current[sessionId];
+    }
+  }, [sessionId]);
+
   const clearBrowserHtmlPreviewState = useCallback((targetSessionId = sessionId) => {
     if (!targetSessionId) return;
     const previewSessionId = browserHtmlPreviewSessionIdBySessionRef.current[targetSessionId];
@@ -1387,6 +1408,14 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
         clearBrowserHtmlPreviewState(sessionId);
       }
     }
+    setBrowserLocalServiceContext(current => {
+      if (!current || !value.trim()) return current;
+      if (normalizeLocalServiceOrigin(value) === current.origin) return current;
+      if (sessionId) {
+        delete browserLocalServiceContextBySessionRef.current[sessionId];
+      }
+      return null;
+    });
   }, [clearBrowserHtmlPreviewState, sessionId]);
 
   const handleBrowserPreviewTitleChange = useCallback((value: string) => {
@@ -1405,10 +1434,12 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     setBrowserPreviewAddress('');
     setBrowserPreviewUrl('');
     setBrowserPreviewTitle('');
+    setBrowserLocalServiceContext(null);
     if (sessionId) {
       delete browserPreviewAddressBySessionRef.current[sessionId];
       delete browserPreviewUrlBySessionRef.current[sessionId];
       delete browserPreviewTitleBySessionRef.current[sessionId];
+      delete browserLocalServiceContextBySessionRef.current[sessionId];
       clearBrowserHtmlPreviewState(sessionId);
     }
   }, [clearBrowserHtmlPreviewState, sessionId]);
@@ -1463,6 +1494,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     setShowArtifactAddMenu(false);
     setSessionBrowserPreviewTabOpen(true);
     setSessionActiveSpecialPreviewTab(ArtifactSpecialTab.Browser);
+    setSessionBrowserLocalServiceContext(null);
     dispatch(activateArtifactBrowserTab({ sessionId }));
 
     const requestId = browserHtmlPreviewRequestIdRef.current + 1;
@@ -1510,20 +1542,31 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     sessionId,
     setSessionActiveSpecialPreviewTab,
     setSessionBrowserPreviewTabOpen,
+    setSessionBrowserLocalServiceContext,
   ]);
 
   const handleOpenLocalServiceArtifact = useCallback((artifact: Artifact) => {
     const url = artifact.url || artifact.content;
     if (!url) return;
+    const origin = artifact.localService?.origin || normalizeLocalServiceOrigin(url);
+    const projectDirectory = artifact.localService?.projectDirectory?.trim() || currentSession?.cwd?.trim();
     handleOpenArtifactBrowserTab();
+    setSessionBrowserLocalServiceContext({
+      artifactId: artifact.id,
+      url,
+      origin,
+      ...(projectDirectory ? { projectDirectory } : {}),
+    });
     handleBrowserPreviewAddressChange(url);
     handleBrowserPreviewUrlChange(url);
     handleBrowserPreviewTitleChange('');
   }, [
+    currentSession?.cwd,
     handleBrowserPreviewAddressChange,
     handleBrowserPreviewTitleChange,
     handleBrowserPreviewUrlChange,
     handleOpenArtifactBrowserTab,
+    setSessionBrowserLocalServiceContext,
   ]);
 
   const handleOpenArtifactFileListFromMenu = useCallback(() => {
@@ -1828,7 +1871,12 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
         if (msg.type === 'assistant' && !msg.metadata?.isThinking && msg.content) {
           const seenFilePaths = new Set<string>();
           const seenLocalServiceUrls = new Set<string>();
-          const localServiceArtifacts = parseLocalServiceUrlsFromText(msg.content, msg.id, sessionId);
+          const localServiceArtifacts = parseLocalServiceUrlsFromText(
+            msg.content,
+            msg.id,
+            sessionId,
+            { projectDirectory: currentSession.cwd },
+          );
           for (const serviceArtifact of localServiceArtifacts) {
             pushLocalServiceArtifactIfNew(serviceArtifact, seenLocalServiceUrls);
           }
@@ -2859,6 +2907,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
               assistantItems: [],
             }}
             resolveLocalFilePath={resolveLocalFilePath}
+            localServiceDirectory={currentSession?.cwd}
             showTypingIndicator
             showCopyButtons={!isStreaming}
           />
@@ -2915,6 +2964,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
                 artifacts={turnArtifacts}
                 resolveLocalFilePath={resolveLocalFilePath}
                 mapDisplayText={mapDisplayText}
+                localServiceDirectory={currentSession?.cwd}
                 onOpenLocalService={handleOpenLocalServiceArtifact}
                 onOpenHtmlFile={handleOpenHtmlFileInBrowser}
                 onForkMessage={remoteManaged ? undefined : handleForkMessage}
@@ -3676,10 +3726,12 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
               isPanelExpanded={isArtifactPanelExpanded}
               browserAddress={browserPreviewAddress}
               browserUrl={browserPreviewUrl}
+              browserLocalServiceContext={browserLocalServiceContext}
               browserHtmlArtifactId={browserHtmlPreviewArtifactId}
               onBrowserAddressChange={handleBrowserPreviewAddressChange}
               onBrowserUrlChange={handleBrowserPreviewUrlChange}
               onBrowserTitleChange={handleBrowserPreviewTitleChange}
+              onBrowserLocalServiceContextChange={setSessionBrowserLocalServiceContext}
               onOpenFileListTab={handleOpenArtifactFileListTab}
               onOpenBrowserTab={handleOpenArtifactBrowserTab}
               onOpenHtmlFileInBrowser={handleOpenHtmlFileInBrowser}

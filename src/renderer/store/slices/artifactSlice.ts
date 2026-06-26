@@ -5,6 +5,7 @@ import {
   dedupeArtifactsWithinMessages,
   normalizeFilePathForDedup,
   normalizeLocalServiceUrlForDedup,
+  normalizeProjectDirectoryForDedup,
   resolveArtifactIdForDisplay,
 } from '../../services/artifactParser';
 import { type Artifact, ArtifactTypeValue } from '../../types/artifact';
@@ -174,10 +175,18 @@ const artifactSlice = createSlice({
       } else {
         if (artifact.type === ArtifactTypeValue.LocalService) {
           const normalizedUrl = normalizeLocalServiceUrlForDedup(artifact.url || artifact.content);
+          const normalizedProjectDirectory = artifact.localService?.projectDirectory
+            ? normalizeProjectDirectoryForDedup(artifact.localService.projectDirectory)
+            : '';
           const dupIndex = state.artifactsBySession[sessionId].findIndex(
             a => isSameMessageArtifact(a, artifact) &&
               a.type === ArtifactTypeValue.LocalService &&
-              normalizeLocalServiceUrlForDedup(a.url || a.content) === normalizedUrl
+              normalizeLocalServiceUrlForDedup(a.url || a.content) === normalizedUrl &&
+              (
+                a.localService?.projectDirectory
+                  ? normalizeProjectDirectoryForDedup(a.localService.projectDirectory)
+                  : ''
+              ) === normalizedProjectDirectory
           );
           if (dupIndex >= 0) {
             const old = state.artifactsBySession[sessionId][dupIndex];

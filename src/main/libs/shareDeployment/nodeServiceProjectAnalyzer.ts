@@ -8,41 +8,57 @@ import {
   type ShareDeploymentAnalyzeProjectInput,
   ShareDeploymentCandidateSource,
   type ShareDeploymentDetectCandidatesInput,
+  ShareDeploymentKind,
+  ShareDeploymentPackageManager,
   type ShareDeploymentProjectAnalysis,
   type ShareDeploymentProjectCandidate,
-  ShareDeploymentPackageManager,
 } from '../../../shared/shareDeployment/constants';
 
 const execFileAsync = promisify(execFile);
 
 export const NODE_SERVICE_DEPLOYMENT_LIMITS = {
-  MaxFiles: 5000,
-  MaxTotalBytes: 100 * 1024 * 1024,
-  MaxArchiveBytes: 15 * 1024 * 1024,
+  MaxFiles: 50000,
+  MaxSourceTotalBytes: 100 * 1024 * 1024,
+  MaxDeploymentTotalBytes: 500 * 1024 * 1024,
+  MaxArchiveBytes: 100 * 1024 * 1024,
+  CommandTimeoutMs: 10 * 60 * 1000,
 } as const;
 
 const PACKAGE_JSON_FILE_NAME = 'package.json';
 
-const BLOCKED_DIRECTORY_NAMES = new Set([
+const COMMON_BLOCKED_DIRECTORY_NAMES = [
   '.git',
   '.hg',
   '.svn',
-  'node_modules',
-  '.next',
-  '.nuxt',
-  '.svelte-kit',
   '.vite',
   '.cache',
   '.turbo',
   '.vercel',
   '.serverless',
   'coverage',
-  'dist',
-  'build',
   'tmp',
   'temp',
   'logs',
+] as const;
+
+const SOURCE_BUILD_OUTPUT_DIRECTORY_NAMES = [
+  '.next',
+  '.nuxt',
+  '.svelte-kit',
+  '.output',
+  '.lobster-static-runtime',
+  'dist',
+  'build',
+  'out',
+] as const;
+
+const SOURCE_BLOCKED_DIRECTORY_NAMES = new Set([
+  ...COMMON_BLOCKED_DIRECTORY_NAMES,
+  ...SOURCE_BUILD_OUTPUT_DIRECTORY_NAMES,
+  'node_modules',
 ]);
+
+const DEPLOYMENT_BLOCKED_DIRECTORY_NAMES = new Set(COMMON_BLOCKED_DIRECTORY_NAMES);
 
 const BLOCKED_FILE_NAMES = new Set([
   '.DS_Store',
@@ -53,19 +69,19 @@ const BLOCKED_FILE_NAMES = new Set([
   'pnpm-debug.log',
 ]);
 
-const PROJECT_MARKER_NAMES = [
-  PACKAGE_JSON_FILE_NAME,
-  'pnpm-lock.yaml',
-  'package-lock.json',
-  'yarn.lock',
-  '.git',
-];
+const PROJECT_CANDIDATE_SCAN_MAX_DEPTH = 3;
+const PROJECT_CANDIDATE_SCAN_MAX_DIRECTORIES = 300;
+const NEXT_STANDALONE_START_COMMAND = 'node server.js';
+const NITRO_OUTPUT_START_COMMAND = 'node .output/server/index.mjs';
+const STATIC_BUILD_START_COMMAND = 'node server.js';
 
 interface PackageJson {
   name?: string;
   version?: string;
   main?: string;
   scripts?: Record<string, string>;
+  dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
   engines?: {
     node?: string;
   };
@@ -80,6 +96,14 @@ export interface NodeServicePackageEntry {
 export interface NodeServiceProjectPackagePlan {
   analysis: ShareDeploymentProjectAnalysis;
   entries: NodeServicePackageEntry[];
+}
+
+export interface NodeServicePackageCollection {
+  entries: NodeServicePackageEntry[];
+  totalBytes: number;
+  excludedCount: number;
+  warnings: string[];
+  blockers: string[];
 }
 
 function normalizeArchiveName(value: string): string {
@@ -110,8 +134,8 @@ function isBlockedFileName(name: string): boolean {
   return BLOCKED_FILE_NAMES.has(name) || isEnvFileName(name) || isSecretLikeFileName(name);
 }
 
-function isBlockedPathPart(part: string): boolean {
-  return BLOCKED_DIRECTORY_NAMES.has(part);
+function isBlockedPathPart(part: string, blockedDirectoryNames: Set<string>): boolean {
+  return blockedDirectoryNames.has(part);
 }
 
 function isBlockedRootDirectory(resolvedDirectory: string): boolean {
@@ -160,17 +184,14 @@ async function pathExists(targetPath: string): Promise<boolean> {
   }
 }
 
-async function hasProjectMarker(directory: string): Promise<boolean> {
-  for (const markerName of PROJECT_MARKER_NAMES) {
-    if (await pathExists(path.join(directory, markerName))) return true;
-  }
-  return false;
+async function hasPackageJson(directory: string): Promise<boolean> {
+  return await pathExists(path.join(directory, PACKAGE_JSON_FILE_NAME));
 }
 
 async function findNearestProjectDirectory(startDirectory: string): Promise<string | null> {
   let current = path.resolve(startDirectory);
   while (true) {
-    if (await hasProjectMarker(current)) return current;
+    if (await hasPackageJson(current)) return current;
     const parent = path.dirname(current);
     if (parent === current) return null;
     current = parent;
@@ -214,12 +235,127 @@ function resolveInstallCommand(packageManager: ShareDeploymentPackageManager): s
   }
 }
 
-function resolveStartCommand(packageJson: PackageJson | null): string {
+function scriptRunCommand(packageManager: ShareDeploymentPackageManager, scriptName: string): string {
+  switch (packageManager) {
+    case ShareDeploymentPackageManager.Pnpm:
+      return `pnpm run ${scriptName}`;
+    case ShareDeploymentPackageManager.Yarn:
+      return `yarn run ${scriptName}`;
+    case ShareDeploymentPackageManager.Npm:
+    default:
+      return `npm run ${scriptName}`;
+  }
+}
+
+function resolveBuildCommand(
+  packageJson: PackageJson | null,
+  packageManager: ShareDeploymentPackageManager,
+): string {
   const scripts = packageJson?.scripts ?? {};
-  if (typeof scripts.start === 'string' && scripts.start.trim()) return 'npm run start';
-  if (typeof scripts.serve === 'string' && scripts.serve.trim()) return 'npm run serve';
-  if (typeof scripts.dev === 'string' && scripts.dev.trim()) return 'npm run dev';
+  if (typeof scripts.build === 'string' && scripts.build.trim()) {
+    return scriptRunCommand(packageManager, 'build');
+  }
   return '';
+}
+
+function isNextProjectPackage(packageJson: PackageJson | null): boolean {
+  return hasPackageDependency(packageJson, ['next']);
+}
+
+function hasPackageDependency(packageJson: PackageJson | null, packageNames: string[]): boolean {
+  const dependencies = {
+    ...packageJson?.dependencies,
+    ...packageJson?.devDependencies,
+  };
+  return packageNames.some(packageName => Boolean(dependencies[packageName]));
+}
+
+function isNuxtProjectPackage(packageJson: PackageJson | null): boolean {
+  return hasPackageDependency(packageJson, ['nuxt', 'nuxt3']);
+}
+
+function isStaticBuildProjectPackage(packageJson: PackageJson | null): boolean {
+  return hasPackageDependency(packageJson, [
+    'vite',
+    'react-scripts',
+    '@vue/cli-service',
+    '@angular/cli',
+    'astro',
+    'parcel',
+    '@sveltejs/vite-plugin-svelte',
+  ]);
+}
+
+function resolveStartCommand(
+  packageJson: PackageJson | null,
+  packageManager: ShareDeploymentPackageManager,
+): string {
+  const scripts = packageJson?.scripts ?? {};
+  if (
+    isNextProjectPackage(packageJson) &&
+    typeof scripts.build === 'string' &&
+    scripts.build.trim()
+  ) {
+    return NEXT_STANDALONE_START_COMMAND;
+  }
+  if (
+    isNuxtProjectPackage(packageJson) &&
+    typeof scripts.build === 'string' &&
+    scripts.build.trim()
+  ) {
+    return NITRO_OUTPUT_START_COMMAND;
+  }
+  if (
+    isStaticBuildProjectPackage(packageJson) &&
+    typeof scripts.build === 'string' &&
+    scripts.build.trim()
+  ) {
+    return STATIC_BUILD_START_COMMAND;
+  }
+  if (typeof scripts.start === 'string' && scripts.start.trim()) return scriptRunCommand(packageManager, 'start');
+  if (typeof scripts.serve === 'string' && scripts.serve.trim()) return scriptRunCommand(packageManager, 'serve');
+  if (typeof scripts.dev === 'string' && scripts.dev.trim()) return scriptRunCommand(packageManager, 'dev');
+  return '';
+}
+
+function resolveDeploymentKind(packageJson: PackageJson | null): ShareDeploymentKind {
+  if (isStaticBuildProjectPackage(packageJson) && !isNextProjectPackage(packageJson) && !isNuxtProjectPackage(packageJson)) {
+    return ShareDeploymentKind.StaticSite;
+  }
+  return ShareDeploymentKind.NodeService;
+}
+
+function hasRunnableScript(packageJson: PackageJson | null): boolean {
+  const scripts = packageJson?.scripts ?? {};
+  if (
+    isNextProjectPackage(packageJson) &&
+    typeof scripts.build === 'string' &&
+    scripts.build.trim().length > 0
+  ) {
+    return true;
+  }
+  if (
+    (isNuxtProjectPackage(packageJson) || isStaticBuildProjectPackage(packageJson)) &&
+    typeof scripts.build === 'string' &&
+    scripts.build.trim().length > 0
+  ) {
+    return true;
+  }
+  return ['start', 'serve', 'dev'].some(scriptName => {
+    const script = scripts[scriptName];
+    return typeof script === 'string' && script.trim().length > 0;
+  });
+}
+
+async function isUsableNodeProjectDirectory(projectDirectory: string): Promise<boolean> {
+  try {
+    const stat = await fs.promises.stat(projectDirectory);
+    if (!stat.isDirectory() || isBlockedRootDirectory(projectDirectory)) return false;
+    const packageJson = await readPackageJson(projectDirectory);
+    return hasRunnableScript(packageJson);
+  } catch {
+    return false;
+  }
 }
 
 function resolveNodeVersion(packageJson: PackageJson | null): string {
@@ -233,13 +369,9 @@ function resolveNodeVersion(packageJson: PackageJson | null): string {
 
 async function collectPackageEntries(
   projectDirectory: string,
-): Promise<{
-  entries: NodeServicePackageEntry[];
-  totalBytes: number;
-  excludedCount: number;
-  warnings: string[];
-  blockers: string[];
-}> {
+  blockedDirectoryNames: Set<string>,
+  maxTotalBytes: number,
+): Promise<NodeServicePackageCollection> {
   const entries: NodeServicePackageEntry[] = [];
   const warnings: string[] = [];
   const blockers: string[] = [];
@@ -247,12 +379,18 @@ async function collectPackageEntries(
   let excludedCount = 0;
 
   async function walk(directory: string): Promise<void> {
+    if (blockers.length > 0) return;
+
     const children = await fs.promises.readdir(directory, { withFileTypes: true });
     for (const child of children) {
+      if (blockers.length > 0) return;
       const absolutePath = path.join(directory, child.name);
       const relativePath = path.relative(projectDirectory, absolutePath);
       const relativeParts = relativePath.split(path.sep).filter(Boolean);
-      if (relativeParts.some(isBlockedPathPart) || isBlockedFileName(child.name)) {
+      if (
+        relativeParts.some(part => isBlockedPathPart(part, blockedDirectoryNames)) ||
+        isBlockedFileName(child.name)
+      ) {
         excludedCount += 1;
         continue;
       }
@@ -280,9 +418,9 @@ async function collectPackageEntries(
         blockers.push(`Project has more than ${NODE_SERVICE_DEPLOYMENT_LIMITS.MaxFiles} files after exclusions.`);
         return;
       }
-      if (totalBytes > NODE_SERVICE_DEPLOYMENT_LIMITS.MaxTotalBytes) {
+      if (totalBytes > maxTotalBytes) {
         blockers.push(
-          `Project files exceed ${Math.floor(NODE_SERVICE_DEPLOYMENT_LIMITS.MaxTotalBytes / 1024 / 1024)}MB after exclusions.`,
+          `Project files exceed ${Math.floor(maxTotalBytes / 1024 / 1024)}MB after exclusions.`,
         );
         return;
       }
@@ -302,6 +440,16 @@ async function collectPackageEntries(
     warnings,
     blockers,
   };
+}
+
+export async function collectNodeServiceDeploymentPackageEntries(
+  projectDirectory: string,
+): Promise<NodeServicePackageCollection> {
+  return await collectPackageEntries(
+    projectDirectory,
+    DEPLOYMENT_BLOCKED_DIRECTORY_NAMES,
+    NODE_SERVICE_DEPLOYMENT_LIMITS.MaxDeploymentTotalBytes,
+  );
 }
 
 export async function buildNodeServiceProjectPackagePlan(
@@ -333,7 +481,9 @@ export async function buildNodeServiceProjectPackagePlan(
 
   const packageManager = resolvePackageManager(projectDirectory);
   const installCommand = resolveInstallCommand(packageManager);
-  const startCommand = resolveStartCommand(packageJson);
+  const buildCommand = resolveBuildCommand(packageJson, packageManager);
+  const startCommand = resolveStartCommand(packageJson, packageManager);
+  const deploymentKind = resolveDeploymentKind(packageJson);
   const nodeVersion = resolveNodeVersion(packageJson);
   const port = parseLocalServicePort(input.localServiceUrl);
 
@@ -343,15 +493,20 @@ export async function buildNodeServiceProjectPackagePlan(
   if (!port) {
     blockers.push('Local service URL must include a valid port.');
   }
-  if (startCommand === 'npm run dev') {
+  if (startCommand.endsWith(' run dev')) {
     warnings.push('Only a dev script was found. Confirm the service can run in a cloud deployment.');
   }
   if (packageManager === ShareDeploymentPackageManager.Npm && !fs.existsSync(path.join(projectDirectory, 'package-lock.json'))) {
     warnings.push('No package-lock.json was found. npm install behavior may be less reproducible.');
   }
 
-  const collected = stat?.isDirectory()
-    ? await collectPackageEntries(projectDirectory)
+  const shouldCollectPackageEntries = Boolean(stat?.isDirectory() && blockers.length === 0);
+  const collected = shouldCollectPackageEntries
+    ? await collectPackageEntries(
+        projectDirectory,
+        SOURCE_BLOCKED_DIRECTORY_NAMES,
+        NODE_SERVICE_DEPLOYMENT_LIMITS.MaxSourceTotalBytes,
+      )
     : {
         entries: [],
         totalBytes: 0,
@@ -365,9 +520,13 @@ export async function buildNodeServiceProjectPackagePlan(
     projectDirectory,
     packageName: typeof packageJson?.name === 'string' ? packageJson.name : undefined,
     packageVersion: typeof packageJson?.version === 'string' ? packageJson.version : undefined,
+    deploymentKind,
+    entryFile: deploymentKind === ShareDeploymentKind.StaticSite ? 'index.html' : undefined,
+    spaFallback: deploymentKind === ShareDeploymentKind.StaticSite ? true : undefined,
     packageManager,
     nodeVersion,
     installCommand,
+    buildCommand,
     startCommand,
     port,
     totalFiles: collected.entries.length,
@@ -395,6 +554,7 @@ export async function analyzeNodeServiceProjectDirectory(
       packageManager: ShareDeploymentPackageManager.Unknown,
       nodeVersion: '20',
       installCommand: 'npm ci',
+      buildCommand: '',
       startCommand: '',
       totalFiles: 0,
       totalBytes: 0,
@@ -458,6 +618,57 @@ function pushUniqueCandidate(
   });
 }
 
+async function findWorkspaceChildProjectCandidates(
+  workingDirectory?: string,
+): Promise<ShareDeploymentProjectCandidate[]> {
+  if (!workingDirectory?.trim()) return [];
+
+  const root = path.resolve(workingDirectory.trim());
+  try {
+    const stat = await fs.promises.stat(root);
+    if (!stat.isDirectory() || isBlockedRootDirectory(root)) return [];
+  } catch {
+    return [];
+  }
+
+  const candidates: ShareDeploymentProjectCandidate[] = [];
+  let visitedDirectories = 0;
+
+  async function walk(directory: string, depth: number): Promise<void> {
+    if (depth > PROJECT_CANDIDATE_SCAN_MAX_DEPTH) return;
+    if (visitedDirectories >= PROJECT_CANDIDATE_SCAN_MAX_DIRECTORIES) return;
+
+    let children: fs.Dirent[];
+    try {
+      children = await fs.promises.readdir(directory, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const child of children) {
+      if (visitedDirectories >= PROJECT_CANDIDATE_SCAN_MAX_DIRECTORIES) return;
+      if (!child.isDirectory() || child.isSymbolicLink()) continue;
+      if (isBlockedPathPart(child.name, SOURCE_BLOCKED_DIRECTORY_NAMES)) continue;
+
+      const childDirectory = path.join(directory, child.name);
+      visitedDirectories += 1;
+      if (await isUsableNodeProjectDirectory(childDirectory)) {
+        pushUniqueCandidate(candidates, {
+          directory: childDirectory,
+          source: ShareDeploymentCandidateSource.WorkspaceChild,
+          confidence: Math.max(50, 76 - depth * 6),
+          reason: 'Found a runnable Node project under the current workspace directory.',
+        });
+      }
+
+      await walk(childDirectory, depth + 1);
+    }
+  }
+
+  await walk(root, 1);
+  return candidates;
+}
+
 export async function detectNodeServiceProjectCandidates(
   input: ShareDeploymentDetectCandidatesInput,
 ): Promise<ShareDeploymentProjectCandidate[]> {
@@ -468,11 +679,15 @@ export async function detectNodeServiceProjectCandidates(
     const pid = await getPidListeningOnPort(port);
     const cwd = pid ? await getProcessCwd(pid) : null;
     const projectDirectory = cwd ? await findProjectDirectoryCandidate(cwd) : null;
+    const usableProjectDirectory =
+      projectDirectory && await isUsableNodeProjectDirectory(projectDirectory)
+        ? projectDirectory
+        : null;
     pushUniqueCandidate(
       candidates,
-      projectDirectory
+      usableProjectDirectory
         ? {
-            directory: projectDirectory,
+            directory: usableProjectDirectory,
             source: ShareDeploymentCandidateSource.Process,
             confidence: 95,
             reason: `Matched the process listening on port ${port}.`,
@@ -482,17 +697,25 @@ export async function detectNodeServiceProjectCandidates(
   }
 
   const workspaceProjectDirectory = await findProjectDirectoryCandidate(input.workingDirectory);
+  const usableWorkspaceProjectDirectory =
+    workspaceProjectDirectory && await isUsableNodeProjectDirectory(workspaceProjectDirectory)
+      ? workspaceProjectDirectory
+      : null;
   pushUniqueCandidate(
     candidates,
-    workspaceProjectDirectory
+    usableWorkspaceProjectDirectory
       ? {
-          directory: workspaceProjectDirectory,
+          directory: usableWorkspaceProjectDirectory,
           source: ShareDeploymentCandidateSource.Workspace,
           confidence: 80,
           reason: 'Matched the current workspace directory.',
         }
       : null,
   );
+
+  for (const childProjectCandidate of await findWorkspaceChildProjectCandidates(input.workingDirectory)) {
+    pushUniqueCandidate(candidates, childProjectCandidate);
+  }
 
   return candidates.sort((a, b) => b.confidence - a.confidence);
 }

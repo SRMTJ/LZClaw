@@ -1,4 +1,8 @@
-import type { HtmlShareAccessMode } from '../htmlShare/constants';
+import type {
+  HtmlShareAccessMode,
+  HtmlShareDisabledSource,
+  HtmlShareStatus,
+} from '../htmlShare/constants';
 
 export const ShareDeploymentIpc = {
   DetectProjectCandidates: 'shareDeployment:detectProjectCandidates',
@@ -13,6 +17,7 @@ export type ShareDeploymentIpc = (typeof ShareDeploymentIpc)[keyof typeof ShareD
 export const ShareDeploymentCandidateSource = {
   Process: 'process',
   Workspace: 'workspace',
+  WorkspaceChild: 'workspace_child',
   Manual: 'manual',
 } as const;
 
@@ -40,6 +45,14 @@ export const ShareDeploymentStatus = {
 
 export type ShareDeploymentStatus =
   (typeof ShareDeploymentStatus)[keyof typeof ShareDeploymentStatus];
+
+export const ShareDeploymentKind = {
+  NodeService: 'node_service',
+  StaticSite: 'static_site',
+} as const;
+
+export type ShareDeploymentKind =
+  (typeof ShareDeploymentKind)[keyof typeof ShareDeploymentKind];
 
 export interface ShareDeploymentProjectCandidate {
   directory: string;
@@ -69,9 +82,13 @@ export interface ShareDeploymentProjectAnalysis {
   projectDirectory: string;
   packageName?: string;
   packageVersion?: string;
+  deploymentKind?: ShareDeploymentKind;
+  entryFile?: string;
+  spaFallback?: boolean;
   packageManager: ShareDeploymentPackageManager;
   nodeVersion: string;
   installCommand: string;
+  buildCommand: string;
   startCommand: string;
   port?: number;
   totalFiles: number;
@@ -91,8 +108,15 @@ export interface ShareDeploymentCreateNodeInput {
   accessMode?: HtmlShareAccessMode;
   nodeVersion: string;
   installCommand: string;
+  buildCommand: string;
   startCommand: string;
   port: number;
+}
+
+export interface ShareDeploymentGetByLocalServiceInput {
+  sessionId: string;
+  localServiceUrl: string;
+  projectDirectory?: string;
 }
 
 export interface ShareDeploymentEvent {
@@ -107,14 +131,18 @@ export interface ShareDeploymentRecord {
   deploymentId: string;
   shareId?: string;
   url?: string;
+  deploymentKind?: ShareDeploymentKind;
   accessMode?: HtmlShareAccessMode;
   shareCode?: string;
   shareCodeUnavailable?: boolean;
+  shareStatus?: HtmlShareStatus;
+  disabledSource?: HtmlShareDisabledSource | null;
   status: ShareDeploymentStatus;
   runtimeLanguage?: string;
   runtimeVersion?: string;
   packageManager?: string;
   installCommand?: string;
+  buildCommand?: string;
   startCommand?: string;
   targetPort?: number;
   sourceArchiveBytes?: number;

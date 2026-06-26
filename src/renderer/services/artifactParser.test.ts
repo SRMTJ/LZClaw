@@ -354,6 +354,71 @@ describe('dedupeArtifactsForDisplay', () => {
     expect(artifacts).toHaveLength(1);
     expect(artifacts[0].id).toBe('local');
   });
+
+  test('dedupes local service artifacts with the same URL', () => {
+    const artifacts = dedupeArtifactsForDisplay([
+      {
+        id: 'assistant-service',
+        messageId: 'assistant-msg',
+        sessionId: 'sess1',
+        type: 'local-service',
+        title: 'localhost:3000',
+        content: 'http://localhost:3000',
+        url: 'http://localhost:3000',
+        createdAt: 1,
+      },
+      {
+        id: 'system-service',
+        messageId: 'system-msg',
+        sessionId: 'sess1',
+        type: 'local-service',
+        title: 'localhost:3000',
+        content: 'http://localhost:3000/',
+        url: 'http://localhost:3000/',
+        createdAt: 2,
+      },
+    ]);
+
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0].id).toBe('system-service');
+  });
+
+  test('keeps local service artifacts with the same URL from different projects', () => {
+    const artifacts = dedupeArtifactsForDisplay([
+      {
+        id: 'project-a-service',
+        messageId: 'assistant-msg',
+        sessionId: 'sess1',
+        type: 'local-service',
+        title: 'localhost:3000',
+        content: 'http://localhost:3000',
+        url: 'http://localhost:3000',
+        localService: {
+          url: 'http://localhost:3000',
+          origin: 'http://localhost:3000',
+          projectDirectory: '/Users/admin/project/a',
+        },
+        createdAt: 1,
+      },
+      {
+        id: 'project-b-service',
+        messageId: 'system-msg',
+        sessionId: 'sess1',
+        type: 'local-service',
+        title: 'localhost:3000',
+        content: 'http://localhost:3000',
+        url: 'http://localhost:3000',
+        localService: {
+          url: 'http://localhost:3000',
+          origin: 'http://localhost:3000',
+          projectDirectory: '/Users/admin/project/b',
+        },
+        createdAt: 2,
+      },
+    ]);
+
+    expect(artifacts).toHaveLength(2);
+  });
 });
 
 describe('parseLocalServiceUrlsFromText', () => {
@@ -377,6 +442,94 @@ describe('parseLocalServiceUrlsFromText', () => {
     const content = '[http://localhost:4173/](http://localhost:4173/)\nhttp://localhost:4173/';
     const artifacts = parseLocalServiceUrlsFromText(content, 'msg1', 'sess1');
     expect(artifacts).toHaveLength(1);
+  });
+
+  test('attaches project directory metadata', () => {
+    const artifacts = parseLocalServiceUrlsFromText(
+      '服务已启动：http://localhost:3000',
+      'msg1',
+      'sess1',
+      { projectDirectory: '/Users/admin/project/fanren-vote' },
+    );
+
+    expect(artifacts[0].localService).toEqual({
+      url: 'http://localhost:3000',
+      origin: 'http://localhost:3000',
+      projectDirectory: '/Users/admin/project/fanren-vote',
+    });
+  });
+
+  test('prefers project directory from startup cd command over session cwd', () => {
+    const content = [
+      '启动方式',
+      '```bash',
+      'cd /Users/admin/lobsterai/project/fanren/fanren-vote',
+      'npm run dev',
+      '```',
+      '预览地址：http://localhost:3000',
+    ].join('\n');
+    const artifacts = parseLocalServiceUrlsFromText(
+      content,
+      'msg1',
+      'sess1',
+      { projectDirectory: '/Users/admin/lobsterai/project/fanren' },
+    );
+
+    expect(artifacts[0].localService?.projectDirectory).toBe(
+      '/Users/admin/lobsterai/project/fanren/fanren-vote',
+    );
+  });
+
+  test('prefers labeled project directory over session cwd', () => {
+    const content = [
+      '项目目录： `/Users/admin/lobsterai/project/fanren/fanren-vote/`',
+      '预览地址：http://localhost:3000',
+    ].join('\n');
+    const artifacts = parseLocalServiceUrlsFromText(
+      content,
+      'msg1',
+      'sess1',
+      { projectDirectory: '/Users/admin/lobsterai/project/fanren' },
+    );
+
+    expect(artifacts[0].localService?.projectDirectory).toBe(
+      '/Users/admin/lobsterai/project/fanren/fanren-vote/',
+    );
+  });
+
+  test('extracts labeled project directory from markdown file link', () => {
+    const content = [
+      '✅ 服务已启动，运行在 http://localhost:3000',
+      '• 项目路径： [`/Users/admin/lobsterai/project/fanren/fanren-vote/`](file:///Users/admin/lobsterai/project/fanren/fanren-vote/)',
+      '• 状态： 正常运行，HTTP 200',
+    ].join('\n');
+    const artifacts = parseLocalServiceUrlsFromText(
+      content,
+      'msg1',
+      'sess1',
+      { projectDirectory: '/Users/admin/lobsterai/project/fanren' },
+    );
+
+    expect(artifacts[0].localService?.projectDirectory).toBe(
+      '/Users/admin/lobsterai/project/fanren/fanren-vote/',
+    );
+  });
+
+  test('ignores malformed labeled project directory markers', () => {
+    const content = [
+      '项目路径： [',
+      '预览地址：http://localhost:3000',
+    ].join('\n');
+    const artifacts = parseLocalServiceUrlsFromText(
+      content,
+      'msg1',
+      'sess1',
+      { projectDirectory: '/Users/admin/lobsterai/project/fanren' },
+    );
+
+    expect(artifacts[0].localService?.projectDirectory).toBe(
+      '/Users/admin/lobsterai/project/fanren',
+    );
   });
 
   test('ignores remote URLs', () => {

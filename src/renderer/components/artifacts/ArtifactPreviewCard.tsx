@@ -59,7 +59,10 @@ interface AppInfo {
 
 interface OpenDropdownProps {
   anchorRef: React.RefObject<HTMLElement>;
-  filePath: string;
+  filePath?: string;
+  browserUrl?: string;
+  browserProjectDirectory?: string;
+  revealFolderPath?: string;
   browserOpenAction?: {
     label: string;
     onOpen: () => void;
@@ -67,16 +70,38 @@ interface OpenDropdownProps {
   onClose: () => void;
 }
 
-const OpenDropdown: React.FC<OpenDropdownProps> = ({ anchorRef, filePath, browserOpenAction, onClose }) => {
+const OpenDropdown: React.FC<OpenDropdownProps> = ({
+  anchorRef,
+  filePath,
+  browserUrl,
+  browserProjectDirectory,
+  revealFolderPath,
+  browserOpenAction,
+  onClose,
+}) => {
   const menuRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
   const [apps, setApps] = useState<AppInfo[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(Boolean(filePath || browserUrl));
 
   useEffect(() => {
+    if (!filePath && !browserUrl) {
+      setApps([]);
+      setLoading(false);
+      return undefined;
+    }
     let cancelled = false;
-    const normalized = normalizeFilePath(filePath);
-    window.electron?.shell?.getAppsForFile(normalized).then(result => {
+    setLoading(true);
+    const appsPromise = filePath
+      ? window.electron?.shell?.getAppsForFile(normalizeFilePath(filePath))
+      : window.electron?.shell?.getBrowserApps(
+          browserProjectDirectory ? { projectDirectory: browserProjectDirectory } : undefined,
+        );
+    if (!appsPromise) {
+      setLoading(false);
+      return undefined;
+    }
+    appsPromise.then(result => {
       if (cancelled) return;
       if (result?.success && result.apps?.length > 0) {
         setApps(result.apps);
@@ -86,13 +111,18 @@ const OpenDropdown: React.FC<OpenDropdownProps> = ({ anchorRef, filePath, browse
       if (!cancelled) setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [filePath]);
+  }, [browserProjectDirectory, browserUrl, filePath]);
 
   useEffect(() => {
     if (!anchorRef.current) return;
     const rect = anchorRef.current.getBoundingClientRect();
     const MAX_MENU_HEIGHT = 320;
-    const actionCount = apps.length + 1 + (browserOpenAction ? 1 : 0);
+    const systemAppActionCount = filePath || browserUrl ? apps.length : 0;
+    const revealActionCount = revealFolderPath || filePath ? 1 : 0;
+    const actionCount =
+      systemAppActionCount +
+      revealActionCount +
+      (browserOpenAction ? 1 : 0);
     const naturalHeight = loading ? 88 : Math.max(88, actionCount * 36 + 16);
     const estimatedHeight = Math.min(MAX_MENU_HEIGHT, naturalHeight);
     const spaceBelow = window.innerHeight - rect.bottom - 8;
@@ -110,7 +140,7 @@ const OpenDropdown: React.FC<OpenDropdownProps> = ({ anchorRef, filePath, browse
     }
     const left = Math.min(rect.right, window.innerWidth - 200);
     setPosition({ top, left });
-  }, [anchorRef, apps, browserOpenAction, loading]);
+  }, [anchorRef, apps, browserOpenAction, browserUrl, filePath, loading, revealFolderPath]);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -131,9 +161,11 @@ const OpenDropdown: React.FC<OpenDropdownProps> = ({ anchorRef, filePath, browse
   }, [anchorRef, onClose]);
 
   const handleOpenWithSpecificApp = useCallback(async (appPath: string) => {
-    const normalized = normalizeFilePath(filePath);
+    if (!filePath && !browserUrl) return;
     try {
-      const result = await window.electron?.shell?.openPathWithApp(normalized, appPath);
+      const result = browserUrl
+        ? await window.electron?.shell?.openUrlWithApp(browserUrl, appPath)
+        : await window.electron?.shell?.openPathWithApp(normalizeFilePath(filePath!), appPath);
       if (!result?.success) {
         showShellFailureToast(result, 'openFileFailed');
       }
@@ -141,9 +173,10 @@ const OpenDropdown: React.FC<OpenDropdownProps> = ({ anchorRef, filePath, browse
       showShellFailureToast(null, 'openFileFailed');
     }
     onClose();
-  }, [filePath, onClose]);
+  }, [browserUrl, filePath, onClose]);
 
   const handleOpenWithDefault = useCallback(async () => {
+    if (!filePath) return;
     const normalized = normalizeFilePath(filePath);
     try {
       const result = await window.electron?.shell?.openPath(normalized);
@@ -157,10 +190,12 @@ const OpenDropdown: React.FC<OpenDropdownProps> = ({ anchorRef, filePath, browse
   }, [filePath, onClose]);
 
   const handleRevealInFolder = useCallback(async () => {
-    const normalized = normalizeFilePath(filePath);
+    const pathToReveal = revealFolderPath || filePath;
+    if (!pathToReveal) return;
+    const normalized = normalizeFilePath(pathToReveal);
     await revealLocalPathWithToast(normalized);
     onClose();
-  }, [filePath, onClose]);
+  }, [filePath, onClose, revealFolderPath]);
 
   const handleBrowserOpen = useCallback(() => {
     browserOpenAction?.onOpen();
@@ -185,11 +220,11 @@ const OpenDropdown: React.FC<OpenDropdownProps> = ({ anchorRef, filePath, browse
           <span className="truncate">{browserOpenAction.label}</span>
         </button>
       )}
-      {loading ? (
+      {(filePath || browserUrl) && loading ? (
         <div className="flex items-center justify-center px-3 py-3">
           <div className="w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
         </div>
-      ) : apps.length > 0 ? (
+      ) : (filePath || browserUrl) && apps.length > 0 ? (
         <>
           {apps.map((app, idx) => (
             <button
@@ -207,7 +242,7 @@ const OpenDropdown: React.FC<OpenDropdownProps> = ({ anchorRef, filePath, browse
             </button>
           ))}
         </>
-      ) : !browserOpenAction ? (
+      ) : filePath && !browserOpenAction ? (
         <button
           type="button"
           onClick={handleOpenWithDefault}
@@ -217,30 +252,44 @@ const OpenDropdown: React.FC<OpenDropdownProps> = ({ anchorRef, filePath, browse
           <span>{t('artifactOpenWithApp')}</span>
         </button>
       ) : null}
-      <div className="mx-2 my-1 border-t border-border" />
-      <button
-        type="button"
-        onClick={handleRevealInFolder}
-        className="flex w-full items-center gap-2.5 px-3 py-2 text-sm text-foreground hover:bg-black/[0.06] dark:hover:bg-white/[0.08] transition-colors text-left"
-      >
-        <FolderIcon className="w-4 h-4 text-secondary flex-shrink-0" />
-        <span>{t('artifactOpenInFolder')}</span>
-      </button>
+      {(revealFolderPath || filePath) && (
+        <>
+          <div className="mx-2 my-1 border-t border-border" />
+          <button
+            type="button"
+            onClick={handleRevealInFolder}
+            className="flex w-full items-center gap-2.5 px-3 py-2 text-sm text-foreground hover:bg-black/[0.06] dark:hover:bg-white/[0.08] transition-colors text-left"
+          >
+            <FolderIcon className="w-4 h-4 text-secondary flex-shrink-0" />
+            <span>{t('artifactOpenInFolder')}</span>
+          </button>
+        </>
+      )}
     </div>,
     document.body
   );
 };
 
+function getDirectoryBaseName(directory?: string): string {
+  const normalized = directory?.trim().replace(/\\/g, '/') || '';
+  if (!normalized) return '';
+  const trimmed = normalized.length > 1 ? normalized.replace(/\/+$/, '') : normalized;
+  const lastSlash = trimmed.lastIndexOf('/');
+  return lastSlash >= 0 ? trimmed.slice(lastSlash + 1) : trimmed;
+}
+
 // ── Main Card Component ──────────────────────────────────────────
 
 interface ArtifactPreviewCardProps {
   artifact: Artifact;
+  localServiceDirectory?: string;
   onOpenLocalService?: (artifact: Artifact) => void;
   onOpenHtmlFile?: (artifact: Artifact) => void;
 }
 
 const ArtifactPreviewCard: React.FC<ArtifactPreviewCardProps> = ({
   artifact,
+  localServiceDirectory,
   onOpenLocalService,
   onOpenHtmlFile,
 }) => {
@@ -265,12 +314,25 @@ const ArtifactPreviewCard: React.FC<ArtifactPreviewCardProps> = ({
   const supportsOpenMenu = descriptor.supportsOpenMenu;
   const cardClassName = 'artifact-preview-card-row group flex min-h-[58px] items-center gap-3 px-4 py-3 transition-colors w-full text-left';
   const iconClassName = 'w-5 h-5';
-  const browserOpenAction = artifact.type === ArtifactTypeValue.Html && artifact.filePath
+  const localServiceUrl = artifact.type === ArtifactTypeValue.LocalService
+    ? artifact.url || artifact.content
+    : '';
+  const effectiveLocalServiceDirectory = artifact.type === ArtifactTypeValue.LocalService
+    ? artifact.localService?.projectDirectory?.trim() || localServiceDirectory?.trim() || ''
+    : '';
+  const localServiceProjectName = getDirectoryBaseName(effectiveLocalServiceDirectory);
+  const displaySubtitle = artifact.type === ArtifactTypeValue.LocalService && localServiceProjectName
+    ? `${localServiceProjectName} · ${descriptor.subtitle}`
+    : descriptor.subtitle;
+  const browserOpenAction = (
+    (artifact.type === ArtifactTypeValue.Html && artifact.filePath) ||
+    (artifact.type === ArtifactTypeValue.LocalService && localServiceUrl)
+  )
     ? { label: t('artifactPreviewCardLobsterBrowser'), onOpen: handleClick }
     : undefined;
   const subtitle = (
-    <div className="text-xs text-secondary truncate">
-      <span className="group-hover:hidden">{descriptor.subtitle}</span>
+    <div className="text-xs text-secondary truncate" title={effectiveLocalServiceDirectory || undefined}>
+      <span className="group-hover:hidden">{displaySubtitle}</span>
       <span className="hidden group-hover:inline">{descriptor.hoverSubtitle}</span>
     </div>
   );
@@ -306,7 +368,18 @@ const ArtifactPreviewCard: React.FC<ArtifactPreviewCardProps> = ({
         {dropdownOpen && (
           <OpenDropdown
             anchorRef={dropdownAnchorRef as React.RefObject<HTMLElement>}
-            filePath={artifact.filePath!}
+            filePath={artifact.filePath}
+            browserUrl={artifact.type === ArtifactTypeValue.LocalService ? localServiceUrl : undefined}
+            browserProjectDirectory={
+              artifact.type === ArtifactTypeValue.LocalService
+                ? effectiveLocalServiceDirectory || undefined
+                : undefined
+            }
+            revealFolderPath={
+              artifact.type === ArtifactTypeValue.LocalService
+                ? effectiveLocalServiceDirectory || undefined
+                : undefined
+            }
             browserOpenAction={browserOpenAction}
             onClose={() => setDropdownOpen(false)}
           />

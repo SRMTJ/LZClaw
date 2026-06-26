@@ -14,6 +14,12 @@ export const ArtifactTypeValue = {
 export type ArtifactSource = 'inline' | 'tool' | 'file';
 export type ArtifactType = typeof ArtifactTypeValue[keyof typeof ArtifactTypeValue];
 
+export interface LocalServiceArtifactMetadata {
+  url: string;
+  origin: string;
+  projectDirectory?: string;
+}
+
 export const PREVIEWABLE_ARTIFACT_TYPES = new Set<ArtifactType>([
   ArtifactTypeValue.Html,
   ArtifactTypeValue.Svg,
@@ -37,6 +43,7 @@ export interface Artifact {
   fileName?: string;
   filePath?: string;
   url?: string;
+  localService?: LocalServiceArtifactMetadata;
   contentVersion?: number;
   remoteUrl?: string;
   source?: ArtifactSource;
