@@ -19,7 +19,6 @@ import {
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { Readable } from 'stream';
 import { fileURLToPath, pathToFileURL } from 'url';
 
 import { CoworkSystemMessageKind } from '../common/coworkSystemMessages';
@@ -31,6 +30,7 @@ import {
   migrateScheduledTasksToOpenclaw,
 } from '../scheduledTask/migrate';
 import { AgentId, AgentIpcChannel } from '../shared/agent/constants';
+import { AppSettingsAutoLaunchErrorCode, AppSettingsIpc } from '../shared/appSettings/constants';
 import { AppUpdateIpc } from '../shared/appUpdate/constants';
 import { ArtifactBrowserPartition, ArtifactPreviewIpc, ArtifactPreviewProtocol } from '../shared/artifactPreview/constants';
 import { AuthIpcChannel } from '../shared/auth/constants';
@@ -58,6 +58,7 @@ import {
   formatCoworkImageAttachmentLimit,
   validateCoworkImageAttachmentSize,
 } from '../shared/cowork/imageAttachments';
+import { containsPlanModePrompt } from '../shared/cowork/planMode';
 import {
   type CoworkSelectedTextSnippet,
   normalizeCoworkSelectedTextSnippets,
@@ -86,7 +87,7 @@ import {
   type LocalWebService,
   LocalWebServicesIpc,
 } from '../shared/localWebServices/constants';
-import { canonicalizeMediaModelId, mediaModelDisplayName } from '../shared/mediaModelAliases';
+import { canonicalizeMediaModelId, HAPPYHORSE_1_1_MODEL_ID, mediaModelDisplayName } from '../shared/mediaModelAliases';
 import { normalizeNotificationSettings, type NotificationSettings } from '../shared/notifications/constants';
 import {
   OpenClawEngineIpc,
@@ -98,8 +99,9 @@ import type { ShellOpenFailureReason as ShellOpenFailureReasonType } from '../sh
 import { ShellOpenFailureReason } from '../shared/shell/constants';
 import { AgentManager } from './agentManager';
 import { APP_NAME, APP_USER_MODEL_ID, DB_FILENAME } from './appConstants';
+import { createLocalFileProtocolResponse } from './artifactLocalFileProtocol';
 import { authQuotaGateStateFromQuota, AuthSubscriptionStatus, createDefaultAuthQuotaGateState, normalizeAuthQuota } from './authQuota';
-import { getAutoLaunchEnabled, isAutoLaunched, setAutoLaunchEnabled } from './autoLaunchManager';
+import { type AutoLaunchStatus, getAutoLaunchStatus, isAutoLaunched, setAutoLaunchEnabled } from './autoLaunchManager';
 import { getRecentComputerUseLogEntries } from './computerUse/computerUseLogs';
 import { type CoworkForkContextMessage, type CoworkMessage, CoworkStore } from './coworkStore';
 import { setLanguage, t } from './i18n';
@@ -263,7 +265,7 @@ import { startOpenClawTokenProxy, stopOpenClawTokenProxy } from './libs/openclaw
 import { migrateMainAgentWorkspace } from './libs/openclawWorkspaceMigration';
 import { isHiddenUserPluginId } from './libs/pluginManager';
 import { ensurePythonRuntimeReady } from './libs/pythonRuntime';
-import { serializeForLog } from './libs/sanitizeForLog';
+import { sanitizeUrlForLog, serializeForLog } from './libs/sanitizeForLog';
 import { SqliteBackupTrigger } from './libs/sqliteBackup/constants';
 import { SqliteBackupManager } from './libs/sqliteBackup/sqliteBackupManager';
 import { runStartupCacheWarmup } from './libs/startupCacheWarmup';
@@ -724,140 +726,6 @@ const sanitizeLocalWebServicePorts = (ports: unknown): number[] => {
     ),
   );
 };
-const LOCAL_FILE_MIME_BY_EXT: Record<string, string> = {
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-  '.bmp': 'image/bmp',
-  '.svg': 'image/svg+xml',
-  '.avif': 'image/avif',
-  '.mp4': 'video/mp4',
-  '.webm': 'video/webm',
-  '.mov': 'video/quicktime',
-  '.m4v': 'video/x-m4v',
-  '.mp3': 'audio/mpeg',
-  '.wav': 'audio/wav',
-  '.ogg': 'audio/ogg',
-  '.pdf': 'application/pdf',
-  '.txt': 'text/plain; charset=utf-8',
-  '.md': 'text/markdown; charset=utf-8',
-  '.html': 'text/html; charset=utf-8',
-};
-
-type ByteRange = {
-  start: number;
-  end: number;
-};
-
-function getLocalFileProtocolPath(requestUrl: string): string {
-  const url = new URL(requestUrl);
-  let filePath = decodeURIComponent(url.pathname);
-  if (url.host && process.platform !== 'win32') {
-    filePath = `/${decodeURIComponent(url.host)}${filePath}`;
-  }
-  if (process.platform === 'win32' && /^\/[A-Za-z]:/.test(filePath)) {
-    filePath = filePath.slice(1);
-  }
-  return filePath;
-}
-
-function getLocalFileMimeType(filePath: string): string {
-  return LOCAL_FILE_MIME_BY_EXT[path.extname(filePath).toLowerCase()] || 'application/octet-stream';
-}
-
-function parseByteRange(rangeHeader: string | null, fileSize: number): ByteRange | null {
-  if (!rangeHeader) return null;
-  const match = rangeHeader.match(/^bytes=(\d*)-(\d*)$/);
-  if (!match) return null;
-
-  const [, startText, endText] = match;
-  if (!startText && !endText) return null;
-
-  if (!startText) {
-    const suffixLength = Number(endText);
-    if (!Number.isFinite(suffixLength) || suffixLength <= 0) return null;
-    return {
-      start: Math.max(fileSize - suffixLength, 0),
-      end: Math.max(fileSize - 1, 0),
-    };
-  }
-
-  const start = Number(startText);
-  const end = endText ? Number(endText) : fileSize - 1;
-  if (
-    !Number.isFinite(start) ||
-    !Number.isFinite(end) ||
-    start < 0 ||
-    end < start ||
-    start >= fileSize
-  ) {
-    return null;
-  }
-
-  return {
-    start,
-    end: Math.min(end, fileSize - 1),
-  };
-}
-
-async function createLocalFileProtocolResponse(request: Request): Promise<Response> {
-  try {
-    const filePath = getLocalFileProtocolPath(request.url);
-    const stat = await fs.promises.stat(filePath);
-    if (!stat.isFile()) {
-      return new Response('Not found', { status: 404 });
-    }
-
-    const mimeType = getLocalFileMimeType(filePath);
-    const baseHeaders = {
-      'Accept-Ranges': 'bytes',
-      'Content-Type': mimeType,
-    };
-    const rangeHeader = request.headers.get('range');
-    const range = parseByteRange(rangeHeader, stat.size);
-
-    if (rangeHeader && !range) {
-      return new Response(null, {
-        status: 416,
-        headers: {
-          ...baseHeaders,
-          'Content-Range': `bytes */${stat.size}`,
-        },
-      });
-    }
-
-    if (range) {
-      const contentLength = range.end - range.start + 1;
-      return new Response(
-        Readable.toWeb(fs.createReadStream(filePath, { start: range.start, end: range.end })) as BodyInit,
-        {
-          status: 206,
-          headers: {
-            ...baseHeaders,
-            'Content-Length': String(contentLength),
-            'Content-Range': `bytes ${range.start}-${range.end}/${stat.size}`,
-          },
-        },
-      );
-    }
-
-    return new Response(
-      Readable.toWeb(fs.createReadStream(filePath)) as BodyInit,
-      {
-        status: 200,
-        headers: {
-          ...baseHeaders,
-          'Content-Length': String(stat.size),
-        },
-      },
-    );
-  } catch (error) {
-    console.warn('[ArtifactPreview] local file request failed:', error);
-    return new Response('Not found', { status: 404 });
-  }
-}
 
 function sanitizeOptionalPatchValue(
   value: unknown,
@@ -1460,6 +1328,19 @@ const getOpenClawEngineManager = (): OpenClawEngineManager => {
     openClawEngineManager = new OpenClawEngineManager();
   }
   return openClawEngineManager;
+};
+
+const formatAutoLaunchStatusForLog = (status: AutoLaunchStatus): string => {
+  const launchItems = status.launchItems
+    ?.map(item => `${item.name}:${item.enabled ? 'enabled' : 'disabled'}:${item.args.join(' ') || '(no-args)'}`)
+    .join(',');
+
+  return [
+    `status=${status.status ?? 'unknown'}`,
+    `openAtLogin=${status.openAtLogin}`,
+    `executableWillLaunchAtLogin=${status.executableWillLaunchAtLogin ?? 'unknown'}`,
+    launchItems ? `launchItems=${launchItems}` : null,
+  ].filter(Boolean).join(', ');
 };
 
 const getAppUpdateCoordinator = (): AppUpdateCoordinator => {
@@ -2435,6 +2316,7 @@ const getCoworkEngineRouter = () => {
         getOpenClawEngineManager(),
         {
           normalizeModelRef: normalizeOpenClawModelRef,
+          onGatewayClientReady: () => getCronJobService().notifyGatewayReady(),
         },
         new SubagentRunStore(getStore().getDatabase()),
         new SubagentMessageStore(getStore().getDatabase()),
@@ -2746,7 +2628,12 @@ const refreshImSessionWorkingDirectoriesForAgent = (agentId: string): number => 
 };
 
 function mergeCoworkSystemPrompt(systemPrompt?: string): string | undefined {
-  const sections = [buildScheduledTaskEnginePrompt(), systemPrompt?.trim() || ''].filter(Boolean);
+  const scheduledTaskPrompt = buildScheduledTaskEnginePrompt();
+  const normalizedSystemPrompt = systemPrompt?.trim() || '';
+  if (normalizedSystemPrompt && normalizedSystemPrompt.includes(scheduledTaskPrompt)) {
+    return normalizedSystemPrompt;
+  }
+  const sections = [scheduledTaskPrompt, normalizedSystemPrompt].filter(Boolean);
   return sections.length > 0 ? sections.join('\n\n') : undefined;
 }
 
@@ -2955,6 +2842,109 @@ const mediaModelIdForOutput = (model: unknown, fallback?: string): string => {
   return mediaModelDisplayName(rawModel, rawModel) || 'default';
 };
 
+type HappyHorse11Selection = {
+  type: 't2v' | 'i2v' | 'r2v';
+  upstreamModel: string;
+  reason: string;
+  imageCount: number;
+};
+
+const isHappyHorse11Model = (modelId: string): boolean =>
+  canonicalizeMediaModelId(modelId) === HAPPYHORSE_1_1_MODEL_ID;
+
+const addImageInputValue = (values: Set<string>, value: unknown): void => {
+  if (value == null) return;
+  if (Array.isArray(value)) {
+    value.forEach(item => addImageInputValue(values, item));
+    return;
+  }
+  const text = String(value).trim();
+  if (text) values.add(text);
+};
+
+const nestedMediaUrl = (value: unknown): unknown => {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return (value as Record<string, unknown>).url;
+  }
+  return value;
+};
+
+const addImageMediaItems = (values: Set<string>, media: unknown): void => {
+  if (!Array.isArray(media)) return;
+  for (const item of media) {
+    if (typeof item === 'string') {
+      addImageInputValue(values, item);
+      continue;
+    }
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const record = item as Record<string, unknown>;
+    const mediaType = typeof record.type === 'string' ? record.type.toLowerCase() : '';
+    if (mediaType.includes('video') || mediaType.includes('audio')) continue;
+    addImageInputValue(values, record.url ?? nestedMediaUrl(record.image_url));
+  }
+};
+
+const countVideoImageInputs = (params: Record<string, unknown>): number => {
+  const images = new Set<string>();
+  addImageInputValue(images, params.images);
+  addImageInputValue(images, params.imageUrls);
+  addImageInputValue(images, params.referenceImages);
+  addImageInputValue(images, params.firstFrame);
+  addImageInputValue(images, params.first_frame);
+  addImageInputValue(images, params.firstFrameImage);
+  addImageInputValue(images, params.first_frame_image);
+  addImageInputValue(images, params.image);
+  addImageInputValue(images, params.imageUrl);
+  addImageInputValue(images, params.image_url);
+  addImageInputValue(images, params.referenceImage);
+  addImageInputValue(images, params.lastFrame);
+  addImageInputValue(images, params.last_frame);
+  addImageInputValue(images, params.lastFrameImage);
+  addImageInputValue(images, params.last_frame_image);
+  addImageMediaItems(images, params.media);
+
+  const providerOptions = params.providerOptions;
+  if (providerOptions && typeof providerOptions === 'object' && !Array.isArray(providerOptions)) {
+    addImageMediaItems(images, (providerOptions as Record<string, unknown>).media);
+  }
+  const input = params.input;
+  if (input && typeof input === 'object' && !Array.isArray(input)) {
+    addImageMediaItems(images, (input as Record<string, unknown>).media);
+  }
+
+  return images.size;
+};
+
+const resolveHappyHorse11Selection = (
+  modelId: string,
+  params: Record<string, unknown>,
+): HappyHorse11Selection | null => {
+  if (!isHappyHorse11Model(modelId)) return null;
+  const imageCount = countVideoImageInputs(params);
+  if (imageCount === 0) {
+    return {
+      type: 't2v',
+      upstreamModel: 'happyhorse-1.1-t2v',
+      reason: '未检测到输入图片，使用文生视频子模型 happyhorse-1.1-t2v',
+      imageCount,
+    };
+  }
+  if (imageCount === 1) {
+    return {
+      type: 'i2v',
+      upstreamModel: 'happyhorse-1.1-i2v',
+      reason: '检测到 1 张输入图片，使用图生视频子模型 happyhorse-1.1-i2v',
+      imageCount,
+    };
+  }
+  return {
+    type: 'r2v',
+    upstreamModel: 'happyhorse-1.1-r2v',
+    reason: `检测到 ${imageCount} 张输入图片，使用参考生视频子模型 happyhorse-1.1-r2v`,
+    imageCount,
+  };
+};
+
 type MediaStatusPollUpdate = {
   sessionId: string;
   toolCallId: string;
@@ -2972,6 +2962,7 @@ type AppConfigSettings = {
   language?: string;
   useSystemProxy?: boolean;
   sqliteAutoBackupEnabled?: boolean;
+  usageAnalyticsEnabled?: boolean;
   notificationSettings?: Partial<NotificationSettings>;
   browserWebAccess?: Partial<BrowserWebAccessConfig>;
 };
@@ -3369,25 +3360,46 @@ if (!gotTheLock) {
   });
 
   // Auto-launch IPC handlers
-  // Use SQLite store as the source of truth for UI state, because
-  // app.getLoginItemSettings() returns unreliable values on macOS and
-  // requires matching args on Windows.
-  ipcMain.handle('app:getAutoLaunch', () => {
+  ipcMain.handle(AppSettingsIpc.GetAutoLaunch, () => {
     const stored = getStore().get<boolean>('auto_launch_enabled');
-    // Fall back to OS API if SQLite has no record yet (e.g. upgraded from older version)
-    const enabled = stored ?? getAutoLaunchEnabled();
-    return { enabled };
+    try {
+      const status = getAutoLaunchStatus();
+      if (stored !== undefined && stored !== status.enabled) {
+        console.warn(
+          `[AutoLaunch] stored state (${stored}) differs from OS state (${status.enabled}); ${formatAutoLaunchStatusForLog(status)}`,
+        );
+        getStore().set('auto_launch_enabled', status.enabled);
+      }
+      return { enabled: status.enabled };
+    } catch (error) {
+      console.error('[AutoLaunch] failed to read OS state; falling back to stored state:', error);
+      return { enabled: stored ?? false };
+    }
   });
 
-  ipcMain.handle('app:setAutoLaunch', (_event, enabled: unknown) => {
+  ipcMain.handle(AppSettingsIpc.SetAutoLaunch, (_event, enabled: unknown) => {
     if (typeof enabled !== 'boolean') {
       return { success: false, error: 'Invalid parameter: enabled must be boolean' };
     }
     try {
       setAutoLaunchEnabled(enabled);
-      getStore().set('auto_launch_enabled', enabled);
-      return { success: true };
+      const status = getAutoLaunchStatus();
+      console.log(
+        `[AutoLaunch] set requested=${enabled}, actual=${status.enabled}; ${formatAutoLaunchStatusForLog(status)}`,
+      );
+      if (status.enabled !== enabled) {
+        return {
+          success: false,
+          enabled: status.enabled,
+          errorCode: status.status === 'requires-approval'
+            ? AppSettingsAutoLaunchErrorCode.RequiresApproval
+            : AppSettingsAutoLaunchErrorCode.UpdateFailed,
+        };
+      }
+      getStore().set('auto_launch_enabled', status.enabled);
+      return { success: true, enabled: status.enabled };
     } catch (error) {
+      console.error('[AutoLaunch] failed to update auto-launch setting:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to set auto-launch',
@@ -3395,12 +3407,12 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('app:getPreventSleep', () => {
+  ipcMain.handle(AppSettingsIpc.GetPreventSleep, () => {
     const enabled = getStore().get<boolean>('prevent_sleep_enabled') ?? false;
     return { enabled };
   });
 
-  ipcMain.handle('app:setPreventSleep', (_event, enabled: unknown) => {
+  ipcMain.handle(AppSettingsIpc.SetPreventSleep, (_event, enabled: unknown) => {
     if (typeof enabled !== 'boolean') {
       return { success: false, error: 'Invalid parameter: enabled must be boolean' };
     }
@@ -3738,6 +3750,13 @@ if (!gotTheLock) {
         const task = body.data!;
         const status = task.status as string;
         const resultUrls = (task.resultUrls as string[]) || [];
+        const outputModel = mediaModelIdForOutput(task.model);
+        const upstreamModel = typeof task.upstreamModel === 'string' && task.upstreamModel.trim()
+          ? task.upstreamModel.trim()
+          : undefined;
+        const modelSelectionReason = typeof task.modelSelectionReason === 'string' && task.modelSelectionReason.trim()
+          ? task.modelSelectionReason.trim()
+          : undefined;
         if (sessionId && TERMINAL_MEDIA_TASK_STATUSES.has(status)) {
           pendingMediaTasks.delete(taskId);
         }
@@ -3777,6 +3796,9 @@ if (!gotTheLock) {
 
         const lines = [
           `Task ID: ${task.upstreamTaskId || task.taskId}`,
+          `Model: ${outputModel}`,
+          ...(upstreamModel ? [`Selected model: ${upstreamModel}`] : []),
+          ...(modelSelectionReason ? [`Selection reason: ${modelSelectionReason}`] : []),
           `Status: ${status}`,
           ...(task.progress ? [`Progress: ${task.progress}%`] : []),
           ...(resultUrls.length > 0 ? [`Results:\n${resultLines.join('\n')}`] : []),
@@ -3787,7 +3809,9 @@ if (!gotTheLock) {
           ...(task.upstreamTaskId ? { upstreamTaskId: String(task.upstreamTaskId) } : {}),
           status,
           ...(pollCount > 1 ? { pollCount } : {}),
-          model: mediaModelIdForOutput(task.model),
+          model: outputModel,
+          ...(upstreamModel ? { upstreamModel } : {}),
+          ...(modelSelectionReason ? { modelSelectionReason } : {}),
           mediaType: statusMediaType,
           ...(detailsAssets.length > 0 ? { assets: detailsAssets } : {}),
           ...(task.quotaRemaining != null ? { billing: { quotaRemaining: task.quotaRemaining } } : {}),
@@ -3986,6 +4010,9 @@ if (!gotTheLock) {
 
       const inferVideoGenerationType = (): string => {
         const normalizedModel = selectedModel.toLowerCase();
+        if (normalizedModel.includes('happyhorse-1.1-r2v')) return 'r2v';
+        if (normalizedModel.includes('happyhorse-1.1-t2v')) return 't2v';
+        if (normalizedModel.includes('happyhorse-1.1-i2v')) return 'i2v';
         if (normalizedModel.includes('happyhorse-1.0-r2v')) return 'r2v';
         if (normalizedModel.includes('happyhorse-1.0-t2v')) return 't2v';
         if (normalizedModel.includes('happyhorse-1.0-i2v')) return 'i2v';
@@ -4009,9 +4036,14 @@ if (!gotTheLock) {
         return hasFirstFrame ? 'i2v' : 't2v';
       };
 
+      const happyHorse11Selection = mediaType === 'video'
+        ? resolveHappyHorse11Selection(selectedModel, params)
+        : null;
       const generateReq = {
         model: selectedModel,
-        type: mediaType === 'video' ? inferVideoGenerationType() : mediaType,
+        type: mediaType === 'video'
+          ? (happyHorse11Selection?.type ?? inferVideoGenerationType())
+          : mediaType,
         prompt,
         params,
       };
@@ -4021,6 +4053,11 @@ if (!gotTheLock) {
         mediaType,
         selectedModel,
         selectedModelSource,
+        ...(happyHorse11Selection ? {
+          upstreamModel: happyHorse11Selection.upstreamModel,
+          modelSelectionReason: happyHorse11Selection.reason,
+          inputImageCount: happyHorse11Selection.imageCount,
+        } : {}),
         promptLength: prompt.length,
         promptPreview: prompt.slice(0, 120),
         params: summarizeMediaGenerationParamsForLog(params),
@@ -4062,11 +4099,19 @@ if (!gotTheLock) {
       const status = task.status as string;
       const resultUrls = (task.resultUrls as string[]) || [];
       const outputModel = mediaModelIdForOutput(task.model, selectedModel);
+      const upstreamModel = typeof task.upstreamModel === 'string' && task.upstreamModel.trim()
+        ? task.upstreamModel.trim()
+        : happyHorse11Selection?.upstreamModel;
+      const modelSelectionReason = typeof task.modelSelectionReason === 'string' && task.modelSelectionReason.trim()
+        ? task.modelSelectionReason.trim()
+        : happyHorse11Selection?.reason;
       console.log('[MediaGeneration] server accepted generate request:', serializeForLog({
         mediaType,
         taskId: task.taskId,
         status,
         model: outputModel,
+        upstreamModel,
+        modelSelectionReason,
         resultCount: resultUrls.length,
         quotaRemaining: task.quotaRemaining,
       }));
@@ -4091,6 +4136,8 @@ if (!gotTheLock) {
         `${mediaType === 'image' ? 'Image' : 'Video'} generation task created.`,
         `Task ID: ${task.upstreamTaskId || task.taskId}`,
         `Model: ${outputModel}`,
+        ...(upstreamModel ? [`Selected model: ${upstreamModel}`] : []),
+        ...(modelSelectionReason ? [`Selection reason: ${modelSelectionReason}`] : []),
         `Status: ${status}`,
         ...(task.quotaRemaining != null ? [`Quota remaining: ${task.quotaRemaining}`] : []),
       ];
@@ -4136,7 +4183,7 @@ if (!gotTheLock) {
             taskId: String(task.taskId),
             sessionId,
             mediaType,
-            model: outputModel,
+            model: upstreamModel || outputModel,
             startedAt: Date.now(),
             pollCount: 0,
             timeoutMs,
@@ -4151,6 +4198,8 @@ if (!gotTheLock) {
           ...(task.upstreamTaskId ? { upstreamTaskId: String(task.upstreamTaskId) } : {}),
           status,
           model: outputModel,
+          ...(upstreamModel ? { upstreamModel } : {}),
+          ...(modelSelectionReason ? { modelSelectionReason } : {}),
           ...(detailsAssets.length > 0 ? { assets: detailsAssets } : {}),
           ...(Object.keys(billing).length > 0 ? { billing } : {}),
         },
@@ -4242,6 +4291,14 @@ if (!gotTheLock) {
         if (TERMINAL_MEDIA_TASK_STATUSES.has(status)) {
           tasksToRemove.push(taskId);
           const resultUrls = (task.resultUrls as string[]) || [];
+          const outputModel = mediaModelIdForOutput(task.model, tracker.model);
+          const upstreamModel = typeof task.upstreamModel === 'string' && task.upstreamModel.trim()
+            ? task.upstreamModel.trim()
+            : undefined;
+          const modelSelectionReason = typeof task.modelSelectionReason === 'string' && task.modelSelectionReason.trim()
+            ? task.modelSelectionReason.trim()
+            : undefined;
+          const displayModel = upstreamModel || outputModel;
           const assets = resultUrls.map(url => ({
             type: tracker.mediaType,
             url,
@@ -4266,7 +4323,8 @@ if (!gotTheLock) {
               emitMediaTaskMessage(tracker.sessionId, [
                 'Image generation succeeded.',
                 `Task ID: ${taskId}`,
-                `Model: ${tracker.model}`,
+                `Model: ${displayModel}`,
+                ...(modelSelectionReason ? [`Selection reason: ${modelSelectionReason}`] : []),
                 ...(resultUrls.length > 0 ? [`Results:\n${resultLines.join('\n')}`] : []),
                 ...(task.errorMessage ? [`Error: ${task.errorMessage}`] : []),
               ].join('\n'));
@@ -4277,10 +4335,18 @@ if (!gotTheLock) {
               const fileLines = persistResult.saved.map(asset => `  - [${asset.filename}](${pathToFileURL(asset.filePath).toString()})`);
               emitMediaTaskMessage(
                 tracker.sessionId,
-                `Saved generated ${persistResult.saved.length === 1 ? 'video' : 'videos'}:\n${fileLines.join('\n')}`,
+                [
+                  `Saved generated ${persistResult.saved.length === 1 ? 'video' : 'videos'}:`,
+                  `Model: ${displayModel}`,
+                  ...(modelSelectionReason ? [`Selection reason: ${modelSelectionReason}`] : []),
+                  fileLines.join('\n'),
+                ].join('\n'),
                 {
                   toolResultDetails: {
                     status: 'succeeded',
+                    model: outputModel,
+                    ...(upstreamModel ? { upstreamModel } : {}),
+                    ...(modelSelectionReason ? { modelSelectionReason } : {}),
                     assets: persistResult.saved,
                   },
                 },
@@ -4290,7 +4356,8 @@ if (!gotTheLock) {
               emitMediaTaskMessage(tracker.sessionId, [
                 'Video generation succeeded.',
                 `Task ID: ${taskId}`,
-                `Model: ${tracker.model}`,
+                `Model: ${displayModel}`,
+                ...(modelSelectionReason ? [`Selection reason: ${modelSelectionReason}`] : []),
                 ...(resultUrls.length > 0 ? [`Results:\n${resultLines.join('\n')}`] : []),
                 ...(task.errorMessage ? [`Error: ${task.errorMessage}`] : []),
               ].join('\n'));
@@ -4782,6 +4849,7 @@ if (!gotTheLock) {
           apiFormat: string;
           supportsImage?: boolean;
           supportsThinking?: boolean;
+          explicitContextCache?: boolean;
           contextWindow?: number;
           costMultiplier?: number;
           description?: string;
@@ -5687,6 +5755,9 @@ if (!gotTheLock) {
         const coworkStoreInstance = getCoworkStore();
         const config = coworkStoreInstance.getConfig();
         const systemPrompt = mergeCoworkSystemPrompt(options.systemPrompt ?? config.systemPrompt);
+        const persistedSystemPrompt = containsPlanModePrompt(systemPrompt)
+          ? mergeCoworkSystemPrompt(config.systemPrompt)
+          : systemPrompt;
         const selectedTaskDirectory = resolveSessionWorkingDirectory({
           cwd: options.cwd,
           agentId: options.agentId,
@@ -5724,7 +5795,7 @@ if (!gotTheLock) {
         const session = coworkStoreInstance.createSession(
           title,
           taskWorkingDirectory,
-          systemPrompt,
+          persistedSystemPrompt,
           config.executionMode || 'local',
           runtimeSkillIds || [],
           options.agentId || 'main',
@@ -5877,7 +5948,22 @@ if (!gotTheLock) {
         }
 
         const runtime = getCoworkEngineRouter();
-        const existingSession = getCoworkStore().getSession(options.sessionId);
+        const coworkStoreInstance = getCoworkStore();
+        const existingSession = coworkStoreInstance.getSession(options.sessionId);
+        const config = coworkStoreInstance.getConfig();
+        const hasLegacyPersistedPlanMode = containsPlanModePrompt(existingSession?.systemPrompt);
+        const continuationSystemPrompt = mergeCoworkSystemPrompt(
+          options.systemPrompt
+            ?? (hasLegacyPersistedPlanMode ? config.systemPrompt : existingSession?.systemPrompt),
+        );
+        if (hasLegacyPersistedPlanMode) {
+          coworkStoreInstance.updateSession(options.sessionId, {
+            systemPrompt: mergeCoworkSystemPrompt(config.systemPrompt) ?? '',
+          });
+          console.log(
+            `[Cowork] removed a legacy persisted plan mode prompt from session ${options.sessionId}.`,
+          );
+        }
         const selectedTextSnippets = normalizeSelectedTextSnippetsForIpc(options.selectedTextSnippets);
         if (selectedTextSnippets.length > 0) {
           console.log(
@@ -5925,9 +6011,7 @@ if (!gotTheLock) {
         );
         runtime
           .continueSession(options.sessionId, options.prompt, {
-            systemPrompt: mergeCoworkSystemPrompt(
-              options.systemPrompt ?? existingSession?.systemPrompt,
-            ),
+            systemPrompt: continuationSystemPrompt,
             skillIds: options.runtimeSkillIds ?? options.activeSkillIds,
             messageSkillIds: options.activeSkillIds,
             kitIds: options.kitIds,
@@ -9030,8 +9114,9 @@ if (!gotTheLock) {
         body?: string;
       },
     ) => {
+      const sanitizedUrl = sanitizeUrlForLog(options.url);
       console.log(
-        `[api:fetch] ${options.method} ${options.url}, headers: ${serializeForLog(options.headers)}, body: ${options.body}`,
+        `[api:fetch] ${options.method} ${sanitizedUrl}, headers: ${serializeForLog(options.headers)}, body: ${options.body}`,
       );
 
       const doFetch = async (headers: Record<string, string>) => {
@@ -9064,7 +9149,7 @@ if (!gotTheLock) {
       try {
         let result = await doFetch(options.headers);
         console.log(
-          `[api:fetch] ${options.method} ${options.url} -> ${result.status} ${result.statusText}`,
+          `[api:fetch] ${options.method} ${sanitizedUrl} -> ${result.status} ${result.statusText}`,
           typeof result.data === 'object' ? JSON.stringify(result.data) : result.data,
         );
 
@@ -9086,7 +9171,7 @@ if (!gotTheLock) {
         return result;
       } catch (error) {
         console.error(
-          `[api:fetch] ${options.method} ${options.url} -> ERROR:`,
+          `[api:fetch] ${options.method} ${sanitizedUrl} -> ERROR:`,
           error instanceof Error ? error.message : error,
         );
         return {
@@ -10341,11 +10426,22 @@ if (!gotTheLock) {
       }
     });
 
-    // 首次启动时默认开启开机自启动（先写标记再设置，避免崩溃后重复设置）
+    // 首次启动时默认开启开机自启动，并以系统登录项的实际状态回写本地标记。
     if (!getStore().get('auto_launch_initialized')) {
       getStore().set('auto_launch_initialized', true);
-      getStore().set('auto_launch_enabled', true);
-      setAutoLaunchEnabled(true);
+      try {
+        setAutoLaunchEnabled(true);
+        const status = getAutoLaunchStatus();
+        getStore().set('auto_launch_enabled', status.enabled);
+        if (!status.enabled) {
+          console.warn(
+            `[AutoLaunch] default enable did not take effect; ${formatAutoLaunchStatusForLog(status)}`,
+          );
+        }
+      } catch (error) {
+        getStore().set('auto_launch_enabled', false);
+        console.error('[AutoLaunch] default enable failed:', error);
+      }
     }
 
     // Restore prevent-sleep setting
