@@ -145,7 +145,7 @@ index 2bb78aff42..90a166259a 100644
    resolveMainSessionKey,
    resolveSessionFilePath,
    resolveSessionFilePathOptions,
-@@ -2168,6 +2173,132 @@ export const sessionsHandlers: GatewayRequestHandlers = {
+@@ -2168,6 +2173,134 @@ export const sessionsHandlers: GatewayRequestHandlers = {
        });
      }
    },
@@ -171,7 +171,9 @@ index 2bb78aff42..90a166259a 100644
 +    const { target, storePath } = resolveGatewaySessionTargetFromKey(key, cfg, {
 +      agentId: requestedAgent.agentId,
 +    });
-+    const sessionKey = target.canonicalKey ?? key;
++    const store = loadSessionStore(storePath);
++    const goalStoreKey = target.storeKeys.find((storeKey) => Boolean(store[storeKey]?.goal));
++    const sessionKey = goalStoreKey ?? target.canonicalKey ?? key;
 +    const action = p.action ?? "status";
 +    const text = normalizeOptionalString(p.text) ?? "";
 +    try {

@@ -2640,6 +2640,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     if (!sessionId) return;
 
     const goal = normalizeCoworkGoal(row.goal);
+    this.rememberSessionKey(sessionId, sessionKey);
     this.emitGoalUpdateIfChanged(sessionId, goal);
   }
 
