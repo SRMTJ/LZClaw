@@ -222,7 +222,9 @@ const artifactSlice = createSlice({
               a.content === artifact.remoteUrl
           );
           if (dupIndex >= 0) {
+            const old = state.artifactsBySession[sessionId][dupIndex];
             state.artifactsBySession[sessionId][dupIndex] = artifact;
+            replacePreviewTabArtifactId(state, sessionId, old.id, artifact.id);
             return;
           }
         }

@@ -42,6 +42,21 @@ const makeLocalServiceArtifact = (
   },
 });
 
+const makeImageArtifact = (
+  id: string,
+  overrides: Partial<Artifact> = {},
+): Artifact => ({
+  id,
+  messageId: 'message-1',
+  sessionId: 'session-1',
+  type: ArtifactTypeValue.Image,
+  title: 'generated-image.png',
+  content: overrides.content ?? '',
+  fileName: 'generated-image.png',
+  createdAt: 1,
+  ...overrides,
+});
+
 test('setSessionArtifacts dedupes generated videos by file path within one message', () => {
   const state = artifactReducer(undefined, setSessionArtifacts({
     sessionId: 'session-1',
@@ -136,6 +151,39 @@ test('openArtifactPreviewTab resolves duplicate file cards to the display artifa
     expect.objectContaining({
       id: 'artifact:video-second-reply',
       artifactId: 'video-second-reply',
+    }),
+  ]);
+});
+
+test('addArtifact keeps preview tab selected when local image replaces remote image', () => {
+  let state = artifactReducer(undefined, addArtifact({
+    sessionId: 'session-1',
+    artifact: makeImageArtifact('image-remote', {
+      content: 'https://example.com/generated-image.png',
+    }),
+  }));
+
+  state = artifactReducer(state, openArtifactPreviewTab({
+    sessionId: 'session-1',
+    artifactId: 'image-remote',
+  }));
+
+  state = artifactReducer(state, addArtifact({
+    sessionId: 'session-1',
+    artifact: makeImageArtifact('image-local', {
+      content: 'data:image/png;base64,abc123',
+      filePath: '/Users/admin/project/generated-image.png',
+      remoteUrl: 'https://example.com/generated-image.png',
+    }),
+  }));
+
+  expect(state.artifactsBySession['session-1']).toHaveLength(1);
+  expect(state.artifactsBySession['session-1'][0].id).toBe('image-local');
+  expect(state.selectedArtifactId).toBe('image-local');
+  expect(state.previewTabsBySession['session-1']).toEqual([
+    expect.objectContaining({
+      id: 'artifact:image-local',
+      artifactId: 'image-local',
     }),
   ]);
 });

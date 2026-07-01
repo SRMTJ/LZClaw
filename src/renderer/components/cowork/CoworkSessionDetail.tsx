@@ -43,6 +43,7 @@ import {
   closePanel,
   MAX_PANEL_WIDTH,
   MIN_PANEL_WIDTH,
+  openArtifactPreviewTab,
   selectActivePreviewTab,
   selectIsPanelOpen,
   selectPanelWidth,
@@ -69,6 +70,11 @@ import type { MediaAttachmentRef } from '../../types/mediaGeneration';
 import { parseUserMessageForDisplay } from '../../utils/userMessageDisplay';
 import { ArtifactPanel, type BrowserAnnotationPayload } from '../artifacts';
 import { reportArtifactPreviewAction } from '../artifacts/artifactAnalytics';
+import {
+  ArtifactAutoPreviewOpenTarget,
+  getAutoPreviewOpenTarget,
+  selectAutoPreviewArtifact,
+} from '../artifacts/autoPreviewPolicy';
 import ComposeIcon from '../icons/ComposeIcon';
 import FileTypeIcon from '../icons/fileTypes/FileTypeIcon';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
@@ -139,6 +145,7 @@ const NAV_BOTTOM_SNAP_THRESHOLD = 20;
 const WHEEL_DELTA_LINE_HEIGHT = 16;
 const SCROLL_TO_BOTTOM_SETTLE_THRESHOLD = 24;
 const SCROLL_TO_BOTTOM_SETTLE_DELAYS_MS = [600, 1200, 1800] as const;
+const AUTO_PREVIEW_ARTIFACT_SETTLE_MS = 600;
 const ARTIFACT_PANEL_TRANSITION_MS = 200;
 const ARTIFACT_PANEL_RESIZE_HANDLE_WIDTH = 4;
 const COWORK_DETAIL_MIN_WIDTH = 480;
@@ -230,6 +237,31 @@ type ExpandedConversationPreviewItem = {
 type ExpandedConversationPreview = {
   latest: ExpandedConversationPreviewItem;
   items: ExpandedConversationPreviewItem[];
+};
+
+const getTurnMessageIds = (turn: ConversationTurn): Set<string> => {
+  const messageIds = new Set<string>();
+  for (const item of turn.assistantItems) {
+    if (item.type === 'assistant' || item.type === 'system' || item.type === 'tool_result') {
+      messageIds.add(item.message.id);
+      continue;
+    }
+    if (item.type === 'tool_group') {
+      messageIds.add(item.group.toolUse.id);
+      if (item.group.toolResult) {
+        messageIds.add(item.group.toolResult.id);
+      }
+    }
+  }
+  return messageIds;
+};
+
+const findLatestAssistantTurn = (turns: ConversationTurn[]): ConversationTurn | null => {
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = turns[index];
+    if (turn.assistantItems.length > 0) return turn;
+  }
+  return null;
 };
 
 const stripRailLabelMarkdown = (value: string): string => value
@@ -1631,6 +1663,46 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const browserPreviewTabTitle = browserPreviewTitle.trim() || i18nService.t('artifactBrowserTab');
 
   const loadedFileIdsRef = useRef<Set<string>>(new Set());
+  const autoPreviewHandledTurnIdsRef = useRef<Record<string, Set<string>>>({});
+  const autoPreviewArtifactSettleTimerRef = useRef<number | null>(null);
+  const previousAutoPreviewSessionIdRef = useRef<string | undefined>(sessionId);
+  const previousAutoPreviewStreamingRef = useRef(isStreaming);
+  const previousAutoPreviewMessagesLengthRef = useRef(messagesLength);
+  const previousAutoPreviewLatestTurnIdRef = useRef<string | null>(null);
+  const [autoPreviewPendingTurnId, setAutoPreviewPendingTurnId] = useState<string | null>(null);
+
+  const getAutoPreviewHandledTurnIds = useCallback((targetSessionId: string): Set<string> => {
+    let handled = autoPreviewHandledTurnIdsRef.current[targetSessionId];
+    if (!handled) {
+      handled = new Set<string>();
+      autoPreviewHandledTurnIdsRef.current[targetSessionId] = handled;
+    }
+    return handled;
+  }, []);
+
+  const clearAutoPreviewArtifactSettleTimer = useCallback(() => {
+    if (autoPreviewArtifactSettleTimerRef.current) {
+      window.clearTimeout(autoPreviewArtifactSettleTimerRef.current);
+      autoPreviewArtifactSettleTimerRef.current = null;
+    }
+  }, []);
+
+  const setCurrentAutoPreviewPendingTurnId = useCallback((turnId: string | null) => {
+    setAutoPreviewPendingTurnId(turnId);
+  }, []);
+
+  const markAutoPreviewTurnHandled = useCallback((targetSessionId: string, turnId: string) => {
+    clearAutoPreviewArtifactSettleTimer();
+    getAutoPreviewHandledTurnIds(targetSessionId).add(turnId);
+    if (targetSessionId === sessionId && autoPreviewPendingTurnId === turnId) {
+      setAutoPreviewPendingTurnId(null);
+    }
+  }, [
+    autoPreviewPendingTurnId,
+    clearAutoPreviewArtifactSettleTimer,
+    getAutoPreviewHandledTurnIds,
+    sessionId,
+  ]);
 
   useEffect(() => {
     let animationFrame: number | undefined;
@@ -1751,6 +1823,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     setIsExpandedConversationPreviewOpen(false);
     setShowArtifactAddMenu(false);
     loadedFileIdsRef.current = new Set();
+    setAutoPreviewPendingTurnId(null);
   }, [sessionId]);
 
   useEffect(() => (
@@ -2206,6 +2279,9 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     });
     if (isPanelOpen) {
       setShowArtifactAddMenu(false);
+      if (sessionId && autoPreviewPendingTurnId) {
+        markAutoPreviewTurnHandled(sessionId, autoPreviewPendingTurnId);
+      }
       dispatch(closePanel(sessionId ? { sessionId } : undefined));
       return;
     }
@@ -2225,10 +2301,12 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     dispatch(togglePanel({ sessionId }));
   }, [
     artifactTabsWithArtifacts.length,
+    autoPreviewPendingTurnId,
     dispatch,
     isBrowserPreviewTabOpen,
     isFileListPreviewTabOpen,
     isPanelOpen,
+    markAutoPreviewTurnHandled,
     sessionId,
     setSessionActiveSpecialPreviewTab,
     setSessionFileListPreviewTabOpen,
@@ -3552,6 +3630,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const messages = currentSession?.messages;
   const displayItems = useMemo(() => messages ? buildDisplayItems(messages) : [], [messages]);
   const turns = useMemo(() => buildConversationTurns(displayItems), [displayItems]);
+  const latestAssistantTurn = useMemo(() => findLatestAssistantTurn(turns), [turns]);
   const loadedRailTurnMap = useMemo(() => buildLoadedRailTurnMap(turns), [turns]);
   const messageOffsetById = useMemo(() => {
     const offsetById = new Map<string, number>();
@@ -3588,6 +3667,113 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       ? i18nService.t('coworkRailUnloadedMessageHint')
       : railTooltipItem.summary
     : '';
+
+  useEffect(() => {
+    const previousSessionId = previousAutoPreviewSessionIdRef.current;
+    const sessionChanged = previousSessionId !== sessionId;
+    const wasStreaming = previousAutoPreviewStreamingRef.current;
+    const previousMessagesLength = previousAutoPreviewMessagesLengthRef.current;
+    const previousLatestTurnId = previousAutoPreviewLatestTurnIdRef.current;
+    const latestTurnId = latestAssistantTurn?.id ?? null;
+
+    previousAutoPreviewSessionIdRef.current = sessionId;
+    previousAutoPreviewStreamingRef.current = isStreaming;
+    previousAutoPreviewMessagesLengthRef.current = messagesLength;
+    previousAutoPreviewLatestTurnIdRef.current = latestTurnId;
+
+    if (sessionChanged) {
+      clearAutoPreviewArtifactSettleTimer();
+      setAutoPreviewPendingTurnId(null);
+      return;
+    }
+
+    if (!sessionId || !latestAssistantTurn) {
+      clearAutoPreviewArtifactSettleTimer();
+      setAutoPreviewPendingTurnId(null);
+      return;
+    }
+
+    const completedStreamingTurn = wasStreaming && !isStreaming;
+    const latestTurnChanged = latestTurnId !== null && latestTurnId !== previousLatestTurnId;
+    const appendedCompletedTurn = !isStreaming && messagesLength > previousMessagesLength && latestTurnChanged;
+    if (!completedStreamingTurn && !appendedCompletedTurn) return;
+
+    if (getAutoPreviewHandledTurnIds(sessionId).has(latestAssistantTurn.id)) return;
+    setCurrentAutoPreviewPendingTurnId(latestAssistantTurn.id);
+  }, [
+    clearAutoPreviewArtifactSettleTimer,
+    getAutoPreviewHandledTurnIds,
+    isStreaming,
+    latestAssistantTurn,
+    messagesLength,
+    sessionId,
+    setCurrentAutoPreviewPendingTurnId,
+  ]);
+
+  useEffect(() => {
+    if (!sessionId || !autoPreviewPendingTurnId || !currentSession) return;
+    if (getAutoPreviewHandledTurnIds(sessionId).has(autoPreviewPendingTurnId)) {
+      clearAutoPreviewArtifactSettleTimer();
+      setCurrentAutoPreviewPendingTurnId(null);
+      return;
+    }
+
+    const pendingTurn = turns.find(turn => turn.id === autoPreviewPendingTurnId);
+    if (!pendingTurn) return;
+
+    if (isPanelOpen) {
+      markAutoPreviewTurnHandled(sessionId, autoPreviewPendingTurnId);
+      return;
+    }
+
+    const turnMessageIds = getTurnMessageIds(pendingTurn);
+    const turnArtifacts = rawSessionArtifacts.filter(
+      artifact => turnMessageIds.has(artifact.messageId) && PREVIEWABLE_ARTIFACT_TYPES.has(artifact.type),
+    );
+    const artifact = selectAutoPreviewArtifact(
+      turnArtifacts,
+      { defaultProjectDirectory: currentSession.cwd },
+    );
+    if (!artifact) return;
+
+    clearAutoPreviewArtifactSettleTimer();
+    autoPreviewArtifactSettleTimerRef.current = window.setTimeout(() => {
+      autoPreviewArtifactSettleTimerRef.current = null;
+      if (getAutoPreviewHandledTurnIds(sessionId).has(autoPreviewPendingTurnId)) return;
+
+      switch (getAutoPreviewOpenTarget(artifact)) {
+        case ArtifactAutoPreviewOpenTarget.LocalServiceBrowser:
+          handleOpenLocalServiceArtifact(artifact);
+          break;
+        case ArtifactAutoPreviewOpenTarget.HtmlBrowser:
+          void handleOpenHtmlFileInBrowser(artifact);
+          break;
+        case ArtifactAutoPreviewOpenTarget.PreviewTab:
+          dispatch(openArtifactPreviewTab({ sessionId, artifactId: artifact.id }));
+          break;
+        default:
+          return;
+      }
+
+      markAutoPreviewTurnHandled(sessionId, autoPreviewPendingTurnId);
+    }, AUTO_PREVIEW_ARTIFACT_SETTLE_MS);
+
+    return clearAutoPreviewArtifactSettleTimer;
+  }, [
+    autoPreviewPendingTurnId,
+    clearAutoPreviewArtifactSettleTimer,
+    currentSession,
+    dispatch,
+    getAutoPreviewHandledTurnIds,
+    handleOpenHtmlFileInBrowser,
+    handleOpenLocalServiceArtifact,
+    isPanelOpen,
+    markAutoPreviewTurnHandled,
+    rawSessionArtifacts,
+    sessionId,
+    setCurrentAutoPreviewPendingTurnId,
+    turns,
+  ]);
 
   // Cache turn-level DOM elements (data-turn-index, always in DOM even for lazy turns)
   useEffect(() => {
@@ -3792,17 +3978,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       const turnRailIdx = turn.userMessage || hasAssistantContent ? railCounter++ : -1;
       const assistantRailMessageId = getAssistantRailMessageId(turn);
 
-      const turnMessageIds = new Set<string>();
-      for (const item of turn.assistantItems) {
-        if (item.type === 'assistant' || item.type === 'system' || item.type === 'tool_result') {
-          turnMessageIds.add(item.message.id);
-        } else if (item.type === 'tool_group') {
-          turnMessageIds.add(item.group.toolUse.id);
-          if (item.group.toolResult) {
-            turnMessageIds.add(item.group.toolResult.id);
-          }
-        }
-      }
+      const turnMessageIds = getTurnMessageIds(turn);
       const turnArtifacts = rawSessionArtifacts.filter(
         a => turnMessageIds.has(a.messageId) && PREVIEWABLE_ARTIFACT_TYPES.has(a.type)
       );
