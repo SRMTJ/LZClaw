@@ -167,14 +167,31 @@ const OpenDropdown: React.FC<OpenDropdownProps> = ({
     if (!filePath && !browserUrl) return;
     let success = false;
     try {
-      const result = browserUrl
-        ? await window.electron?.shell?.openUrlWithApp(browserUrl, app.path)
-        : await window.electron?.shell?.openPathWithApp(normalizeFilePath(filePath), app.path);
-      success = Boolean(result?.success);
-      if (!result?.success) {
-        showShellFailureToast(result, 'openFileFailed');
+      if (browserUrl) {
+        const result = await window.electron?.shell?.openUrlWithApp(browserUrl, app.path);
+        success = Boolean(result?.success);
+        if (!result?.success) {
+          console.warn('[ArtifactPreviewCard] system app open request failed:', {
+            appName: app.name,
+            targetType: 'url',
+            error: result?.error,
+          });
+          showShellFailureToast(result, 'openFileFailed');
+        }
+      } else if (filePath) {
+        const result = await window.electron?.shell?.openPathWithApp(normalizeFilePath(filePath), app.path);
+        success = Boolean(result?.success);
+        if (!result?.success) {
+          console.warn('[ArtifactPreviewCard] system app open request failed:', {
+            appName: app.name,
+            targetType: 'file',
+            error: result?.error,
+          });
+          showShellFailureToast(result, 'openFileFailed');
+        }
       }
-    } catch {
+    } catch (error) {
+      console.warn('[ArtifactPreviewCard] failed to open artifact with app:', error);
       showShellFailureToast(null, 'openFileFailed');
     }
     reportArtifactPreviewAction({
