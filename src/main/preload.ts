@@ -985,6 +985,7 @@ contextBridge.exposeInMainWorld('electron', {
     getModels: () => ipcRenderer.invoke('auth:getModels'),
     getPricingCatalog: () => ipcRenderer.invoke(AuthIpcChannel.GetPricingCatalog),
     getProfileSummary: () => ipcRenderer.invoke('auth:getProfileSummary'),
+    getActiveClientBanner: () => ipcRenderer.invoke('auth:getActiveClientBanner'),
     getPendingCallback: () => ipcRenderer.invoke(AuthIpcChannel.GetPendingCallback),
     onCallback: (callback: (data: { code: string }) => void) => {
       const handler = (_event: any, data: { code: string }) => callback(data);

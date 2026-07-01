@@ -5008,6 +5008,24 @@ if (!gotTheLock) {
     }
   });
 
+  ipcMain.handle('auth:getActiveClientBanner', async () => {
+    try {
+      const serverBaseUrl = getServerApiBaseUrl();
+      const url = appendKeyfromQuery(`${serverBaseUrl}/api/client-banners/active?placement=desktop_sidebar`);
+      const tokens = getAuthTokens();
+      const requestOptions: RequestInit = tokens
+        ? { headers: { Authorization: `Bearer ${tokens.accessToken}` } }
+        : {};
+      const resp = await net.fetch(url, requestOptions);
+      if (!resp.ok) return { success: false };
+      const body = (await resp.json()) as { code: number; data: Record<string, unknown> | null };
+      if (body.code !== 0) return { success: false };
+      return { success: true, data: body.data ?? null };
+    } catch {
+      return { success: false };
+    }
+  });
+
   ipcMain.handle('auth:logout', async () => {
     try {
       const tokens = getAuthTokens();

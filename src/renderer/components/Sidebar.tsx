@@ -34,6 +34,7 @@ import SidebarToggleIcon from './icons/SidebarToggleIcon';
 import SkillIcon from './icons/SkillIcon';
 import TrashIcon from './icons/TrashIcon';
 import LoginButton from './LoginButton';
+import SidebarAdBanner from './SidebarAdBanner';
 
 interface SidebarProps {
   onShowSettings: () => void;
@@ -724,21 +725,24 @@ const Sidebar: React.FC<SidebarProps> = ({
           </div>
         </div>
       ) : (
-        <div className="flex items-center gap-1 pb-2 pl-3 pr-2 pt-1">
-          {!hideLogin && (
-            <div className="flex-1 min-w-0">
-              <LoginButton />
-            </div>
-          )}
-          <button
-            type="button"
-            onClick={() => onShowSettings()}
-            className={`inline-flex h-7 items-center justify-start gap-1.5 rounded-md px-1.5 text-[14px] font-normal text-foreground/80 transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04] ${hideLogin ? 'w-full' : 'shrink-0'}`}
-            aria-label={i18nService.t('settings')}
-          >
-            <Cog6ToothIcon className="h-4 w-4 shrink-0" />
-            {i18nService.t('settings')}
-          </button>
+        <div className="pb-2 pt-2">
+          <SidebarAdBanner />
+          <div className="flex items-center gap-1 pl-3 pr-2 pt-1">
+            {!hideLogin && (
+              <div className="flex-1 min-w-0">
+                <LoginButton />
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => onShowSettings()}
+              className={`inline-flex h-7 items-center justify-start gap-1.5 rounded-md px-1.5 text-[14px] font-normal text-foreground/80 transition-colors hover:bg-black/[0.03] dark:hover:bg-white/[0.04] ${hideLogin ? 'w-full' : 'shrink-0'}`}
+              aria-label={i18nService.t('settings')}
+            >
+              <Cog6ToothIcon className="h-4 w-4 shrink-0" />
+              {i18nService.t('settings')}
+            </button>
+          </div>
         </div>
       )}
       {/* Batch Delete Confirmation Modal */}

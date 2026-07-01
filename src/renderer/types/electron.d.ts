@@ -391,6 +391,19 @@ interface ProfileSummaryData {
   creditsResetCampaign?: CreditsResetCampaignStatusData;
 }
 
+interface ClientBannerData {
+  id: number;
+  placement: string;
+  activityDescription: string;
+  weight?: number;
+  status?: number;
+  linkUrl: string;
+  imageUrl: string;
+  imageWidth?: number;
+  imageHeight?: number;
+  updatedAt?: string;
+}
+
 interface HtmlShareResult {
   success: boolean;
   shareId?: string;
@@ -1487,6 +1500,7 @@ interface IElectronAPI {
       error?: string;
     }>;
     getProfileSummary: () => Promise<{ success: boolean; data?: ProfileSummaryData }>;
+    getActiveClientBanner: () => Promise<{ success: boolean; data?: ClientBannerData | null }>;
     getPendingCallback: () => Promise<string | null>;
     onCallback: (callback: (data: { code: string }) => void) => () => void;
     onQuotaChanged: (callback: () => void) => () => void;
