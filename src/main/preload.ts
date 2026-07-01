@@ -2,11 +2,13 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 import { IpcChannel as ScheduledTaskIpc } from '../scheduledTask/constants';
 import { AgentIpcChannel } from '../shared/agent/constants';
+import { AppIpcChannel } from '../shared/app/constants';
+import { AppSettingsIpc } from '../shared/appSettings/constants';
 import { AppUpdateIpc } from '../shared/appUpdate/constants';
 import { ArtifactPreviewIpc } from '../shared/artifactPreview/constants';
 import {
   AsrIpcChannel,
-  type AsrRecognizeRequest,
+  type AsrRealtimeSessionRequest,
 } from '../shared/asr/constants';
 import { AuthIpcChannel } from '../shared/auth/constants';
 import { BrowserIpc, type BrowserRuntimeProfile } from '../shared/browserWebAccess/constants';
@@ -15,8 +17,10 @@ import { CoworkIpcChannel } from '../shared/cowork/constants';
 import { DataMigrationIpc } from '../shared/dataMigration/constants';
 import { DialogIpc } from '../shared/dialog/constants';
 import {
+  type HtmlShareAccessMode,
   type HtmlShareConfigurableStatus,
   HtmlShareIpc,
+  type HtmlShareSourceType,
   type HtmlShareStatus,
 } from '../shared/htmlShare/constants';
 import type {
@@ -368,10 +372,12 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(CoworkIpcChannel.OpenSessionFromNotificationReady),
     remoteManaged: (sessionId: string) =>
       ipcRenderer.invoke('cowork:session:remoteManaged', sessionId),
-    listSessions: (options?: { limit?: number; offset?: number; agentId?: string }) =>
+    listSessions: (options?: { limit?: number; offset?: number; agentId?: string; searchQuery?: string }) =>
       ipcRenderer.invoke('cowork:session:list', options),
     getSessionMessages: (options: { sessionId: string; limit?: number; offset?: number }) =>
       ipcRenderer.invoke('cowork:session:getMessages', options),
+    getSessionMessageRailIndex: (sessionId: string) =>
+      ipcRenderer.invoke(CoworkIpcChannel.GetSessionMessageRailIndex, sessionId),
     getContextUsage: (sessionId: string) =>
       ipcRenderer.invoke('cowork:session:contextUsage', sessionId),
     compactContext: (sessionId: string) =>
@@ -590,6 +596,7 @@ contextBridge.exposeInMainWorld('electron', {
       artifactId: string;
       filePath: string;
       title: string;
+      accessMode?: HtmlShareAccessMode;
     }) => ipcRenderer.invoke(HtmlShareIpc.CreateFromHtmlFile, options),
     updateFromHtmlFile: (options: {
       shareId: string;
@@ -598,17 +605,50 @@ contextBridge.exposeInMainWorld('electron', {
       filePath: string;
       title: string;
       currentStatus?: HtmlShareStatus;
+      accessMode?: HtmlShareAccessMode;
     }) => ipcRenderer.invoke(HtmlShareIpc.UpdateFromHtmlFile, options),
     getByHtmlFile: (options: { filePath: string }) =>
       ipcRenderer.invoke(HtmlShareIpc.GetByHtmlFile, options),
+    createFromArtifactFile: (options: {
+      sourceType: HtmlShareSourceType;
+      sessionId: string;
+      artifactId: string;
+      title: string;
+      accessMode?: HtmlShareAccessMode;
+      fileName?: string;
+      filePath?: string;
+      content?: string;
+      remoteUrl?: string;
+    }) => ipcRenderer.invoke(HtmlShareIpc.CreateFromArtifactFile, options),
+    updateFromArtifactFile: (options: {
+      sourceType: HtmlShareSourceType;
+      shareId: string;
+      sessionId: string;
+      artifactId: string;
+      title: string;
+      accessMode?: HtmlShareAccessMode;
+      fileName?: string;
+      filePath?: string;
+      content?: string;
+      remoteUrl?: string;
+      currentStatus?: HtmlShareStatus;
+    }) => ipcRenderer.invoke(HtmlShareIpc.UpdateFromArtifactFile, options),
+    getByArtifactFile: (options: {
+      sourceType: HtmlShareSourceType;
+      sessionId?: string;
+      artifactId?: string;
+      filePath?: string;
+    }) => ipcRenderer.invoke(HtmlShareIpc.GetByArtifactFile, options),
     updateStatus: (options: { shareId: string; status: HtmlShareConfigurableStatus }) =>
       ipcRenderer.invoke(HtmlShareIpc.UpdateStatus, options),
+    updateAccessMode: (options: { shareId: string; accessMode: HtmlShareAccessMode }) =>
+      ipcRenderer.invoke(HtmlShareIpc.UpdateAccessMode, options),
     disable: (shareId: string) => ipcRenderer.invoke(HtmlShareIpc.Disable, shareId),
     get: (shareId: string) => ipcRenderer.invoke(HtmlShareIpc.Get, shareId),
   },
   asr: {
-    recognize: (options: AsrRecognizeRequest) =>
-      ipcRenderer.invoke(AsrIpcChannel.Recognize, options),
+    createRealtimeSession: (options: AsrRealtimeSessionRequest) =>
+      ipcRenderer.invoke(AsrIpcChannel.CreateRealtimeSession, options),
   },
   artifact: {
     watchFile: (filePath: string) => ipcRenderer.invoke('artifact:watchFile', filePath),
@@ -645,16 +685,17 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(LocalWebServicesIpc.List, options) as Promise<LocalWebService[]>,
   },
   autoLaunch: {
-    get: () => ipcRenderer.invoke('app:getAutoLaunch'),
-    set: (enabled: boolean) => ipcRenderer.invoke('app:setAutoLaunch', enabled),
+    get: () => ipcRenderer.invoke(AppSettingsIpc.GetAutoLaunch),
+    set: (enabled: boolean) => ipcRenderer.invoke(AppSettingsIpc.SetAutoLaunch, enabled),
   },
   preventSleep: {
-    get: () => ipcRenderer.invoke('app:getPreventSleep'),
-    set: (enabled: boolean) => ipcRenderer.invoke('app:setPreventSleep', enabled),
+    get: () => ipcRenderer.invoke(AppSettingsIpc.GetPreventSleep),
+    set: (enabled: boolean) => ipcRenderer.invoke(AppSettingsIpc.SetPreventSleep, enabled),
   },
   appInfo: {
     getVersion: () => ipcRenderer.invoke('app:getVersion'),
     getSystemLocale: () => ipcRenderer.invoke('app:getSystemLocale'),
+    getKeyfromAttribution: () => ipcRenderer.invoke(AppIpcChannel.GetKeyfromAttribution),
     relaunch: () => ipcRenderer.invoke('app:relaunch'),
   },
   appUpdate: {
@@ -865,8 +906,8 @@ contextBridge.exposeInMainWorld('electron', {
     countRuns: (taskId: string) => ipcRenderer.invoke(ScheduledTaskIpc.CountRuns, taskId),
     listAllRuns: (limit?: number, offset?: number, filter?: any) =>
       ipcRenderer.invoke(ScheduledTaskIpc.ListAllRuns, limit, offset, filter),
-    resolveSession: (sessionKey: string) =>
-      ipcRenderer.invoke(ScheduledTaskIpc.ResolveSession, sessionKey),
+    resolveSession: (input: string | { sessionId?: string | null; sessionKey?: string | null }) =>
+      ipcRenderer.invoke(ScheduledTaskIpc.ResolveSession, input),
 
     // Delivery channels
     listChannels: () => ipcRenderer.invoke(ScheduledTaskIpc.ListChannels),

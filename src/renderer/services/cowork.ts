@@ -6,11 +6,13 @@ import {
 } from '../../common/coworkSystemMessages';
 import type { OpenClawSessionPatch } from '../../common/openclawSession';
 import {
+  COWORK_MESSAGE_PAGE_SIZE,
   COWORK_SESSION_PAGE_SIZE,
   CoworkContextUsageRefreshMode,
   type CoworkContextUsageRefreshMode as CoworkContextUsageRefreshModeType,
   CoworkContextUsageSource,
 } from '../../shared/cowork/constants';
+import type { CoworkMessageRailIndexItem } from '../../shared/cowork/rail';
 import { store } from '../store';
 import {
   addMessage,
@@ -30,6 +32,9 @@ import {
   setContextUsage,
   setCurrentSession,
   setHasMoreSessions,
+  setMessageRailIndex,
+  setMessageRailIndexLoading,
+  setMessageWindow,
   setRemoteManaged,
   setSessions,
   setStreaming,
@@ -211,6 +216,12 @@ class CoworkService {
       const session = store.getState().cowork.sessions.find(s => s.id === sessionId);
       if (metadata?.isFinal !== true && session?.status !== 'completed') {
         store.dispatch(updateSessionStatus({ sessionId, status: 'running' }));
+      }
+      if (metadata?.isFinal === true && typeof metadata.model === 'string' && metadata.model.trim()) {
+        this.logDiagnostic(
+          'debug',
+          `received final message metadata for session ${sessionId}, message ${messageId}, model ${metadata.model}`,
+        );
       }
       store.dispatch(updateMessageContent({ sessionId, messageId, content, metadata }));
     });
@@ -614,9 +625,41 @@ class CoworkService {
     return result ?? { success: false, error: 'Cowork IPC is unavailable' };
   }
 
-  async listSessionsForSearch(limit: number, offset: number): Promise<CoworkSessionListResult> {
-    const result = await window.electron?.cowork?.listSessions({ limit, offset });
-    return result ?? { success: false, error: 'Cowork IPC is unavailable' };
+  async listSessionsForSearch(
+    limit: number,
+    offset: number,
+    searchQuery?: string,
+  ): Promise<CoworkSessionListResult> {
+    const trimmedQuery = searchQuery?.trim();
+    const startedAt = performance.now();
+    console.debug('[CoworkSearch] requesting task sessions for the search modal', {
+      hasQuery: !!trimmedQuery,
+      queryLength: trimmedQuery?.length ?? 0,
+      limit,
+      offset,
+    });
+
+    try {
+      const result = await window.electron?.cowork?.listSessions({
+        limit,
+        offset,
+        ...(trimmedQuery ? { searchQuery: trimmedQuery } : {}),
+      });
+      const resolved = result ?? { success: false, error: 'Cowork IPC is unavailable' };
+      console.debug('[CoworkSearch] task session request finished', {
+        success: resolved.success,
+        resultCount: resolved.sessions?.length ?? 0,
+        hasMore: resolved.hasMore ?? false,
+        durationMs: Math.round(performance.now() - startedAt),
+      });
+      return resolved;
+    } catch (error) {
+      console.warn('[CoworkSearch] task session request failed:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to search sessions',
+      };
+    }
   }
 
   async loadMoreSessions(): Promise<boolean> {
@@ -780,14 +823,16 @@ class CoworkService {
     const cowork = window.electron?.cowork;
     if (!cowork) return false;
 
+    this.logDiagnostic('info', `stop requested for session ${sessionId}.`);
     const result = await cowork.stopSession(sessionId);
     if (result.success) {
       store.dispatch(setStreaming(false));
       store.dispatch(updateSessionStatus({ sessionId, status: 'idle' }));
+      this.logDiagnostic('info', `stop completed for session ${sessionId}.`);
       return true;
     }
 
-    console.error('Failed to stop session:', result.error);
+    this.logDiagnostic('warn', `stop failed for session ${sessionId}: ${result.error ?? 'Unknown error'}.`);
     return false;
   }
 
@@ -973,6 +1018,7 @@ class CoworkService {
       }
       store.dispatch(setCurrentSession(result.session));
       store.dispatch(setStreaming(result.session.status === 'running'));
+      void this.loadSessionMessageRailIndex(sessionId);
       void cowork.markSessionViewed?.(sessionId).catch((error: unknown) => {
         console.warn('[CoworkService] failed to mark session viewed:', error);
       });
@@ -987,6 +1033,77 @@ class CoworkService {
 
     console.error('Failed to load session:', result.error);
     return null;
+  }
+
+  async loadSessionMessageRailIndex(sessionId: string): Promise<CoworkMessageRailIndexItem[]> {
+    const cowork = window.electron?.cowork;
+    if (!cowork?.getSessionMessageRailIndex) return [];
+
+    const state = store.getState().cowork;
+    if (state.messageRailIndexLoadingBySessionId[sessionId]) {
+      return state.messageRailIndexBySessionId[sessionId] ?? [];
+    }
+
+    store.dispatch(setMessageRailIndexLoading({ sessionId, loading: true }));
+    try {
+      const result = await cowork.getSessionMessageRailIndex(sessionId);
+      if (result.success && result.items) {
+        store.dispatch(setMessageRailIndex({ sessionId, items: result.items }));
+        this.logDiagnostic(
+          'info',
+          `loaded message rail index for session ${sessionId}; received ${result.items.length} items.`,
+        );
+        return result.items;
+      }
+      this.logDiagnostic('warn', `failed to load message rail index for session ${sessionId}: ${result.error ?? 'unknown error'}`);
+    } catch (error) {
+      this.logDiagnostic(
+        'warn',
+        `failed to load message rail index for session ${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    } finally {
+      store.dispatch(setMessageRailIndexLoading({ sessionId, loading: false }));
+    }
+    return [];
+  }
+
+  async loadMessageWindowAroundIndex(sessionId: string, absoluteIndex: number, pageSize = 50): Promise<boolean> {
+    const cowork = window.electron?.cowork;
+    if (!cowork?.getSessionMessages) return false;
+
+    const state = store.getState().cowork;
+    if (state.currentSession?.id !== sessionId) return false;
+
+    const totalMessages = state.currentSession.totalMessages;
+    const safeAbsoluteIndex = Number.isFinite(absoluteIndex) ? Math.max(0, Math.floor(absoluteIndex)) : 0;
+    const safePageSize = Number.isFinite(pageSize) ? Math.floor(pageSize) : 50;
+    const boundedPageSize = Math.max(COWORK_MESSAGE_PAGE_SIZE, Math.min(100, safePageSize));
+    const offset = Math.max(0, Math.min(
+      Math.max(0, totalMessages - boundedPageSize),
+      safeAbsoluteIndex - Math.floor(boundedPageSize / 2),
+    ));
+
+    this.logDiagnostic(
+      'info',
+      `loading message window for session ${sessionId}; absoluteIndex=${safeAbsoluteIndex}, offset=${offset}, limit=${boundedPageSize}.`,
+    );
+
+    const result = await cowork.getSessionMessages({ sessionId, limit: boundedPageSize, offset });
+    if (result.success && result.messages && result.messages.length > 0) {
+      store.dispatch(setMessageWindow({
+        sessionId,
+        messages: result.messages,
+        messagesOffset: result.offset ?? offset,
+        totalMessages: result.total ?? totalMessages,
+      }));
+      return true;
+    }
+
+    this.logDiagnostic(
+      result.success ? 'info' : 'warn',
+      `message window load for session ${sessionId} returned no messages at offset ${offset}: ${result.error ?? 'empty result'}.`,
+    );
+    return false;
   }
 
   /** Load older messages for the current session (for scroll-up history). */

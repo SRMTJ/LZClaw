@@ -4,6 +4,7 @@ import { useSelector } from 'react-redux';
 import logoutIconUrl from '../assets/icons/logout.svg';
 import { authService } from '../services/auth';
 import { i18nService } from '../services/i18n';
+import { LogReporterAction, reportYdAnalyzer } from '../services/logReporter';
 import type { RootState } from '../store';
 import type { CreditItem } from '../store/slices/authSlice';
 import ChartBarIcon from './icons/ChartBarIcon';
@@ -20,6 +21,29 @@ const resolveLzCrmUrl = (value?: string | null): string => {
     return normalized;
   }
   return `http://${normalized}`;
+};
+
+const ACCOUNT_MENU_ANALYTICS_SOURCE = 'home_account_menu';
+
+const reportAccountMenuAction = (
+  actionType: string,
+  options: {
+    creditItemCount?: number;
+    hasCredits?: boolean;
+    isLoggedIn?: boolean;
+    result?: 'success' | 'failed';
+  } = {},
+): void => {
+  console.debug('[LoginButton] reporting account menu analytics');
+  void reportYdAnalyzer({
+    action: LogReporterAction.AccountMenuAction,
+    source: ACCOUNT_MENU_ANALYTICS_SOURCE,
+    actionType,
+    result: options.result,
+    isLoggedIn: options.isLoggedIn ?? true,
+    hasCredits: options.hasCredits,
+    creditItemCount: options.creditItemCount,
+  });
 };
 
 const getSubscriptionBadge = (label: string) => {
@@ -163,8 +187,22 @@ const UserMenu: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   }, []);
 
   const handleLogout = async () => {
-    await authService.logout();
-    onClose();
+    try {
+      await authService.logout();
+      reportAccountMenuAction('logout', {
+        creditItemCount: creditItems.length,
+        hasCredits,
+        result: 'success',
+      });
+      onClose();
+    } catch (error) {
+      reportAccountMenuAction('logout', {
+        creditItemCount: creditItems.length,
+        hasCredits,
+        result: 'failed',
+      });
+      throw error;
+    }
   };
 
   const handleOpenLzCrm = async () => {
@@ -196,7 +234,14 @@ const UserMenu: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       <div className="border-b border-border">
         <button
           type="button"
-          onClick={() => setCreditsExpanded(!creditsExpanded)}
+          onClick={() => {
+            const nextExpanded = !creditsExpanded;
+            setCreditsExpanded(nextExpanded);
+            reportAccountMenuAction(nextExpanded ? 'expand_credits' : 'collapse_credits', {
+              creditItemCount: creditItems.length,
+              hasCredits,
+            });
+          }}
           className="w-full px-4 py-2.5 flex items-center justify-between cursor-pointer hover:bg-surface-raised transition-colors"
         >
           <span className="text-xs text-secondary">
@@ -260,7 +305,7 @@ const UserMenu: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 };
 
 const LoginButton: React.FC = () => {
-  const { isLoggedIn, isLoading, user } = useSelector((state: RootState) => state.auth);
+  const { isLoggedIn, isLoading, profileSummary, user } = useSelector((state: RootState) => state.auth);
   const [showMenu, setShowMenu] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -284,10 +329,29 @@ const LoginButton: React.FC = () => {
 
   const handleClick = async () => {
     if (isLoggedIn) {
-      setShowMenu(!showMenu);
+      const nextShowMenu = !showMenu;
+      setShowMenu(nextShowMenu);
+      const creditItemCount = profileSummary?.creditItems?.length ?? 0;
+      reportAccountMenuAction(nextShowMenu ? 'open_menu' : 'close_menu', {
+        creditItemCount,
+        hasCredits: creditItemCount > 0,
+        isLoggedIn: true,
+      });
       return;
     }
-    await authService.login();
+    try {
+      await authService.login();
+      reportAccountMenuAction('login', {
+        isLoggedIn: false,
+        result: 'success',
+      });
+    } catch (error) {
+      reportAccountMenuAction('login', {
+        isLoggedIn: false,
+        result: 'failed',
+      });
+      throw error;
+    }
   };
 
   return (

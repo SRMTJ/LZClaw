@@ -4,13 +4,19 @@ import {
   VOICE_INPUT_TARGET_SAMPLE_RATE,
 } from './constants';
 import { AsrClientError } from './errors';
-import { encodePcm16Wav, mergeAudioChunks, resampleLinear } from './wavEncoder';
+import { encodePcm16Bytes, mergeAudioChunks, resampleLinear } from './wavEncoder';
 
 type AudioContextConstructor = typeof AudioContext;
 
-export interface VoiceRecordingSession {
-  stop: () => Promise<Blob>;
+export interface RealtimeVoiceRecordingSession {
+  stop: () => Promise<void>;
   cancel: () => void;
+  getOutputSampleCount: () => number;
+}
+
+interface RealtimeVoiceRecordingOptions {
+  chunkIntervalMillis: number;
+  onPcmChunk: (chunk: Uint8Array) => void;
 }
 
 const resolveAudioContext = (): AudioContextConstructor | null => {
@@ -20,7 +26,10 @@ const resolveAudioContext = (): AudioContextConstructor | null => {
   return window.AudioContext ?? windowWithWebkit.webkitAudioContext ?? null;
 };
 
-export const startVoiceRecording = async (): Promise<VoiceRecordingSession> => {
+export const startRealtimeVoiceRecording = async ({
+  chunkIntervalMillis,
+  onPcmChunk,
+}: RealtimeVoiceRecordingOptions): Promise<RealtimeVoiceRecordingSession> => {
   const AudioContextImpl = resolveAudioContext();
   if (!AudioContextImpl || !navigator.mediaDevices?.getUserMedia) {
     throw new AsrClientError(i18nService.t('voiceInputMicrophoneUnavailable'));
@@ -39,16 +48,43 @@ export const startVoiceRecording = async (): Promise<VoiceRecordingSession> => {
   if (audioContext.state === 'suspended') {
     await audioContext.resume();
   }
+
   const source = audioContext.createMediaStreamSource(stream);
   const processor = audioContext.createScriptProcessor(4096, 1, 1);
   const mutedOutput = audioContext.createGain();
   mutedOutput.gain.value = 0;
-  const chunks: Float32Array[] = [];
+
+  const pendingChunks: Float32Array[] = [];
+  let pendingSourceSamples = 0;
+  let outputSampleCount = 0;
   let stopped = false;
+  const minSourceSamplesPerChunk = Math.max(
+    1,
+    Math.round(audioContext.sampleRate * (chunkIntervalMillis / 1000)),
+  );
+
+  const flush = () => {
+    if (pendingSourceSamples <= 0) return;
+    const merged = mergeAudioChunks(pendingChunks);
+    pendingChunks.length = 0;
+    pendingSourceSamples = 0;
+    const resampled = resampleLinear(merged, audioContext.sampleRate, VOICE_INPUT_TARGET_SAMPLE_RATE);
+    if (resampled.length === 0) return;
+    outputSampleCount += resampled.length;
+    const pcmBytes = encodePcm16Bytes(resampled);
+    if (pcmBytes.byteLength > 0) {
+      onPcmChunk(pcmBytes);
+    }
+  };
 
   processor.onaudioprocess = (event) => {
     if (stopped) return;
-    chunks.push(new Float32Array(event.inputBuffer.getChannelData(0)));
+    const chunk = new Float32Array(event.inputBuffer.getChannelData(0));
+    pendingChunks.push(chunk);
+    pendingSourceSamples += chunk.length;
+    if (pendingSourceSamples >= minSourceSamplesPerChunk) {
+      flush();
+    }
   };
 
   source.connect(processor);
@@ -66,22 +102,17 @@ export const startVoiceRecording = async (): Promise<VoiceRecordingSession> => {
 
   return {
     stop: async () => {
-      const sourceSampleRate = audioContext.sampleRate;
       cleanup();
+      flush();
       await audioContext.close();
-      const merged = mergeAudioChunks(chunks);
-      if (merged.length === 0) {
+      if (outputSampleCount < VOICE_INPUT_TARGET_SAMPLE_RATE * (VOICE_INPUT_MIN_RECORDING_MS / 1000)) {
         throw new AsrClientError(i18nService.t('voiceInputNoAudioCaptured'));
       }
-      const resampled = resampleLinear(merged, sourceSampleRate, VOICE_INPUT_TARGET_SAMPLE_RATE);
-      if (resampled.length < VOICE_INPUT_TARGET_SAMPLE_RATE * (VOICE_INPUT_MIN_RECORDING_MS / 1000)) {
-        throw new AsrClientError(i18nService.t('voiceInputNoAudioCaptured'));
-      }
-      return encodePcm16Wav(resampled, VOICE_INPUT_TARGET_SAMPLE_RATE);
     },
     cancel: () => {
       cleanup();
       void audioContext.close();
     },
+    getOutputSampleCount: () => outputSampleCount,
   };
 };

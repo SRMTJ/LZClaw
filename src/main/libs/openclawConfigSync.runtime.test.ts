@@ -16,7 +16,16 @@ vi.mock('electron', () => ({
 
 const mockRuntimeState = vi.hoisted(() => ({
   proxyPort: null as number | null,
-  serverModels: [] as Array<{ modelId: string; supportsImage?: boolean }>,
+  serverModels: [] as Array<{
+    modelId: string;
+    modelName?: string;
+    provider?: string;
+    apiFormat?: string;
+    supportsImage?: boolean;
+    supportsThinking?: boolean;
+    contextWindow?: number;
+    explicitContextCache?: boolean;
+  }>,
   enabledProviders: [] as Array<{
     providerName: string;
     baseURL: string;
@@ -28,6 +37,7 @@ const mockRuntimeState = vi.hoisted(() => ({
       id: string;
       name: string;
       supportsImage?: boolean;
+      supportsThinking?: boolean;
       contextWindow?: number;
       customParams?: Record<string, unknown>;
     }>;
@@ -71,10 +81,6 @@ vi.mock('./openclawLocalExtensions', () => ({
 
 vi.mock('./openclawTokenProxy', () => ({
   getOpenClawTokenProxyPort: () => mockRuntimeState.proxyPort,
-}));
-
-vi.mock('./openaiCodexAuth', () => ({
-  readOpenAICodexAuthFile: () => ({ accountId: 'acct-test' }),
 }));
 
 describe('OpenClawConfigSync runtime config output', () => {
@@ -152,6 +158,76 @@ describe('OpenClawConfigSync runtime config output', () => {
       ...overrides,
     } as never);
   };
+
+  test('writes OpenClaw config fields required by LobsterAI patches', async () => {
+    const legacyWorkingDirectory = path.join(tmpDir, 'legacy-working-directory');
+    const mainAgentWorkingDirectory = path.join(tmpDir, 'main-agent-working-directory');
+
+    const sync = await createSync({
+      getCoworkConfig: () => ({
+        workingDirectory: legacyWorkingDirectory,
+        systemPrompt: '',
+        executionMode: 'local',
+        agentEngine: 'openclaw',
+        memoryEnabled: false,
+        memoryImplicitUpdateEnabled: false,
+        memoryLlmJudgeEnabled: false,
+        memoryGuardLevel: 'balanced',
+        memoryUserMemoriesMaxItems: 100,
+        skipMissedJobs: true,
+      }),
+      getAgents: () => [
+        {
+          id: 'main',
+          name: 'Main',
+          description: '',
+          systemPrompt: '',
+          identity: '',
+          model: '',
+          workingDirectory: mainAgentWorkingDirectory,
+          icon: '',
+          skillIds: [],
+          enabled: true,
+          isDefault: true,
+          source: 'custom',
+          presetId: '',
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+    });
+
+    const result = sync.sync('lobsterai-patch-dependent-fields');
+    expect(result.ok).toBe(true);
+
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    const mainEntry = config.agents.list.find((entry: { id?: string }) => entry.id === 'main');
+
+    expect(config.cron.skipMissedJobs).toBe(true);
+    expect(config.cron.store).toBe(path.join(stateDir, 'cron', 'jobs.json'));
+    expect(config.agents.defaults.cwd).toBe(path.resolve(mainAgentWorkingDirectory));
+    expect(mainEntry.cwd).toBe(path.resolve(mainAgentWorkingDirectory));
+  });
+
+  test('disables OpenClaw remote model pricing refresh in generated config', async () => {
+    const sync = await createSync();
+
+    const result = sync.sync('disable-model-pricing');
+    expect(result.ok).toBe(true);
+
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.models.pricing).toEqual({ enabled: false });
+  });
+
+  test('configures OpenClaw chat image attachment limit to 30MB', async () => {
+    const sync = await createSync();
+
+    const result = sync.sync('chat-image-attachment-limit');
+    expect(result.ok).toBe(true);
+
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.agents.defaults.mediaMaxMb).toBe(30);
+  });
 
   test('writes model provider env-proxy transport when system proxy is enabled', async () => {
     const { setSystemProxyEnabled } = await import('./systemProxy');
@@ -282,7 +358,9 @@ describe('OpenClawConfigSync runtime config output', () => {
     expect(result.ok).toBe(true);
 
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(config.models.providers['openai-codex']).toBeDefined();
+    expect(config.models.providers.openai).toBeDefined();
+    expect(config.models.providers.openai.api).toBe('openai-chatgpt-responses');
+    expect(config.models.providers['openai-codex']).toBeUndefined();
     expect(config.models.providers.deepseek).toBeDefined();
     expect(config.agents.defaults.models).toBeUndefined();
     expect(config.agents.defaults.workspace).toBe(path.join(stateDir, 'workspace-main'));
@@ -362,9 +440,63 @@ describe('OpenClawConfigSync runtime config output', () => {
   test('merges all server models into existing lobsterai provider and updates image input', async () => {
     mockRuntimeState.proxyPort = 56646;
     mockRuntimeState.serverModels = [
-      { modelId: 'qwen3.5-plus-YoudaoInner', supportsImage: true },
-      { modelId: 'qwen3.6-plus-YoudaoInner', supportsImage: true },
-      { modelId: 'deepseek-v3.2-YoudaoInner', supportsImage: false },
+      {
+        modelId: 'qwen3.5-plus-YoudaoInner',
+        modelName: 'qwen3.5-plus-YoudaoInner',
+        provider: 'YoudaoInner',
+        apiFormat: 'openai',
+        supportsImage: true,
+        explicitContextCache: true,
+      },
+      {
+        modelId: 'qwen3.6-plus-YoudaoInner',
+        modelName: 'qwen3.6-plus-YoudaoInner',
+        provider: 'YoudaoInner',
+        apiFormat: 'openai',
+        supportsImage: true,
+        explicitContextCache: true,
+      },
+      {
+        modelId: 'claude-sonnet-4-6-YoudaoInner',
+        modelName: 'claude-sonnet-4-6-YoudaoInner',
+        provider: 'YoudaoInner',
+        apiFormat: 'anthropic',
+        supportsImage: true,
+        supportsThinking: true,
+        contextWindow: 1_000_000,
+        explicitContextCache: true,
+      },
+      {
+        modelId: 'claude-opus-4-YoudaoInner',
+        modelName: 'claude-opus-4-YoudaoInner',
+        provider: 'YoudaoInner',
+        apiFormat: 'anthropic',
+        supportsImage: true,
+        supportsThinking: true,
+      },
+      {
+        modelId: 'claude-sonnet-4-6',
+        modelName: 'Claude Sonnet 4.6 OpenAI Compat',
+        provider: 'YoudaoInner',
+        apiFormat: 'openai',
+        supportsImage: true,
+        supportsThinking: true,
+        contextWindow: 1_000_000,
+        explicitContextCache: true,
+      },
+      {
+        modelId: 'glm-5.1-YoudaoInner',
+        provider: 'YoudaoInner',
+        apiFormat: 'openai',
+        supportsImage: false,
+        supportsThinking: true,
+      },
+      {
+        modelId: 'deepseek-v3.2-YoudaoInner',
+        provider: 'YoudaoInner',
+        apiFormat: 'openai',
+        supportsImage: false,
+      },
     ];
     mockRuntimeState.rawApiConfig = {
       config: {
@@ -430,19 +562,257 @@ describe('OpenClawConfigSync runtime config output', () => {
     expect(provider.models).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: 'qwen3.5-plus-YoudaoInner',
+        api: 'openai-completions',
         input: ['text', 'image'],
       }),
       expect.objectContaining({
         id: 'qwen3.6-plus-YoudaoInner',
+        api: 'openai-completions',
         input: ['text', 'image'],
       }),
       expect.objectContaining({
+        id: 'claude-sonnet-4-6-YoudaoInner',
+        api: 'anthropic-messages',
+        input: ['text', 'image'],
+        reasoning: true,
+        contextWindow: 1_000_000,
+      }),
+      expect.objectContaining({
+        id: 'claude-opus-4-YoudaoInner',
+        api: 'anthropic-messages',
+        input: ['text', 'image'],
+        reasoning: true,
+      }),
+      expect.objectContaining({
+        id: 'claude-sonnet-4-6',
+        api: 'openai-completions',
+        input: ['text', 'image'],
+        reasoning: true,
+        contextWindow: 1_000_000,
+      }),
+      expect.objectContaining({
+        id: 'glm-5.1-YoudaoInner',
+        api: 'openai-completions',
+        input: ['text'],
+        reasoning: true,
+      }),
+      expect.objectContaining({
         id: 'deepseek-v3.2-YoudaoInner',
+        api: 'openai-completions',
         input: ['text'],
       }),
     ]));
-    expect(provider.models).toHaveLength(3);
-    expect(config.agents.defaults.models).toBeUndefined();
+    expect(provider.models).toHaveLength(7);
+    expect(JSON.stringify(provider.models)).not.toContain('cacheControlFormat');
+    expect(JSON.stringify(provider.models)).not.toContain('supportsLongCacheRetention');
+    expect(config.agents.defaults.models).toEqual(expect.objectContaining({
+      'lobsterai-server/qwen3.5-plus-YoudaoInner': {
+        params: {
+          cacheRetention: 'short',
+          contextCacheProvider: 'dashscope',
+          contextCacheMode: 'explicit',
+        },
+      },
+      'lobsterai-server/qwen3.6-plus-YoudaoInner': {
+        params: {
+          cacheRetention: 'short',
+          contextCacheProvider: 'dashscope',
+          contextCacheMode: 'explicit',
+        },
+      },
+      'lobsterai-server/claude-sonnet-4-6-YoudaoInner': {
+        params: {
+          cacheRetention: 'short',
+        },
+      },
+      'lobsterai-server/claude-opus-4-YoudaoInner': {
+        params: {
+          cacheRetention: 'short',
+        },
+      },
+      'lobsterai-server/claude-sonnet-4-6': {
+        params: {
+          cacheRetention: 'short',
+          contextCacheProvider: 'anthropic-compatible',
+          contextCacheMode: 'explicit',
+        },
+      },
+    }));
+  });
+
+  test('writes Claude OpenAI-compatible explicit cache params when server metadata is not loaded', async () => {
+    mockRuntimeState.proxyPort = 56646;
+    mockRuntimeState.serverModels = [];
+    mockRuntimeState.rawApiConfig = {
+      config: {
+        baseURL: 'https://lobsterai-server.youdao.com/api/proxy/v1',
+        apiKey: 'access-token',
+        model: 'claude-sonnet-4-6',
+        apiType: 'openai',
+      },
+      providerMetadata: {
+        providerName: 'lobsterai-server',
+        codingPlanEnabled: false,
+        supportsImage: true,
+        supportsThinking: true,
+        modelName: 'Claude Sonnet 4.6',
+      },
+    };
+
+    const sync = await createSync();
+
+    const result = sync.sync('server-model-cache-default-without-metadata');
+    expect(result.ok).toBe(true);
+
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.models.providers['lobsterai-server'].models).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'claude-sonnet-4-6',
+        api: 'openai-completions',
+      }),
+    ]));
+    expect(config.agents.defaults.models).toEqual(expect.objectContaining({
+      'lobsterai-server/claude-sonnet-4-6': {
+        params: {
+          cacheRetention: 'short',
+          contextCacheProvider: 'anthropic-compatible',
+          contextCacheMode: 'explicit',
+        },
+      },
+    }));
+  });
+
+  test('writes explicit cache params for Anthropic, Qwen, and custom providers', async () => {
+    const { ProviderName } = await import('../../shared/providers');
+
+    mockRuntimeState.rawApiConfig = {
+      config: {
+        baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+        apiKey: 'sk-qwen',
+        model: 'qwen3.5-plus',
+        apiType: 'openai',
+      },
+      providerMetadata: {
+        providerName: ProviderName.Qwen,
+        codingPlanEnabled: false,
+        supportsImage: true,
+        modelName: 'Qwen3.5 Plus',
+      },
+    };
+    mockRuntimeState.enabledProviders = [
+      {
+        providerName: ProviderName.Qwen,
+        baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+        apiKey: 'sk-qwen',
+        apiType: 'openai',
+        codingPlanEnabled: false,
+        models: [
+          { id: 'qwen3.5-plus', name: 'Qwen3.5 Plus', supportsImage: true },
+          { id: 'qwen3.6-plus', name: 'Qwen3.6 Plus', supportsImage: true },
+          { id: 'qwen3.7-plus', name: 'Qwen3.7 Plus', supportsImage: true },
+        ],
+      },
+      {
+        providerName: ProviderName.Anthropic,
+        baseURL: 'https://api.anthropic.com',
+        apiKey: 'sk-anthropic',
+        apiType: 'anthropic',
+        codingPlanEnabled: false,
+        models: [
+          { id: 'claude-opus-4-7', name: 'Claude Opus 4.7', supportsImage: true, supportsThinking: true },
+          { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', supportsImage: true, supportsThinking: true },
+        ],
+      },
+      {
+        providerName: 'custom_0',
+        baseURL: 'https://example.com/v1',
+        apiKey: 'sk-custom',
+        apiType: 'openai',
+        codingPlanEnabled: false,
+        models: [
+          {
+            id: 'claude-opus-4-6',
+            name: 'Claude Opus 4.6',
+            supportsImage: true,
+            customParams: { metadata: 'custom-cache' },
+          },
+          { id: 'anthropic/claude-sonnet-4-6', name: 'Namespaced Claude Sonnet 4.6', supportsImage: true },
+          { id: 'qwen3.5-plus', name: 'Qwen3.5 Plus', supportsImage: true },
+          { id: 'qwen3.6-plus', name: 'Qwen3.6 Plus', supportsImage: true },
+          { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', supportsImage: false },
+          { id: 'gpt-5.5-2026-04-24', name: 'GPT 5.5', supportsImage: true },
+        ],
+      },
+    ];
+
+    const sync = await createSync();
+
+    const result = sync.sync('provider-explicit-cache-defaults');
+    expect(result.ok).toBe(true);
+
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    const modelDefaults = config.agents.defaults.models;
+
+    expect(modelDefaults).toEqual(expect.objectContaining({
+      'qwen/qwen3.5-plus': {
+        params: {
+          cacheRetention: 'short',
+          contextCacheProvider: 'dashscope',
+          contextCacheMode: 'explicit',
+        },
+      },
+      'qwen/qwen3.6-plus': {
+        params: {
+          cacheRetention: 'short',
+          contextCacheProvider: 'dashscope',
+          contextCacheMode: 'explicit',
+        },
+      },
+      'qwen/qwen3.7-plus': {},
+      'anthropic/claude-opus-4-7': {
+        params: {
+          cacheRetention: 'short',
+        },
+      },
+      'anthropic/claude-sonnet-4-6': {
+        params: {
+          cacheRetention: 'short',
+        },
+      },
+      'custom_0/claude-opus-4-6': {
+        params: {
+          cacheRetention: 'short',
+          contextCacheProvider: 'anthropic-compatible',
+          contextCacheMode: 'explicit',
+          extra_body: {
+            metadata: 'custom-cache',
+          },
+        },
+      },
+      'custom_0/anthropic/claude-sonnet-4-6': {
+        params: {
+          cacheRetention: 'short',
+          contextCacheProvider: 'anthropic-compatible',
+          contextCacheMode: 'explicit',
+        },
+      },
+      'custom_0/qwen3.5-plus': {
+        params: {
+          cacheRetention: 'short',
+          contextCacheProvider: 'dashscope',
+          contextCacheMode: 'explicit',
+        },
+      },
+      'custom_0/qwen3.6-plus': {
+        params: {
+          cacheRetention: 'short',
+          contextCacheProvider: 'dashscope',
+          contextCacheMode: 'explicit',
+        },
+      },
+      'custom_0/deepseek-v4-pro': {},
+      'custom_0/gpt-5.5-2026-04-24': {},
+    }));
   });
 
   test('writes a complete agent model allowlist when any model has custom params', async () => {
@@ -488,6 +858,22 @@ describe('OpenClawConfigSync runtime config output', () => {
           },
         ],
       },
+      {
+        providerName: 'custom_0',
+        baseURL: 'https://example.com/v1',
+        apiKey: 'sk-custom',
+        apiType: 'openai',
+        codingPlanEnabled: false,
+        models: [
+          {
+            id: 'custom-thinking-model',
+            name: 'Custom Thinking Model',
+            supportsImage: false,
+            supportsThinking: true,
+            customParams: { reasoning_effort: 'high' },
+          },
+        ],
+      },
     ];
 
     const sync = await createSync();
@@ -506,10 +892,23 @@ describe('OpenClawConfigSync runtime config output', () => {
         contextWindow: 1_000_000,
       }),
     ]));
+    expect(config.models.providers.custom_0.models).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'custom-thinking-model',
+        reasoning: true,
+      }),
+    ]));
     const modelDefaults = config.agents.defaults.models;
 
     expect(modelDefaults).toEqual(expect.objectContaining({
       'deepseek/deepseek-v4-flash': {
+        params: {
+          extra_body: {
+            reasoning_effort: 'high',
+          },
+        },
+      },
+      'custom_0/custom-thinking-model': {
         params: {
           extra_body: {
             reasoning_effort: 'high',
@@ -523,6 +922,7 @@ describe('OpenClawConfigSync runtime config output', () => {
     expect(Object.keys(modelDefaults)).toEqual(expect.arrayContaining([
       'deepseek/deepseek-v4-flash',
       'deepseek/deepseek-v4-pro',
+      'custom_0/custom-thinking-model',
       'lobsterai-server/MiniMax-M2.7-YoudaoInner',
       'lobsterai-server/kimi-k2.6-inhouse-ZhiYun',
     ]));
@@ -592,7 +992,7 @@ describe('OpenClawConfigSync runtime config output', () => {
     expect(config.tools.deny).not.toContain('video_generate');
   });
 
-  test('maps OpenAI OAuth mode to the OpenAI Codex provider', async () => {
+  test('maps OpenAI OAuth mode to the ChatGPT Responses provider', async () => {
     const { AuthType, OpenClawApi, OpenClawProviderId, ProviderName } = await import('../../shared/providers');
     const { buildProviderSelection } = await import('./openclawConfigSync');
 
@@ -608,21 +1008,119 @@ describe('OpenClawConfigSync runtime config output', () => {
       modelName: 'GPT-5.4',
     });
 
-    expect(selection.providerId).toBe(OpenClawProviderId.OpenAICodex);
-    expect(selection.primaryModel).toBe(`${OpenClawProviderId.OpenAICodex}/gpt-5.4`);
+    expect(selection.providerId).toBe(OpenClawProviderId.OpenAI);
+    expect(selection.primaryModel).toBe(`${OpenClawProviderId.OpenAI}/gpt-5.4`);
     expect(selection.providerConfig.baseUrl).toBe('https://chatgpt.com/backend-api/codex');
-    expect(selection.providerConfig.api).toBe(OpenClawApi.OpenAICodexResponses);
+    expect(selection.providerConfig.api).toBe(OpenClawApi.OpenAIChatGPTResponses);
     expect(selection.providerConfig.auth).toBe(AuthType.OAuth);
-    expect(selection.providerConfig.headers).toEqual({
-      'chatgpt-account-id': 'acct-test',
-      originator: 'pi',
-      'OpenAI-Beta': 'responses=experimental',
-    });
+    expect(selection.providerConfig).not.toHaveProperty('headers');
     expect(selection.providerConfig).not.toHaveProperty('apiKey');
   });
 
+  test('maps MiniMax OAuth mode to the MiniMax portal provider', async () => {
+    const { AuthType, OpenClawApi, OpenClawProviderId, ProviderName } = await import('../../shared/providers');
+    const { buildProviderSelection } = await import('./openclawConfigSync');
+
+    const selection = buildProviderSelection({
+      apiKey: 'oauth-token',
+      baseURL: 'https://api.minimaxi.com/anthropic',
+      modelId: 'MiniMax-M3',
+      apiType: 'anthropic',
+      providerName: ProviderName.Minimax,
+      authType: 'oauth',
+      codingPlanEnabled: false,
+      supportsImage: true,
+      supportsThinking: true,
+      modelName: 'MiniMax M3',
+    });
+
+    expect(selection.providerId).toBe(OpenClawProviderId.MinimaxPortal);
+    expect(selection.primaryModel).toBe(`${OpenClawProviderId.MinimaxPortal}/MiniMax-M3`);
+    expect(selection.providerConfig.api).toBe(OpenClawApi.AnthropicMessages);
+    expect(selection.providerConfig.auth).toBe(AuthType.OAuth);
+    expect(selection.providerConfig.apiKey).toBe('${LOBSTER_APIKEY_MINIMAX}');
+    expect(selection.providerConfig.models[0].maxTokens).toBe(131_072);
+  });
+
+  test('keeps MiniMax API key mode on the standard MiniMax provider', async () => {
+    const { AuthType, OpenClawApi, OpenClawProviderId, ProviderName } = await import('../../shared/providers');
+    const { buildProviderSelection } = await import('./openclawConfigSync');
+
+    const selection = buildProviderSelection({
+      apiKey: 'sk-minimax',
+      baseURL: 'https://api.minimaxi.com/anthropic',
+      modelId: 'MiniMax-M2.7',
+      apiType: 'anthropic',
+      providerName: ProviderName.Minimax,
+      authType: 'apikey',
+      codingPlanEnabled: false,
+      supportsImage: false,
+      modelName: 'MiniMax M2.7',
+    });
+
+    expect(selection.providerId).toBe(OpenClawProviderId.Minimax);
+    expect(selection.primaryModel).toBe(`${OpenClawProviderId.Minimax}/MiniMax-M2.7`);
+    expect(selection.providerConfig.api).toBe(OpenClawApi.AnthropicMessages);
+    expect(selection.providerConfig.auth).toBe(AuthType.ApiKey);
+    expect(selection.providerConfig.models[0].contextWindow).toBe(204_800);
+    expect(selection.providerConfig.models[0].maxTokens).toBe(131_072);
+  });
+
+  test('resolves OpenClaw catalog maxTokens by provider and model id', async () => {
+    const { resolveOpenClawCatalogModelMaxTokens } = await import('./openclawModelCatalog');
+
+    expect(resolveOpenClawCatalogModelMaxTokens('minimax', 'MiniMax-M3')).toBe(131_072);
+    expect(resolveOpenClawCatalogModelMaxTokens('minimax-portal', 'MiniMax-M3')).toBe(131_072);
+    expect(resolveOpenClawCatalogModelMaxTokens('anthropic', 'claude-sonnet-4-6')).toBe(64_000);
+    expect(resolveOpenClawCatalogModelMaxTokens('custom_0', 'MiniMax-M3')).toBeUndefined();
+  });
+
+  test('writes OpenClaw default maxTokens for unknown Anthropic-format custom providers', async () => {
+    const { OpenClawApi } = await import('../../shared/providers');
+    const { buildProviderSelection } = await import('./openclawConfigSync');
+
+    const selection = buildProviderSelection({
+      apiKey: 'sk-custom',
+      baseURL: 'https://api.example.com/anthropic',
+      modelId: 'custom-claude-compatible',
+      apiType: 'anthropic',
+      providerName: 'custom_0',
+      authType: 'apikey',
+      codingPlanEnabled: false,
+      supportsImage: false,
+      modelName: 'Custom Claude Compatible',
+      contextWindow: 1_000_000,
+    });
+
+    expect(selection.providerConfig.api).toBe(OpenClawApi.AnthropicMessages);
+    expect(selection.providerConfig.models[0].contextWindow).toBe(1_000_000);
+    expect(selection.providerConfig.models[0].maxTokens).toBe(8192);
+  });
+
+  test('does not use OpenClaw catalog maxTokens when custom provider id does not match', async () => {
+    const { OpenClawApi } = await import('../../shared/providers');
+    const { buildProviderSelection } = await import('./openclawConfigSync');
+
+    const selection = buildProviderSelection({
+      apiKey: 'sk-custom',
+      baseURL: 'https://api.example.com/anthropic',
+      modelId: 'MiniMax-M3',
+      apiType: 'anthropic',
+      providerName: 'custom_0',
+      authType: 'apikey',
+      codingPlanEnabled: false,
+      supportsImage: true,
+      supportsThinking: true,
+      modelName: 'MiniMax M3',
+    });
+
+    expect(selection.providerConfig.api).toBe(OpenClawApi.AnthropicMessages);
+    expect(selection.providerConfig.models[0].contextWindow).toBe(1_000_000);
+    expect(selection.providerConfig.models[0].maxTokens).toBe(8192);
+  });
+
   test('repairs stale image capability for known Qwen models before writing OpenClaw input', async () => {
-    const { ProviderName } = await import('../../shared/providers');
+    const { OpenClawProviderId, ProviderName } = await import('../../shared/providers');
     const { buildProviderSelection } = await import('./openclawConfigSync');
 
     const qwenSelection = buildProviderSelection({
@@ -635,6 +1133,10 @@ describe('OpenClawConfigSync runtime config output', () => {
       supportsImage: false,
       modelName: 'qwen3.6-plus',
     });
+    expect(qwenSelection.providerId).toBe(OpenClawProviderId.Qwen);
+    expect(qwenSelection.primaryModel).toBe(`${OpenClawProviderId.Qwen}/qwen3.6-plus`);
+    expect(qwenSelection.providerId).not.toBe('qwen-portal');
+    expect(qwenSelection.providerId).not.toBe('qwen-oauth');
     expect(qwenSelection.providerConfig.models[0].input).toEqual(['text', 'image']);
 
     const customSelection = buildProviderSelection({
@@ -651,7 +1153,7 @@ describe('OpenClawConfigSync runtime config output', () => {
     expect(customSelection.providerConfig.models[0].input).toEqual(['text', 'image']);
   });
 
-  test('marks DeepSeek reasoning models and all Xiaomi models as reasoning-capable', async () => {
+  test('marks DeepSeek, Xiaomi, and known GLM models as reasoning-capable', async () => {
     const { OpenClawApi, ProviderName } = await import('../../shared/providers');
     const { buildProviderSelection } = await import('./openclawConfigSync');
 
@@ -679,6 +1181,87 @@ describe('OpenClawConfigSync runtime config output', () => {
     expect(xiaomiSelection.providerConfig.baseUrl).toBe('https://api.xiaomimimo.com/v1');
     expect(xiaomiSelection.providerConfig.api).toBe(OpenClawApi.OpenAICompletions);
     expect(xiaomiSelection.providerConfig.models[0].reasoning).toBe(true);
+
+    const zhipuGlmSelection = buildProviderSelection({
+      apiKey: 'sk-test',
+      baseURL: 'https://open.bigmodel.cn/api/paas/v4',
+      modelId: 'glm-5.1',
+      apiType: 'openai',
+      providerName: ProviderName.Zhipu,
+      supportsImage: false,
+      modelName: 'GLM 5.1',
+    });
+    expect(zhipuGlmSelection.providerId).toBe('zai');
+    expect(zhipuGlmSelection.providerConfig.models[0].reasoning).toBe(true);
+
+    const qianfanGlmSelection = buildProviderSelection({
+      apiKey: 'sk-test',
+      baseURL: 'https://qianfan.baidubce.com/v2',
+      modelId: 'glm-5.1',
+      apiType: 'openai',
+      providerName: ProviderName.Qianfan,
+      supportsImage: false,
+      modelName: 'GLM 5.1',
+    });
+    expect(qianfanGlmSelection.providerId).toBe('qianfan');
+    expect(qianfanGlmSelection.providerConfig.models[0].reasoning).toBe(true);
+
+    const openAiSelection = buildProviderSelection({
+      apiKey: 'sk-test',
+      baseURL: 'https://api.openai.com/v1',
+      modelId: 'gpt-5.5',
+      apiType: 'openai',
+      providerName: ProviderName.OpenAI,
+      supportsImage: true,
+      modelName: 'GPT-5.5',
+    });
+    expect(openAiSelection.providerConfig.models[0].reasoning).toBe(true);
+
+    const anthropicSelection = buildProviderSelection({
+      apiKey: 'sk-test',
+      baseURL: 'https://api.anthropic.com',
+      modelId: 'claude-opus-4-7',
+      apiType: 'anthropic',
+      providerName: ProviderName.Anthropic,
+      supportsImage: true,
+      modelName: 'Claude Opus 4.7',
+    });
+    expect(anthropicSelection.providerConfig.models[0].reasoning).toBe(true);
+
+    const geminiSelection = buildProviderSelection({
+      apiKey: 'sk-test',
+      baseURL: 'https://generativelanguage.googleapis.com/v1beta',
+      modelId: 'gemini-3.1-flash-lite',
+      apiType: undefined,
+      providerName: ProviderName.Gemini,
+      supportsImage: true,
+      modelName: 'Gemini 3.1 Flash Lite',
+    });
+    expect(geminiSelection.providerConfig.models[0].reasoning).toBe(true);
+
+    const customSelection = buildProviderSelection({
+      apiKey: 'sk-test',
+      baseURL: 'https://example.com/v1',
+      modelId: 'custom-thinking-model',
+      apiType: 'openai',
+      providerName: 'custom_0',
+      supportsImage: false,
+      supportsThinking: true,
+      modelName: 'Custom Thinking Model',
+    });
+    expect(customSelection.providerConfig.api).toBe(OpenClawApi.OpenAICompletions);
+    expect(customSelection.providerConfig.models[0].reasoning).toBe(true);
+
+    const customParamsOnlySelection = buildProviderSelection({
+      apiKey: 'sk-test',
+      baseURL: 'https://example.com/v1',
+      modelId: 'custom-thinking-model',
+      apiType: 'openai',
+      providerName: 'custom_0',
+      supportsImage: false,
+      modelName: 'Custom Params Only Model',
+    });
+    expect(customParamsOnlySelection.providerConfig.models[0].reasoning).toBeUndefined();
   });
 
   test('writes Telegram streaming in the nested schema expected by current OpenClaw', async () => {
@@ -1047,7 +1630,12 @@ describe('OpenClawConfigSync runtime config output', () => {
     expect(config.plugins.entries['openclaw-lark']).toEqual({ enabled: true });
     expect(config.plugins.entries).not.toHaveProperty('feishu');
     expect(config.plugins.entries.qqbot).toEqual({ enabled: true });
+    expect(config.plugins.entries.discord).toEqual({ enabled: false });
+    expect(config.plugins.entries.browser).toEqual({ enabled: true });
     expect(config.plugins.entries).not.toHaveProperty('openclaw-qqbot');
+    expect(config.plugins.allow).toContain('browser');
+    expect(config.plugins.allow).toContain('qqbot');
+    expect(config.plugins.allow).toContain('discord');
   });
 
   test('writes plugin entries using manifest ids and removes stale package ids', async () => {
@@ -1124,6 +1712,51 @@ describe('OpenClawConfigSync runtime config output', () => {
     expect(config.plugins.entries).not.toHaveProperty('openclaw-nim-channel');
     expect(config.plugins.entries.email).toEqual({ enabled: true });
     expect(config.plugins.entries['nimsuite-openclaw-nim-channel']).toEqual({ enabled: true });
+  });
+
+  test('writes NIM env vars with the same indexes as enabled channel accounts', async () => {
+    const sync = await createSync({
+      getNimInstances: () => [
+        {
+          instanceId: 'nim-disabled',
+          instanceName: 'NIM Disabled',
+          enabled: false,
+          appKey: 'disabled-app',
+          account: 'disabled-account',
+          token: 'disabled-token',
+        },
+        {
+          instanceId: 'nim-packed',
+          instanceName: 'NIM Packed',
+          enabled: true,
+          nimToken: 'packed-app|packed-account|packed-token',
+        },
+        {
+          instanceId: 'nim-work',
+          instanceName: 'NIM Work',
+          enabled: true,
+          appKey: 'work-app',
+          account: 'work-account',
+          token: 'work-token',
+        },
+      ],
+    });
+
+    const result = sync.sync('nim-secret-env-indexes');
+    expect(result.ok).toBe(true);
+
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.channels.nim.accounts).not.toHaveProperty('nim-disa');
+    expect(config.channels.nim.accounts['nim-pack'].nimToken).toBe(
+      'packed-app|packed-account|packed-token',
+    );
+    expect(config.channels.nim.accounts['nim-work'].nimToken).toBe(
+      'work-app|work-account|${LOBSTER_NIM_TOKEN_1}',
+    );
+
+    const env = sync.collectSecretEnvVars();
+    expect(env).not.toHaveProperty('LOBSTER_NIM_TOKEN');
+    expect(env.LOBSTER_NIM_TOKEN_1).toBe('work-token');
   });
 
   test('writes weixin channel config using dmPolicy and allowFrom instead of unsupported accountId', async () => {
@@ -1317,6 +1950,7 @@ describe('OpenClawConfigSync runtime config output', () => {
           fetch: {
             enabled: true,
             useEnvProxy: true,
+            useTrustedEnvProxy: true,
           },
         },
       },
@@ -1354,6 +1988,7 @@ describe('OpenClawConfigSync runtime config output', () => {
       ssrfPolicy: { allowRfc2544BenchmarkRange: true },
     });
     expect(config.tools.web.fetch.useEnvProxy).toBeUndefined();
+    expect(config.tools.web.fetch.useTrustedEnvProxy).toBeUndefined();
   });
 
   test('marks MCP server config changes as restart impact', async () => {

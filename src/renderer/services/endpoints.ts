@@ -44,8 +44,8 @@ export const getKitStoreUrl = () => isTestModeEnabled()
 export const getLoginOvermindUrl = () => getLzServiceEndpoints().loginUrl;
 
 // Portal 页面
-const PORTAL_BASE_TEST = 'https://c.youdao.com/dict/hardware/cowork/lobsterai-portal.html#';
-const PORTAL_BASE_PROD = 'https://c.youdao.com/dict/hardware/octopus/lobsterai-portal.html#';
+const PORTAL_BASE_TEST = 'https://lobsterai.inner.youdao.com/portal#';
+const PORTAL_BASE_PROD = 'https://lobsterai.youdao.com/portal#';
 
 const getPortalBase = () => isTestModeEnabled() ? PORTAL_BASE_TEST : PORTAL_BASE_PROD;
 
@@ -63,3 +63,4 @@ export const getPortalPricingUrl = (keyfrom?: PortalPricingKeyfrom) => (
 export const getPortalProfileUrl = () => `${getPortalBase()}/profile`;
 export const getPortalRechargeUrl = () => `${getPortalBase()}/`;
 export const getPortalInvitationUrl = () => `${getPortalBase()}/invitation`;
+export const getPortalCreditsResetActivityUrl = () => `${getPortalBase()}/profile?activity=credits_reset`;

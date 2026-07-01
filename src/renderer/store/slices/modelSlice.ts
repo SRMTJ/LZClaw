@@ -1,4 +1,5 @@
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
+import { ProviderName } from '@shared/providers/constants';
 
 import { defaultConfig, getProviderDisplayName } from '../../config';
 import { resolveOpenClawModelRef } from '../../utils/openclawModelRef';
@@ -16,21 +17,29 @@ export interface Model {
   serverApiFormat?: string; // 服务端模型的 API 格式 ("openai" | "anthropic")
   serverApiBaseUrl?: string; // 服务端模型指定的直连 base URL（可选）
   serverApiKey?: string; // 服务端模型指定的直连 API Key（可选）
+  explicitContextCache?: boolean; // 是否支持服务端显式上下文缓存
   description?: string; // 模型能力简介
   costMultiplier?: number; // 积分消耗倍率 (1.0=标准)
   accessible?: boolean; // false = 模型可见但用户无权使用（置灰）
   restrictionHint?: string; // 限制提示（如 "订阅套餐/购买加油包可用"）
 }
 
-export function getModelIdentityKey(model: Pick<Model, 'id' | 'providerKey'>): string {
+function isServerModelIdentity(model: Pick<Model, 'providerKey' | 'isServerModel'>): boolean {
+  return model.isServerModel === true || model.providerKey === ProviderName.LobsteraiServer;
+}
+
+export function getModelIdentityKey(model: Pick<Model, 'id' | 'providerKey' | 'isServerModel'>): string {
   return `${model.providerKey ?? ''}::${model.id}`;
 }
 
 export function isSameModelIdentity(
-  modelA: Pick<Model, 'id' | 'providerKey'>,
-  modelB: Pick<Model, 'id' | 'providerKey'>
+  modelA: Pick<Model, 'id' | 'providerKey' | 'isServerModel'>,
+  modelB: Pick<Model, 'id' | 'providerKey' | 'isServerModel'>
 ): boolean {
   if (modelA.id !== modelB.id) {
+    return false;
+  }
+  if (isServerModelIdentity(modelA) !== isServerModelIdentity(modelB)) {
     return false;
   }
   if (modelA.providerKey && modelB.providerKey) {
@@ -100,12 +109,15 @@ export function selectAgentSelectedModel(
   agentModelRef: string,
 ): Model {
   const override = modelState.selectedModelByAgent[agentId];
-  if (isModelAccessible(override)) return override;
   const trimmed = agentModelRef.trim();
   if (trimmed) {
     const resolved = resolveOpenClawModelRef(trimmed, modelState.availableModels);
-    if (resolved && isModelAccessible(resolved)) return resolved;
+    if (resolved && isModelAccessible(resolved)) {
+      if (!isModelAccessible(override)) return resolved;
+      return isSameModelIdentity(override, resolved) ? override : resolved;
+    }
   }
+  if (isModelAccessible(override)) return override;
   if (isModelAccessible(modelState.defaultSelectedModel)) {
     return modelState.defaultSelectedModel;
   }

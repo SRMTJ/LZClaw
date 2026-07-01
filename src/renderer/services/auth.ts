@@ -121,6 +121,7 @@ class AuthService {
     // Listen for quota changes (e.g. after cowork session using server model)
     this.unsubQuotaChanged = window.electron.auth.onQuotaChanged(() => {
       this.refreshQuota();
+      void this.fetchProfileSummary();
       this.loadServerModels();
     });
 
@@ -131,6 +132,7 @@ class AuthService {
         if (now - this.lastRefreshTime > 30_000) {
           this.lastRefreshTime = now;
           this.refreshQuota();
+          void this.fetchProfileSummary();
           this.loadServerModels();
         }
       }
@@ -185,6 +187,7 @@ class AuthService {
       if (result.success) {
         store.dispatch(setLoggedIn({ user: result.user, quota: result.quota }));
         await this.loadServerModels({ forceDefaultServerModel: true });
+        void this.fetchProfileSummary();
         this.refreshQuota();
         return true;
       } else {
@@ -207,6 +210,7 @@ class AuthService {
       if (result.success && result.user) {
         store.dispatch(setLoggedIn({ user: result.user, quota: result.quota }));
         await this.loadServerModels();
+        void this.fetchProfileSummary();
         return { isLoggedIn: true, user: result.user, quota: result.quota ?? null };
       }
     } catch {
@@ -299,6 +303,8 @@ class AuthService {
           apiFormat: string;
           supportsImage?: boolean;
           supportsThinking?: boolean;
+          contextWindow?: number;
+          explicitContextCache?: boolean;
           costMultiplier?: number;
           description?: string;
           accessible?: boolean;
@@ -316,6 +322,8 @@ class AuthService {
           serverApiBaseUrl: m.apiBaseUrl,
           serverApiKey: m.apiKey,
           supportsThinking: m.supportsThinking ?? false,
+          contextWindow: m.contextWindow,
+          explicitContextCache: m.explicitContextCache ?? false,
           description: m.description,
           costMultiplier: m.costMultiplier,
           accessible: m.accessible ?? true,
@@ -325,9 +333,12 @@ class AuthService {
         if (options?.forceDefaultServerModel && serverModels.length > 0) {
           store.dispatch(setDefaultSelectedModel(serverModels[0]));
         }
+        console.debug(`[Auth] loaded ${serverModels.length} server model(s) into renderer state`);
+      } else {
+        console.debug('[Auth] server model load returned no models');
       }
-    } catch {
-      // ignore — server models are optional
+    } catch (error) {
+      console.warn('[Auth] failed to load server models:', error);
     }
   }
 

@@ -83,6 +83,8 @@ export interface AppConfig {
   useSystemProxy: boolean;
   // 是否启用 SQLite 自动备份与恢复
   sqliteAutoBackupEnabled?: boolean;
+  // 是否允许发送基础产品使用统计
+  usageAnalyticsEnabled?: boolean;
   // 通知配置
   notificationSettings?: NotificationSettings;
   // 浏览器与网页访问配置
@@ -135,12 +137,18 @@ export const defaultConfig: AppConfig = {
   language: 'zh',
   useSystemProxy: false,
   sqliteAutoBackupEnabled: false,
+  usageAnalyticsEnabled: true,
   notificationSettings: defaultNotificationSettings,
   browserWebAccess: defaultBrowserWebAccessConfig,
   app: {
     port: 3000,
     isDevelopment: process.env.NODE_ENV === 'development',
-    testMode: process.env.NODE_ENV === 'development',
+    // Default to production (official) services. Source-launched dev builds run
+    // with NODE_ENV=development, but must not auto-target the internal-only test
+    // endpoints (*.inner.youdao.com) — external/open-source users can't reach
+    // them. Flip test mode via the hidden switch in Settings → About when the
+    // internal endpoints are actually needed.
+    testMode: false,
   },
   shortcuts: {
     [ShortcutAction.NewChat]: 'CommandOrControl+N',

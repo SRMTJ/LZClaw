@@ -2,17 +2,26 @@ import { type Artifact, type ArtifactType, ArtifactTypeValue } from '../types/ar
 import type { CoworkMessage } from '../types/cowork';
 
 /**
- * Normalize file path for deduplication comparison.
- * Handles Windows file:// URL leading slash and backslash differences.
+ * Normalize a local artifact path from markdown, MEDIA tokens, or tool metadata.
  */
-export function normalizeFilePathForDedup(p: string): string {
-  let normalized = p.trim();
+export function normalizeArtifactFilePath(filePath: string): string {
+  let normalized = filePath.trim();
+  const mediaMatch = normalized.match(/(?:^|[\\/])MEDIA:\s*(.+)$/i);
+  if (mediaMatch) {
+    normalized = mediaMatch[1].trim();
+  } else {
+    normalized = normalized.replace(/^MEDIA:\s*/i, '').trim();
+  }
   if (normalized.startsWith('file:///')) {
     normalized = normalized.slice(7);
   } else if (normalized.startsWith('file://')) {
     normalized = normalized.slice(7);
   } else if (normalized.startsWith('file:/')) {
     normalized = normalized.slice(5);
+  } else if (normalized.startsWith('localfile:///')) {
+    normalized = normalized.slice(12);
+  } else if (normalized.startsWith('localfile://')) {
+    normalized = normalized.slice(12);
   }
   const queryIndex = normalized.search(/[?#]/);
   if (queryIndex >= 0) {
@@ -25,6 +34,15 @@ export function normalizeFilePathForDedup(p: string): string {
   }
   // Strip leading / before drive letter (e.g. /D:/path from file:///D:/path)
   if (/^\/[A-Za-z]:/.test(normalized)) normalized = normalized.slice(1);
+  return normalized;
+}
+
+/**
+ * Normalize file path for deduplication comparison.
+ * Handles Windows file:// URL leading slash and backslash differences.
+ */
+export function normalizeFilePathForDedup(p: string): string {
+  const normalized = normalizeArtifactFilePath(p);
   // Unify separators and case for comparison
   return normalized.replace(/\\/g, '/').toLowerCase();
 }
@@ -57,7 +75,8 @@ const shouldPreferArtifact = (candidate: Artifact, current: Artifact): boolean =
   if (!currentHasFileProtocol && current.filePath && candidateHasFileProtocol) return false;
   if (!current.remoteUrl && candidate.remoteUrl) return true;
   if (!current.content && candidate.content) return true;
-  return false;
+  if (candidate.createdAt !== current.createdAt) return candidate.createdAt > current.createdAt;
+  return true;
 };
 
 export function dedupeArtifactsForDisplay(artifacts: Artifact[]): Artifact[] {
@@ -66,6 +85,55 @@ export function dedupeArtifactsForDisplay(artifacts: Artifact[]): Artifact[] {
 
   for (const artifact of artifacts) {
     const keys = getArtifactIdentityKeys(artifact);
+    const existingIndex = keys
+      .map(key => keyToIndex.get(key))
+      .find((index): index is number => index !== undefined);
+
+    if (existingIndex === undefined) {
+      const nextIndex = result.length;
+      result.push(artifact);
+      for (const key of keys) {
+        keyToIndex.set(key, nextIndex);
+      }
+      continue;
+    }
+
+    if (shouldPreferArtifact(artifact, result[existingIndex])) {
+      result[existingIndex] = artifact;
+    }
+    for (const key of keys) {
+      keyToIndex.set(key, existingIndex);
+    }
+  }
+
+  return result;
+}
+
+export function resolveArtifactIdForDisplay(artifacts: Artifact[], artifactId: string): string {
+  const target = artifacts.find(artifact => artifact.id === artifactId);
+  if (!target) return artifactId;
+
+  const displayArtifacts = dedupeArtifactsForDisplay(artifacts);
+  if (displayArtifacts.some(artifact => artifact.id === artifactId)) {
+    return artifactId;
+  }
+
+  const targetKeys = new Set(getArtifactIdentityKeys(target));
+  if (targetKeys.size === 0) return artifactId;
+
+  const displayArtifact = displayArtifacts.find(artifact =>
+    getArtifactIdentityKeys(artifact).some(key => targetKeys.has(key))
+  );
+
+  return displayArtifact?.id ?? artifactId;
+}
+
+export function dedupeArtifactsWithinMessages(artifacts: Artifact[]): Artifact[] {
+  const result: Artifact[] = [];
+  const keyToIndex = new Map<string, number>();
+
+  for (const artifact of artifacts) {
+    const keys = getArtifactIdentityKeys(artifact).map(key => `${artifact.messageId}:${key}`);
     const existingIndex = keys
       .map(key => keyToIndex.get(key))
       .find((index): index is number => index !== undefined);
@@ -282,19 +350,8 @@ export function parseMediaTokensFromText(
   let index = 0;
 
   while ((match = re.exec(messageContent)) !== null) {
-    let filePath = match[1].trim();
+    const filePath = normalizeArtifactFilePath(match[1]);
     if (!filePath) continue;
-
-    if (filePath.startsWith('file:///')) {
-      filePath = filePath.slice(7);
-    } else if (filePath.startsWith('file://')) {
-      filePath = filePath.slice(7);
-    }
-
-    // Strip leading / before Windows drive letter (e.g. /D:/path from file:///D:/path)
-    if (/^\/[A-Za-z]:/.test(filePath)) {
-      filePath = filePath.slice(1);
-    }
 
     const ext = getFileExtension(filePath);
     const artifactType = getArtifactTypeFromExtension(ext);
@@ -344,20 +401,7 @@ export function parseFilePathsFromText(
   let index = 0;
 
   while ((match = re.exec(messageContent)) !== null) {
-    let filePath = match[1];
-
-    if (filePath.startsWith('file:///')) {
-      filePath = filePath.slice(7);
-    } else if (filePath.startsWith('file://')) {
-      filePath = filePath.slice(7);
-    } else if (filePath.startsWith('file:/')) {
-      filePath = filePath.slice(5);
-    }
-
-    // Strip leading / before Windows drive letter (e.g. /D:/path from file:///D:/path)
-    if (/^\/[A-Za-z]:/.test(filePath)) {
-      filePath = filePath.slice(1);
-    }
+    const filePath = normalizeArtifactFilePath(match[1]);
 
     const ext = getFileExtension(filePath);
     const artifactType = getArtifactTypeFromExtension(ext);
@@ -399,13 +443,9 @@ export function parseFileLinksFromMessage(
     const linkText = match[1];
     let filePath: string;
     try {
-      filePath = decodeURIComponent(match[2]);
+      filePath = normalizeArtifactFilePath(decodeURIComponent(match[2]));
     } catch {
-      filePath = match[2];
-    }
-    // Strip leading / before Windows drive letter (e.g. /D:/path from file:///D:/path)
-    if (/^\/[A-Za-z]:/.test(filePath)) {
-      filePath = filePath.slice(1);
+      filePath = normalizeArtifactFilePath(match[2]);
     }
     const ext = getFileExtension(filePath);
     const artifactType = getArtifactTypeFromExtension(ext);
@@ -499,9 +539,9 @@ export function parseToolResultMediaArtifacts(
       ? item.url.trim()
       : '';
     const filePath = typeof item.filePath === 'string' && item.filePath.trim()
-      ? item.filePath.trim()
+      ? normalizeArtifactFilePath(item.filePath)
       : typeof item.localPath === 'string' && item.localPath.trim()
-        ? item.localPath.trim()
+        ? normalizeArtifactFilePath(item.localPath)
         : '';
     if (artifactType === 'video' && !filePath) continue;
     if (!url && !filePath) continue;
@@ -589,7 +629,8 @@ export function parseToolArtifact(
   const toolInput = toolUseMsg.metadata?.toolInput as Record<string, unknown> | undefined;
   if (!toolInput) return null;
 
-  const filePath = extractFilePath(toolInput);
+  const rawFilePath = extractFilePath(toolInput);
+  const filePath = rawFilePath ? normalizeArtifactFilePath(rawFilePath) : null;
   if (!filePath) return null;
 
   const ext = getFileExtension(filePath);

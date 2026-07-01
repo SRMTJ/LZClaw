@@ -448,6 +448,8 @@ export function mapGatewayRun(entry: GatewayRunLogEntry): ScheduledTaskRun {
         : new Date(safeFiniteNumber(entry.ts, tsMs)).toISOString(),
     durationMs: safeFiniteNumberOrNull(entry.durationMs),
     error: status === TaskStatus.Success ? null : (entry.error ?? null),
+    summary: entry.summary ?? null,
+    deliveryError: entry.deliveryError ?? null,
   };
 }
 
@@ -763,10 +765,18 @@ export class CronJobService {
   startPolling(): void {
     if (this.polling) return;
     this.polling = true;
-    this.pollOnce();
+    void this.pollOnce();
     this.pollingTimer = setInterval(() => {
       void this.pollOnce();
     }, CronJobService.POLL_INTERVAL_MS);
+  }
+
+  notifyGatewayReady(): void {
+    if (!this.polling) {
+      this.startPolling();
+      return;
+    }
+    void this.pollOnce(true);
   }
 
   stopPolling(): void {
@@ -782,7 +792,7 @@ export class CronJobService {
     this.firstPollDone = false;
   }
 
-  private async pollOnce(): Promise<void> {
+  private async pollOnce(forceFullRefresh = false): Promise<void> {
     if (!this.polling) return;
 
     try {
@@ -842,7 +852,7 @@ export class CronJobService {
         }
       }
 
-      if (!this.firstPollDone) {
+      if (forceFullRefresh || !this.firstPollDone) {
         this.firstPollDone = true;
         this.emitFullRefresh();
       }

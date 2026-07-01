@@ -3,6 +3,7 @@ import fs from 'fs';
 import {
   HtmlShareAccessMode,
   type HtmlShareConfigurableStatus,
+  type HtmlShareDisabledSource,
   HtmlShareSourceType,
   HtmlShareStatus,
   type HtmlShareStatus as HtmlShareStatusValue,
@@ -16,6 +17,7 @@ export interface CreateHtmlShareUploadInput {
   artifactId?: string;
   title: string;
   entryFile: string;
+  accessMode?: (typeof HtmlShareAccessMode)[keyof typeof HtmlShareAccessMode];
   sourceSha256: string;
 }
 
@@ -32,6 +34,8 @@ export interface HtmlShareCreateResult {
   contentUpdatedAt?: string;
   disabledAt?: string | null;
   disabledReason?: string | null;
+  disabledSource?: HtmlShareDisabledSource | null;
+  restoredByUpdate?: boolean;
   error?: string;
   code?: number;
 }
@@ -60,6 +64,8 @@ interface HtmlShareApiResponse {
     contentUpdatedAt?: string;
     disabledAt?: string | null;
     disabledReason?: string | null;
+    disabledSource?: HtmlShareDisabledSource | null;
+    restoredByUpdate?: boolean;
   };
 }
 
@@ -84,6 +90,7 @@ function appendHtmlShareFormData(form: FormData, input: CreateHtmlShareUploadInp
   if (input.artifactId) form.set('artifactId', input.artifactId);
   form.set('title', input.title);
   form.set('entryFile', input.entryFile);
+  if (input.accessMode) form.set('accessMode', input.accessMode);
   form.set('sourceSha256', input.sourceSha256);
   form.set('archive', new Blob([archiveBuffer], { type: 'application/zip' }), 'share.zip');
 }
@@ -111,6 +118,8 @@ function buildHtmlShareResult(
     contentUpdatedAt: payload.data.contentUpdatedAt,
     disabledAt: payload.data.disabledAt,
     disabledReason: payload.data.disabledReason,
+    disabledSource: payload.data.disabledSource,
+    restoredByUpdate: payload.data.restoredByUpdate,
   };
 }
 
@@ -181,7 +190,7 @@ export async function uploadHtmlShare(
     `[HtmlShare] prepared ${buffer.length} bytes for ${input.sourceType} upload to ${serverBaseUrl}`,
   );
   console.debug(
-    `[HtmlShare] upload request uses share-code access, entry ${input.entryFile}, and hash ${input.sourceSha256}`,
+    `[HtmlShare] upload request uses access mode ${input.accessMode ?? 'server-default'}, entry ${input.entryFile}, and hash ${input.sourceSha256}`,
   );
   const form = new FormData();
   form.set('sourceType', input.sourceType);
@@ -234,6 +243,7 @@ export async function updateHtmlShare(
 ): Promise<HtmlShareCreateResult> {
   const buffer = await fs.promises.readFile(input.archivePath);
   const form = new FormData();
+  form.set('sourceType', input.sourceType);
   appendHtmlShareFormData(form, input, buffer);
 
   const response = await fetchWithAuth(`${serverBaseUrl}/api/html-shares/${encodeURIComponent(shareId)}`, {
@@ -281,6 +291,40 @@ export async function updateHtmlShareStatus(
     return {
       success: false,
       error: payload?.message || `Share status update failed: ${response.status}`,
+      code: payload?.code,
+    };
+  }
+  return result;
+}
+
+export async function updateHtmlShareAccessMode(
+  serverBaseUrl: string,
+  publicBaseUrl: string,
+  fetchWithAuth: FetchWithAuth,
+  shareId: string,
+  accessMode: (typeof HtmlShareAccessMode)[keyof typeof HtmlShareAccessMode],
+): Promise<HtmlShareCreateResult> {
+  if (accessMode !== HtmlShareAccessMode.Code && accessMode !== HtmlShareAccessMode.Public) {
+    return {
+      success: false,
+      error: 'Invalid share access mode.',
+    };
+  }
+
+  const response = await fetchWithAuth(
+    `${serverBaseUrl}/api/html-shares/${encodeURIComponent(shareId)}/access-mode`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accessMode }),
+    },
+  );
+  const payload = (await response.json().catch((): null => null)) as HtmlShareApiResponse | null;
+  const result = payload ? buildHtmlShareResult(payload, publicBaseUrl) : null;
+  if (!response.ok || payload?.code !== 0 || !result) {
+    return {
+      success: false,
+      error: payload?.message || `Share access mode update failed: ${response.status}`,
       code: payload?.code,
     };
   }

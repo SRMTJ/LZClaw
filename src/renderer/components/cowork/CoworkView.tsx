@@ -1,6 +1,6 @@
 import { ShieldCheckIcon } from '@heroicons/react/24/outline';
-import React, { useCallback, useEffect, useRef,useState } from 'react';
-import { useDispatch,useSelector } from 'react-redux';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useDispatch, useSelector } from 'react-redux';
 
 import { buildSessionTitleFromInput } from '../../../common/sessionTitle';
 import { buildCoworkImageAttachmentPreviews } from '../../../shared/cowork/imageAttachments';
@@ -19,23 +19,30 @@ import {
   selectCurrentSession,
   selectIsStreaming,
 } from '../../store/selectors/coworkSelectors';
-import { addMessage, setCurrentSession, setDraftKitIds, setDraftSkillIds, setStreaming, updateSessionStatus } from '../../store/slices/coworkSlice';
+import { addMessage, setCurrentSession, setDraftCollaborationMode, setDraftKitIds, setDraftSkillIds, setStreaming, updateSessionStatus } from '../../store/slices/coworkSlice';
 import { clearActiveKits } from '../../store/slices/kitSlice';
 import { clearSelection,selectAction, setActions } from '../../store/slices/quickActionSlice';
 import { clearActiveSkills, setActiveSkillIds } from '../../store/slices/skillSlice';
-import type { CoworkImageAttachment, CoworkSession, OpenClawEngineStatus, SubagentSessionSummary } from '../../types/cowork';
+import { CoworkCollaborationMode, type CoworkCollaborationMode as CoworkCollaborationModeType, type CoworkImageAttachment, type CoworkSession, type OpenClawEngineStatus, type SubagentSessionSummary } from '../../types/cowork';
 import type { MediaAttachmentRef } from '../../types/mediaGeneration';
 import { toOpenClawModelRef } from '../../utils/openclawModelRef';
+import CreditsResetCampaignFloat from '../CreditsResetCampaignFloat';
 import ComposeIcon from '../icons/ComposeIcon';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
-import { PromptPanel,QuickActionBar } from '../quick-actions';
+import { PromptPanel, QuickActionBar } from '../quick-actions';
 import WindowTitleBar from '../window/WindowTitleBar';
 import { useAgentSelectedModel } from './agentModelSelection';
 import { CoworkUiEvent } from './constants';
 import CoworkPromptInput, { type CoworkPromptInputRef } from './CoworkPromptInput';
 import CoworkSessionDetail from './CoworkSessionDetail';
+import { reportPromptTemplateAction } from './promptAnalytics';
 import { buildCoworkContinuationSystemPrompt, buildCoworkSystemPrompt } from './skillSystemPrompt';
 import SubagentSessionDetail from './SubagentSessionDetail';
+
+const logCoworkViewModel = (message: string): void => {
+  console.debug(`[CoworkView] ${message}`);
+  window.electron?.log?.fromRenderer?.('debug', 'CoworkView', message);
+};
 
 export interface CoworkViewProps {
   onShowSkills?: () => void;
@@ -99,6 +106,9 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onShowSkills, onShowKits, isSid
   const currentAgent = agents.find((agent) => agent.id === currentAgentId);
   const currentAgentWorkingDirectory = currentAgent?.workingDirectory?.trim() || config.workingDirectory || '';
   const currentAgentSelectedModel = useAgentSelectedModel(currentAgentId, currentAgent?.model ?? '');
+  const homeDraftCollaborationMode = useSelector((state: RootState) => (
+    state.cowork.draftCollaborationModes.__home__ || CoworkCollaborationMode.Default
+  ));
   const mediaSelection = useSelector((state: RootState) => {
     const key = currentSession?.id || '__home__';
     return state.cowork.mediaSelection[key];
@@ -215,7 +225,14 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onShowSkills, onShowKits, isSid
     };
   }, [dispatch]);
 
-  const handleStartSession = async (prompt: string, skillPrompt?: string, imageAttachments?: CoworkImageAttachment[], mediaReferences?: MediaAttachmentRef[], selectedTextSnippets?: CoworkSelectedTextSnippet[]): Promise<boolean | void> => {
+  const handleStartSession = async (
+    prompt: string,
+    skillPrompt?: string,
+    imageAttachments?: CoworkImageAttachment[],
+    mediaReferences?: MediaAttachmentRef[],
+    selectedTextSnippets?: CoworkSelectedTextSnippet[],
+    collaborationMode: CoworkCollaborationModeType = CoworkCollaborationMode.Default,
+  ): Promise<boolean | void> => {
     console.log('[CoworkView] handleStartSession: imageAttachments diagnosis', {
       hasImageAttachments: !!imageAttachments,
       count: imageAttachments?.length ?? 0,
@@ -272,6 +289,13 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onShowSkills, onShowKits, isSid
         kitReferences,
         resolvedKitCapabilities,
       } = buildCapabilitySelection(sessionSkillIds, sessionKitIds);
+      const isPlanMode = collaborationMode === CoworkCollaborationMode.Plan;
+      const displayDirectSkillIds = directSkillIds;
+      const displayKitIds = sessionKitIds;
+      const effectiveRuntimeSkillIds = isPlanMode ? [] : runtimeSkillIds;
+      if (isPlanMode && (directSkillIds.length > 0 || runtimeSkillIds.length > 0 || sessionKitIds.length > 0)) {
+        logCoworkViewModel('suppressed selected capabilities for a plan-mode start turn');
+      }
       const imageAttachmentPreviews = buildCoworkImageAttachmentPreviews(imageAttachments);
 
       const tempSession: CoworkSession = {
@@ -286,8 +310,8 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onShowSkills, onShowKits, isSid
         systemPrompt: '',
         modelOverride: currentAgentSelectedModel ? toOpenClawModelRef(currentAgentSelectedModel) : '',
         executionMode: config.executionMode || 'local',
-        activeSkillIds: runtimeSkillIds,
-        activeKitIds: sessionKitIds.length > 0 ? sessionKitIds : undefined,
+        activeSkillIds: effectiveRuntimeSkillIds,
+        activeKitIds: displayKitIds.length > 0 ? displayKitIds : undefined,
         agentId: currentAgentId,
         messages: [
           {
@@ -295,11 +319,11 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onShowSkills, onShowKits, isSid
             type: 'user',
             content: prompt,
             timestamp: now,
-            metadata: (directSkillIds.length > 0 || sessionKitIds.length > 0 || imageAttachmentPreviews?.length || (selectedTextSnippets && selectedTextSnippets.length > 0))
+            metadata: (displayDirectSkillIds.length > 0 || displayKitIds.length > 0 || imageAttachmentPreviews?.length || (selectedTextSnippets && selectedTextSnippets.length > 0))
               ? {
-                ...(directSkillIds.length > 0 ? { skillIds: directSkillIds } : {}),
-                ...(sessionKitIds.length > 0 ? {
-                  kitIds: sessionKitIds,
+                ...(displayDirectSkillIds.length > 0 ? { skillIds: displayDirectSkillIds } : {}),
+                ...(displayKitIds.length > 0 ? {
+                  kitIds: displayKitIds,
                   kitReferences,
                   resolvedKitCapabilities,
                 } : {}),
@@ -315,6 +339,12 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onShowSkills, onShowKits, isSid
 
       // Immediately show the session detail page with user message
       dispatch(setCurrentSession(tempSession));
+      if (isPlanMode) {
+        dispatch(setDraftCollaborationMode({
+          draftKey: tempSessionId,
+          mode: CoworkCollaborationMode.Plan,
+        }));
+      }
       dispatch(setStreaming(true));
 
       // Clear active skills, kits and quick action selection after starting session
@@ -334,17 +364,19 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onShowSkills, onShowKits, isSid
 
       // Start the actual session immediately with fallback title
       const sessionModelOverride = currentAgentSelectedModel ? toOpenClawModelRef(currentAgentSelectedModel) : '';
-      console.log('[CoworkView] creating session:', { modelId: currentAgentSelectedModel?.id, providerKey: currentAgentSelectedModel?.providerKey, isServerModel: currentAgentSelectedModel?.isServerModel, sessionModelOverride, agentModel: currentAgent?.model });
+      logCoworkViewModel(
+        `creating session with model ${sessionModelOverride || 'default'}; agent model is ${currentAgent?.model || 'empty'}; server model is ${currentAgentSelectedModel?.isServerModel === true}`,
+      );
       const { session: startedSession, error: startError } = await coworkService.startSession({
         prompt,
         title: fallbackTitle,
         cwd: currentAgentWorkingDirectory || undefined,
         systemPrompt: combinedSystemPrompt,
-        activeSkillIds: directSkillIds.length > 0 ? directSkillIds : undefined,
-        runtimeSkillIds: runtimeSkillIds.length > 0 ? runtimeSkillIds : undefined,
-        kitIds: sessionKitIds.length > 0 ? sessionKitIds : undefined,
-        kitReferences: sessionKitIds.length > 0 ? kitReferences : undefined,
-        resolvedKitCapabilities: sessionKitIds.length > 0 ? resolvedKitCapabilities : undefined,
+        activeSkillIds: displayDirectSkillIds.length > 0 ? displayDirectSkillIds : undefined,
+        runtimeSkillIds: isPlanMode ? [] : (effectiveRuntimeSkillIds.length > 0 ? effectiveRuntimeSkillIds : undefined),
+        kitIds: displayKitIds.length > 0 ? displayKitIds : undefined,
+        kitReferences: displayKitIds.length > 0 ? kitReferences : undefined,
+        resolvedKitCapabilities: displayKitIds.length > 0 ? resolvedKitCapabilities : undefined,
         agentId: currentAgentId,
         modelOverride: sessionModelOverride,
         imageAttachments,
@@ -370,6 +402,12 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onShowSkills, onShowKits, isSid
       if (!startedSession) {
         return false;
       }
+      if (isPlanMode) {
+        dispatch(setDraftCollaborationMode({
+          draftKey: startedSession.id,
+          mode: CoworkCollaborationMode.Plan,
+        }));
+      }
 
       // Stop immediately if user cancelled while startup request was in flight.
       if (isPendingStartCancelled() && startedSession) {
@@ -386,7 +424,14 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onShowSkills, onShowKits, isSid
     }
   };
 
-  const handleContinueSession = async (prompt: string, skillPrompt?: string, imageAttachments?: CoworkImageAttachment[], mediaReferences?: MediaAttachmentRef[], selectedTextSnippets?: CoworkSelectedTextSnippet[]) => {
+  const handleContinueSession = async (
+    prompt: string,
+    skillPrompt?: string,
+    imageAttachments?: CoworkImageAttachment[],
+    mediaReferences?: MediaAttachmentRef[],
+    selectedTextSnippets?: CoworkSelectedTextSnippet[],
+    collaborationMode: CoworkCollaborationModeType = CoworkCollaborationMode.Default,
+  ) => {
     if (!currentSession) return false;
     // Prevent duplicate submissions
     if (isContinuingRef.current) return false;
@@ -414,6 +459,13 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onShowSkills, onShowKits, isSid
         kitReferences,
         resolvedKitCapabilities,
       } = buildCapabilitySelection(sessionSkillIds, sessionKitIds);
+      const isPlanMode = collaborationMode === CoworkCollaborationMode.Plan;
+      const displayDirectSkillIds = directSkillIds;
+      const displayKitIds = sessionKitIds;
+      const effectiveRuntimeSkillIds = isPlanMode ? [] : runtimeSkillIds;
+      if (isPlanMode && (directSkillIds.length > 0 || runtimeSkillIds.length > 0 || sessionKitIds.length > 0)) {
+        logCoworkViewModel('suppressed selected capabilities for a plan-mode continue turn');
+      }
 
       // Only send a continuation system prompt when this turn selects new skills.
       // Otherwise the main process falls back to the session prompt created on the first turn.
@@ -423,11 +475,11 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onShowSkills, onShowKits, isSid
         sessionId: currentSession.id,
         prompt,
         systemPrompt: combinedSystemPrompt,
-        activeSkillIds: directSkillIds.length > 0 ? directSkillIds : undefined,
-        runtimeSkillIds: runtimeSkillIds.length > 0 ? runtimeSkillIds : undefined,
-        kitIds: sessionKitIds.length > 0 ? sessionKitIds : undefined,
-        kitReferences: sessionKitIds.length > 0 ? kitReferences : undefined,
-        resolvedKitCapabilities: sessionKitIds.length > 0 ? resolvedKitCapabilities : undefined,
+        activeSkillIds: displayDirectSkillIds.length > 0 ? displayDirectSkillIds : undefined,
+        runtimeSkillIds: isPlanMode ? [] : (effectiveRuntimeSkillIds.length > 0 ? effectiveRuntimeSkillIds : undefined),
+        kitIds: displayKitIds.length > 0 ? displayKitIds : undefined,
+        kitReferences: displayKitIds.length > 0 ? kitReferences : undefined,
+        resolvedKitCapabilities: displayKitIds.length > 0 ? resolvedKitCapabilities : undefined,
         imageAttachments,
         mediaSelection: mediaSelection && mediaSelection.mode !== 'none' ? mediaSelection : undefined,
         mediaReferences,
@@ -465,6 +517,24 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onShowSkills, onShowKits, isSid
     const action = quickActions.find(a => a.id === actionId);
     if (action) {
       const targetSkill = skills.find(s => s.id === action.skillMapping);
+      console.debug(`[CoworkView] reporting prompt template analytics: template_card_click ${action.id}`);
+      reportPromptTemplateAction({
+        templateActionType: 'template_card_click',
+        templateId: action.id,
+        templateName: action.label,
+        templateIndex: quickActions.findIndex(item => item.id === action.id),
+        mappedSkillId: action.skillMapping,
+        mappedSkillName: targetSkill?.name,
+        hasAutoEnabledSkill: Boolean(targetSkill),
+        params: {
+          promptCount: action.prompts.length,
+          modelId: currentAgentSelectedModel?.id,
+          modelName: currentAgentSelectedModel?.name,
+          agentId: currentAgentId,
+          isMainAgent: currentAgentId === 'main',
+          isPlanMode: homeDraftCollaborationMode === CoworkCollaborationMode.Plan,
+        },
+      });
       if (targetSkill) {
         dispatch(setActiveSkillIds([targetSkill.id]));
       }
@@ -484,9 +554,34 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onShowSkills, onShowKits, isSid
   }, [activeSkillIds, dispatch, quickActions, selectedActionId]);
 
   // Handle prompt selection from QuickAction
-  const handleQuickActionPromptSelect = (prompt: string) => {
+  const handleQuickActionPromptSelect = (prompt: string, promptId?: string) => {
+    if (selectedAction) {
+      const selectedPrompt = selectedAction.prompts.find(item => item.id === promptId);
+      const targetSkill = skills.find(skill => skill.id === selectedAction.skillMapping);
+      console.debug(`[CoworkView] reporting prompt template analytics: template_prompt_click ${selectedAction.id}/${promptId ?? 'unknown'}`);
+      reportPromptTemplateAction({
+        templateActionType: 'template_prompt_click',
+        templateId: selectedAction.id,
+        templateName: selectedAction.label,
+        templateIndex: quickActions.findIndex(item => item.id === selectedAction.id),
+        mappedSkillId: selectedAction.skillMapping,
+        mappedSkillName: targetSkill?.name,
+        promptId,
+        promptName: selectedPrompt?.label,
+        promptIndex: selectedAction.prompts.findIndex(item => item.id === promptId),
+        promptLength: prompt.length,
+        hasAutoEnabledSkill: activeSkillIds.includes(selectedAction.skillMapping),
+        params: {
+          modelId: currentAgentSelectedModel?.id,
+          modelName: currentAgentSelectedModel?.name,
+          agentId: currentAgentId,
+          isMainAgent: currentAgentId === 'main',
+          isPlanMode: homeDraftCollaborationMode === CoworkCollaborationMode.Plan,
+        },
+      });
+    }
     // Fill the prompt into input
-    promptInputRef.current?.setValue(prompt);
+    promptInputRef.current?.setValue(prompt, 'template');
     promptInputRef.current?.focus();
   };
 
@@ -496,8 +591,12 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onShowSkills, onShowKits, isSid
       const shouldClear = !currentSession;
       coworkService.clearSession({ restoreAgentSkills: true });
       dispatch(clearSelection());
+      dispatch(setDraftCollaborationMode({
+        draftKey: '__home__',
+        mode: CoworkCollaborationMode.Default,
+      }));
       window.dispatchEvent(new CustomEvent(CoworkUiEvent.FocusInput, {
-        detail: { clear: shouldClear },
+        detail: { clear: shouldClear, resetCollaborationMode: true },
       }));
     };
     window.addEventListener(CoworkUiEvent.ShortcutNewSession, handleNewSession);
@@ -706,7 +805,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onShowSkills, onShowKits, isSid
 
           {/* Quick Actions */}
           <div
-            className="relative z-0 mt-8 w-full max-w-3xl space-y-4 animate-fade-in-up"
+            className="relative z-0 mt-8 flex w-full max-w-3xl flex-col items-center animate-fade-in-up"
             style={{ animationDelay: '260ms', animationFillMode: 'both' }}
           >
             {selectedAction ? (
@@ -717,6 +816,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onShowSkills, onShowKits, isSid
             ) : (
               <QuickActionBar actions={quickActions} onActionSelect={handleActionSelect} />
             )}
+            <CreditsResetCampaignFloat />
           </div>
         </div>
       </div>

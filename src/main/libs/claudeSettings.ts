@@ -34,6 +34,7 @@ type ProviderModelConfig = {
   id: string;
   name: string;
   supportsImage?: boolean;
+  supportsThinking?: boolean;
   contextWindow?: number;
   customParams?: Record<string, unknown>;
 };
@@ -42,6 +43,7 @@ type ProviderModelInputConfig = {
   id: string;
   name?: string;
   supportsImage?: boolean;
+  supportsThinking?: boolean;
   contextWindow?: number;
   customParams?: Record<string, unknown>;
 };
@@ -56,6 +58,7 @@ export type ServerModelMetadata = {
   contextWindow?: number;
   apiBaseUrl?: string;
   apiKey?: string;
+  explicitContextCache?: boolean;
 };
 
 export type ApiConfigResolution = {
@@ -66,6 +69,7 @@ export type ApiConfigResolution = {
     authType?: ProviderConfig['authType'];
     codingPlanEnabled: boolean;
     supportsImage?: boolean;
+    supportsThinking?: boolean;
     modelName?: string;
     contextWindow?: number;
   };
@@ -92,8 +96,8 @@ export function setServerBaseUrlGetter(getter: () => string): void {
   serverBaseUrlGetter = getter;
 }
 
-// Cached server model metadata (populated when auth:getModels is called)
-// Keyed by modelId → model metadata
+// Cached server model metadata (populated when auth:getModels is called).
+// Keyed by modelId -> server-provided metadata used for OpenClaw config sync.
 let serverModelMetadataCache: Map<string, Omit<ServerModelMetadata, 'modelId'>> = new Map();
 
 const serializeServerModelMetadata = (
@@ -110,6 +114,7 @@ const serializeServerModelMetadata = (
       apiBaseUrl: model.apiBaseUrl,
       apiKey: model.apiKey,
       contextWindow: model.contextWindow,
+      explicitContextCache: model.explicitContextCache,
     }))
     .sort((a, b) => a.modelId.localeCompare(b.modelId)),
 );
@@ -125,6 +130,7 @@ export function updateServerModelMetadata(models: ServerModelMetadata[]): boolea
     apiBaseUrl: m.apiBaseUrl,
     apiKey: m.apiKey,
     contextWindow: m.contextWindow,
+    explicitContextCache: m.explicitContextCache,
   }]));
   const next = serializeServerModelMetadata(Array.from(nextCache.entries()).map(([modelId, meta]) => ({
     modelId,
@@ -136,6 +142,7 @@ export function updateServerModelMetadata(models: ServerModelMetadata[]): boolea
     apiBaseUrl: meta.apiBaseUrl,
     apiKey: meta.apiKey,
     contextWindow: meta.contextWindow,
+    explicitContextCache: meta.explicitContextCache,
   })));
   serverModelMetadataCache = nextCache;
   return previous !== next;
@@ -156,22 +163,27 @@ export function getAllServerModelMetadata(): ServerModelMetadata[] {
     apiBaseUrl: meta.apiBaseUrl,
     apiKey: meta.apiKey,
     contextWindow: meta.contextWindow,
+    explicitContextCache: meta.explicitContextCache,
   }));
 }
 
 function buildServerFallbackModels(effectiveModelId: string): NonNullable<LocalProviderConfig['models']> {
   const models = getAllServerModelMetadata().map((model) => ({
     id: model.modelId,
-    name: model.modelId,
+    name: model.modelName || model.modelId,
     supportsImage: model.supportsImage,
+    supportsThinking: model.supportsThinking,
+    contextWindow: model.contextWindow,
   }));
 
   if (!models.some(model => model.id === effectiveModelId)) {
     const cachedMeta = serverModelMetadataCache.get(effectiveModelId);
     models.unshift({
       id: effectiveModelId,
-      name: effectiveModelId,
+      name: cachedMeta?.modelName || effectiveModelId,
       supportsImage: cachedMeta?.supportsImage,
+      supportsThinking: cachedMeta?.supportsThinking,
+      contextWindow: cachedMeta?.contextWindow,
     });
   }
 
@@ -187,6 +199,11 @@ function normalizeProviderModels(providerName: string, models?: ProviderModelInp
         model.id,
         model.contextWindow,
       );
+      const supportsThinking = ProviderRegistry.resolveModelSupportsThinking(
+        providerName,
+        model.id,
+        model.supportsThinking,
+      );
       return {
         ...model,
         name: model.name || model.id,
@@ -195,6 +212,7 @@ function normalizeProviderModels(providerName: string, models?: ProviderModelInp
           model.id,
           model.supportsImage,
         ),
+        ...(supportsThinking ? { supportsThinking } : {}),
         ...(contextWindow !== undefined ? { contextWindow } : {}),
       };
     });
@@ -214,6 +232,7 @@ type MatchedProvider = {
   apiFormat: AnthropicApiFormat;
   baseURL: string;
   supportsImage?: boolean;
+  supportsThinking?: boolean;
   modelName?: string;
   contextWindow?: number;
 };
@@ -255,14 +274,26 @@ function tryLobsteraiServerFallback(modelId?: string): MatchedProvider | null {
   if (!effectiveModelId) return null;
   const baseURL = `${serverBaseUrl}/api/proxy/v1`;
   const cachedMeta = serverModelMetadataCache.get(effectiveModelId);
-  console.debug('[ClaudeSettings] lobsterai-server provider resolved:', { baseURL, modelId: effectiveModelId, supportsImage: cachedMeta?.supportsImage });
+  const effectiveApiFormat = cachedMeta?.apiFormat
+    ? normalizeProviderApiFormat(cachedMeta.apiFormat)
+    : 'openai';
+  console.debug('[ClaudeSettings] lobsterai-server provider resolved:', {
+    baseURL,
+    modelId: effectiveModelId,
+    apiFormat: effectiveApiFormat,
+    supportsImage: cachedMeta?.supportsImage,
+    supportsThinking: cachedMeta?.supportsThinking,
+  });
   return {
     providerName: ProviderName.LobsteraiServer,
-    providerConfig: { enabled: true, apiKey: tokens.accessToken, baseUrl: baseURL, apiFormat: 'openai', models: buildServerFallbackModels(effectiveModelId) },
+    providerConfig: { enabled: true, apiKey: tokens.accessToken, baseUrl: baseURL, apiFormat: effectiveApiFormat, models: buildServerFallbackModels(effectiveModelId) },
     modelId: effectiveModelId,
-    apiFormat: 'openai',
+    apiFormat: effectiveApiFormat,
     baseURL,
     supportsImage: cachedMeta?.supportsImage,
+    supportsThinking: cachedMeta?.supportsThinking,
+    modelName: cachedMeta?.modelName,
+    contextWindow: cachedMeta?.contextWindow,
   };
 }
 
@@ -398,6 +429,7 @@ function resolveMatchedProvider(appConfig: AppConfig): { matched: MatchedProvide
       apiFormat,
       baseURL,
       supportsImage: matchedModel?.supportsImage,
+      supportsThinking: matchedModel?.supportsThinking,
       modelName: matchedModel?.name,
       contextWindow: matchedModel?.contextWindow,
     },
@@ -450,6 +482,7 @@ export function resolveCurrentApiConfig(target: OpenAICompatProxyTarget = 'local
         providerName: matched.providerName,
         codingPlanEnabled: !!matched.providerConfig.codingPlanEnabled,
         supportsImage: matched.supportsImage,
+        supportsThinking: matched.supportsThinking,
       },
     };
   }
@@ -556,6 +589,7 @@ export function resolveRawApiConfig(): ApiConfigResolution {
       authType: matched.providerConfig.authType,
       codingPlanEnabled: !!matched.providerConfig.codingPlanEnabled,
       supportsImage: matched.supportsImage,
+      supportsThinking: matched.supportsThinking,
       modelName: matched.modelName,
       contextWindow: matched.contextWindow,
     },

@@ -1,14 +1,15 @@
-import { ArrowDownTrayIcon, ArrowLeftIcon, TrashIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { ArrowDownTrayIcon, ArrowLeftIcon, ExclamationTriangleIcon, TrashIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch } from 'react-redux';
 
 import { i18nService } from '../../services/i18n';
 import { kitService } from '../../services/kit';
-import { resolveLocalizedText } from '../../services/skill';
+import { compareVersions, resolveLocalizedText } from '../../services/skill';
 import { setInstalledKits as setInstalledKitsAction, setMarketplaceKits } from '../../store/slices/kitSlice';
 import type { InstalledKit, KitSkillRef, MarketplaceKit } from '../../types/kit';
 import Modal from '../common/Modal';
 import SearchIcon from '../icons/SearchIcon';
+import { getKitAnalyticsParams, reportKitAction } from './analytics';
 import KitIcon from './KitIcon';
 
 const KitOperationType = {
@@ -28,6 +29,11 @@ interface TooltipPosition {
   width: number;
 }
 
+interface KitUpdateInfo {
+  installedVersion: string;
+  currentVersion: string;
+}
+
 const SKILL_TOOLTIP_WIDTH = 288;
 const SKILL_TOOLTIP_MIN_WIDTH = 180;
 const SKILL_TOOLTIP_VIEWPORT_MARGIN = 12;
@@ -35,6 +41,12 @@ const SKILL_TOOLTIP_GAP = 8;
 
 const clamp = (value: number, min: number, max: number) => (
   Math.min(Math.max(value, min), Math.max(min, max))
+);
+
+const formatKitReinstallRequiredDetail = (info: KitUpdateInfo): string => (
+  i18nService.t('kitReinstallRequiredDetail')
+    .replace('{installedVersion}', info.installedVersion)
+    .replace('{currentVersion}', info.currentVersion)
 );
 
 const KitSkillPill: React.FC<{ skill: KitSkillRef }> = ({ skill }) => {
@@ -174,18 +186,54 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking }) => {
     return results;
   }, [kits, searchQuery]);
 
+  useEffect(() => {
+    const query = searchQuery.trim();
+    if (!query) return undefined;
+    const timer = window.setTimeout(() => {
+      reportKitAction('search', {
+        source: 'kits_manager',
+        searchKeywordLength: query.length,
+        resultCount: filteredKits.length,
+      });
+    }, 600);
+    return () => window.clearTimeout(timer);
+  }, [filteredKits.length, searchQuery]);
+
   const handleInstall = async (kit: MarketplaceKit) => {
     setOperatingKitId(kit.id);
     setOperationType(KitOperationType.Install);
+    reportKitAction('install_submit', {
+      source: 'kits_manager',
+      ...getKitAnalyticsParams(kit, installedKits[kit.id]),
+    });
     try {
       const result = await kitService.installKit(kit);
       if (result.success) {
         const installed = await kitService.getInstalledKits();
         setInstalledKits(installed);
         dispatch(setInstalledKitsAction(installed));
+        reportKitAction('install_success', {
+          source: 'kits_manager',
+          result: 'success',
+          ...getKitAnalyticsParams(kit, installed[kit.id]),
+        });
       } else {
         console.error('[KitsManager] Install failed:', result.error);
+        reportKitAction('install_failed', {
+          source: 'kits_manager',
+          result: 'failed',
+          errorCode: 'install_failed',
+          ...getKitAnalyticsParams(kit, installedKits[kit.id]),
+        });
       }
+    } catch (error) {
+      reportKitAction('install_failed', {
+        source: 'kits_manager',
+        result: 'failed',
+        errorCode: 'install_failed',
+        ...getKitAnalyticsParams(kit, installedKits[kit.id]),
+      });
+      throw error;
     } finally {
       setOperatingKitId(null);
       setOperationType(null);
@@ -193,26 +241,68 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking }) => {
   };
 
   const handleRequestUninstall = (kit: MarketplaceKit) => {
+    reportKitAction('uninstall_confirm_open', {
+      source: 'kits_manager',
+      ...getKitAnalyticsParams(kit, installedKits[kit.id]),
+    });
     setKitPendingUninstall(kit);
   };
 
   const handleCancelUninstall = () => {
     if (operationType === KitOperationType.Uninstall) return;
+    if (kitPendingUninstall) {
+      reportKitAction('uninstall_confirm_cancel', {
+        source: 'kits_manager',
+        ...getKitAnalyticsParams(kitPendingUninstall, installedKits[kitPendingUninstall.id]),
+      });
+    }
     setKitPendingUninstall(null);
   };
 
   const handleUninstall = async (kitId: string) => {
+    const kit = kits.find(item => item.id === kitId);
     setOperatingKitId(kitId);
     setOperationType(KitOperationType.Uninstall);
+    if (kit) {
+      reportKitAction('uninstall_submit', {
+        source: 'kits_manager',
+        ...getKitAnalyticsParams(kit, installedKits[kit.id]),
+      });
+    }
     try {
       const result = await kitService.uninstallKit(kitId);
       if (result.success) {
         const installed = await kitService.getInstalledKits();
         setInstalledKits(installed);
         dispatch(setInstalledKitsAction(installed));
+        if (kit) {
+          reportKitAction('uninstall_success', {
+            source: 'kits_manager',
+            result: 'success',
+            ...getKitAnalyticsParams(kit, installedKits[kit.id]),
+          });
+        }
       } else {
         console.error('[KitsManager] Uninstall failed:', result.error);
+        if (kit) {
+          reportKitAction('uninstall_failed', {
+            source: 'kits_manager',
+            result: 'failed',
+            errorCode: 'uninstall_failed',
+            ...getKitAnalyticsParams(kit, installedKits[kit.id]),
+          });
+        }
       }
+    } catch (error) {
+      if (kit) {
+        reportKitAction('uninstall_failed', {
+          source: 'kits_manager',
+          result: 'failed',
+          errorCode: 'uninstall_failed',
+          ...getKitAnalyticsParams(kit, installedKits[kit.id]),
+        });
+      }
+      throw error;
     } finally {
       setOperatingKitId(null);
       setOperationType(null);
@@ -222,17 +312,46 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking }) => {
 
   const handleConfirmUninstall = async () => {
     if (!kitPendingUninstall || operationType === KitOperationType.Uninstall) return;
-    await handleUninstall(kitPendingUninstall.id);
+    const kitId = kitPendingUninstall.id;
+    setKitPendingUninstall(null);
+    await handleUninstall(kitId);
   };
 
   const isKitInstalled = (kitId: string) => !!installedKits[kitId];
   const isOperating = (kitId: string) => operatingKitId === kitId;
   const getSkillCount = (kit: MarketplaceKit) => kit.skills?.list.length ?? 0;
+  const getKitUpdateInfo = (kit: MarketplaceKit): KitUpdateInfo | null => {
+    const installedKit = installedKits[kit.id];
+    if (!installedKit || !kit.version) return null;
+
+    const installedVersion = installedKit.version || '0.0.0';
+    if (compareVersions(kit.version, installedVersion) <= 0) return null;
+    return {
+      installedVersion,
+      currentVersion: kit.version,
+    };
+  };
 
   const handleTryAskingClick = (text: string, kitId: string) => {
+    const kit = kits.find(item => item.id === kitId);
+    const tryAskingIndex = kit?.tryAsking?.findIndex(prompt => resolveLocalizedText(prompt) === text);
     if (isKitInstalled(kitId)) {
+      if (kit) {
+        reportKitAction('try_asking', {
+          source: 'kits_manager',
+          tryAskingIndex: tryAskingIndex === undefined || tryAskingIndex < 0 ? undefined : tryAskingIndex,
+          ...getKitAnalyticsParams(kit, installedKits[kitId]),
+        });
+      }
       onTryAsking?.(text, kitId);
     } else {
+      if (kit) {
+        reportKitAction('install_prompt_open', {
+          source: 'kits_manager',
+          tryAskingIndex: tryAskingIndex === undefined || tryAskingIndex < 0 ? undefined : tryAskingIndex,
+          ...getKitAnalyticsParams(kit, installedKits[kitId]),
+        });
+      }
       setInstallPrompt({ kitId, text });
     }
   };
@@ -241,6 +360,10 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking }) => {
     if (!installPrompt || !selectedKit) return;
     const { kitId, text } = installPrompt;
     setInstallPrompt(null);
+    reportKitAction('install_and_try_submit', {
+      source: 'kits_manager',
+      ...getKitAnalyticsParams(selectedKit, installedKits[selectedKit.id]),
+    });
     await handleInstall(selectedKit);
     // After install, check if it succeeded and navigate
     const installed = await kitService.getInstalledKits();
@@ -289,13 +412,20 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking }) => {
   if (selectedKit) {
     const installed = isKitInstalled(selectedKit.id);
     const operating = isOperating(selectedKit.id);
+    const updateInfo = getKitUpdateInfo(selectedKit);
 
     return (
       <div className="space-y-6">
         {/* Back button */}
         <button
           type="button"
-          onClick={() => setSelectedKit(null)}
+          onClick={() => {
+            reportKitAction('back_to_list', {
+              source: 'kits_manager',
+              ...getKitAnalyticsParams(selectedKit, installedKits[selectedKit.id]),
+            });
+            setSelectedKit(null);
+          }}
           className="non-draggable relative z-30 inline-flex items-center gap-1.5 text-sm text-secondary hover:text-foreground transition-colors"
         >
           <ArrowLeftIcon className="h-4 w-4" />
@@ -333,6 +463,12 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking }) => {
                     <span>{i18nService.t('kitSkillCount').replace('{count}', String(getSkillCount(selectedKit)))}</span>
                   )}
                 </div>
+                {updateInfo && (
+                  <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[12px] leading-5 text-amber-700 dark:text-amber-300">
+                    <ExclamationTriangleIcon className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                    <span>{formatKitReinstallRequiredDetail(updateInfo)}</span>
+                  </div>
+                )}
               </div>
             </div>
             {installed ? (
@@ -398,7 +534,13 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking }) => {
         {/* Install confirmation dialog */}
         {installPrompt && (
           <Modal
-            onClose={() => setInstallPrompt(null)}
+            onClose={() => {
+              reportKitAction('install_prompt_cancel', {
+                source: 'kits_manager',
+                ...getKitAnalyticsParams(selectedKit, installedKits[selectedKit.id]),
+              });
+              setInstallPrompt(null);
+            }}
             overlayClassName="fixed inset-0 z-[9999] flex items-center justify-center modal-backdrop px-4"
             className="modal-content w-full max-w-sm rounded-2xl border border-border bg-surface shadow-modal overflow-hidden"
           >
@@ -413,7 +555,13 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking }) => {
             <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-4">
               <button
                 type="button"
-                onClick={() => setInstallPrompt(null)}
+                onClick={() => {
+                  reportKitAction('install_prompt_cancel', {
+                    source: 'kits_manager',
+                    ...getKitAnalyticsParams(selectedKit, installedKits[selectedKit.id]),
+                  });
+                  setInstallPrompt(null);
+                }}
                 className="px-4 py-2 text-sm font-medium rounded-lg text-secondary hover:bg-surface-raised transition-colors"
               >
                 {i18nService.t('cancel')}
@@ -437,42 +585,49 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking }) => {
   // List view
   return (
     <div className="space-y-4">
-      <div className="space-y-1.5">
-        <h1 className="text-xl font-semibold text-foreground">
-          {i18nService.t('kits')}
-        </h1>
-        <p className="text-[13px] text-secondary">
-          {i18nService.t('kitDescription')}
-        </p>
-      </div>
+      <p className="text-sm text-secondary">
+        {i18nService.t('kitDescription')}
+      </p>
 
-      {/* Search */}
-      <div className="relative">
-        <SearchIcon className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-secondary" />
-        <input
-          type="text"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder={i18nService.t('kitSearchPlaceholder')}
-          className="h-10 w-full rounded-lg border border-border bg-surface px-3.5 pl-10 text-[13px] text-foreground transition-colors placeholder:text-secondary/75 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-        />
-        {searchQuery && (
-          <button
-            type="button"
-            onClick={() => setSearchQuery('')}
-            className="absolute right-3 top-1/2 -translate-y-1/2 rounded p-1 text-secondary transition-colors hover:text-foreground"
-          >
-            <XMarkIcon className="h-4 w-4" />
-          </button>
-        )}
-      </div>
+      {/* Sticky toolbar: Search + Marketplace tab */}
+      <div className="sticky top-0 z-10 space-y-4 bg-claude-bg pb-4 shadow-sm dark:bg-claude-darkBg">
+        {/* Search */}
+        <div className="flex items-center gap-3">
+          <div className="relative flex-1">
+            <SearchIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-secondary" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={i18nService.t('kitSearchPlaceholder')}
+              className="w-full rounded-xl border border-border bg-surface py-2 pl-9 pr-8 text-sm text-foreground placeholder-secondary focus:outline-none focus:ring-2 focus:ring-primary"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => {
+                  reportKitAction('clear_search', {
+                    source: 'kits_manager',
+                    searchKeywordLength: searchQuery.trim().length,
+                    resultCount: filteredKits.length,
+                  });
+                  setSearchQuery('');
+                }}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-secondary transition-colors hover:text-primary"
+              >
+                <XMarkIcon className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+        </div>
 
-      {/* Market section */}
-      <div className="flex items-center border-b border-border">
-        <h2 className="relative px-2.5 pb-2.5 pt-0.5 text-[13px] font-semibold text-foreground">
-          {i18nService.t('kitMarketplace')}
-          <div className="absolute bottom-[-1px] left-0 right-0 h-0.5 rounded-full bg-primary" />
-        </h2>
+        {/* Market section */}
+        <div className="flex items-center border-b border-border">
+          <h2 className="relative px-2.5 pb-2.5 pt-0.5 text-[13px] font-semibold text-foreground">
+            {i18nService.t('kitMarketplace')}
+            <div className="absolute bottom-[-1px] left-0 right-0 h-0.5 rounded-full bg-primary" />
+          </h2>
+        </div>
       </div>
 
       {/* Kit grid */}
@@ -490,12 +645,20 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking }) => {
             const installed = isKitInstalled(kit.id);
             const operating = isOperating(kit.id);
             const skillCount = getSkillCount(kit);
+            const updateInfo = getKitUpdateInfo(kit);
 
             return (
               <div
                 key={kit.id}
                 className="group relative min-h-[116px] cursor-pointer rounded-xl border border-border bg-surface p-4 shadow-subtle transition-all hover:border-primary/50 hover:shadow-card"
-                onClick={() => setSelectedKit(kit)}
+                onClick={() => {
+                  reportKitAction('open_detail', {
+                    source: 'kits_manager',
+                    resultCount: filteredKits.length,
+                    ...getKitAnalyticsParams(kit, installedKits[kit.id]),
+                  });
+                  setSelectedKit(kit);
+                }}
               >
                 <div className="flex gap-3.5">
                   <KitIcon icon={kit.icon} className="h-16 w-16" />
@@ -527,6 +690,11 @@ const KitsManager: React.FC<KitsManagerProps> = ({ onTryAsking }) => {
                       )}
                       {skillCount > 0 && (
                         <span>{i18nService.t('kitSkillCount').replace('{count}', String(skillCount))}</span>
+                      )}
+                      {updateInfo && (
+                        <span className="rounded-md bg-amber-500/10 px-1.5 py-0.5 font-medium text-amber-600 dark:text-amber-400">
+                          {i18nService.t('kitReinstallRequiredBadge')}
+                        </span>
                       )}
                     </div>
                   </div>

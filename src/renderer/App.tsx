@@ -8,8 +8,9 @@ import {
   type AppUpdateInfo,
   type AppUpdateRuntimeState,
   AppUpdateStatus,
+  isManualDownloadUrl,
 } from '../shared/appUpdate/constants';
-import { OpenClawProviderId, ProviderName, ProviderRegistry } from '../shared/providers';
+import { ProviderAuthType, ProviderName, ProviderRegistry } from '../shared/providers';
 import { CoworkView } from './components/cowork';
 import { CoworkShortcutDirection, CoworkUiEvent } from './components/cowork/constants';
 import CoworkPermissionModal from './components/cowork/CoworkPermissionModal';
@@ -33,6 +34,7 @@ import { authService } from './services/auth';
 import { configService } from './services/config';
 import { coworkService } from './services/cowork';
 import { i18nService } from './services/i18n';
+import { LogReporterAction, reportYdAnalyzer } from './services/logReporter';
 import { scheduledTaskService } from './services/scheduledTask';
 import { matchesShortcut } from './services/shortcuts';
 import { themeService } from './services/theme';
@@ -41,21 +43,11 @@ import {
   selectCurrentSessionId,
   selectFirstPendingPermission,
 } from './store/selectors/coworkSelectors';
-import { setDraftKitIds, setDraftPrompt } from './store/slices/coworkSlice';
+import { setDraftCollaborationMode, setDraftKitIds, setDraftPrompt } from './store/slices/coworkSlice';
 import { setActiveKitIds } from './store/slices/kitSlice';
 import { setAvailableModels, setDefaultSelectedModel } from './store/slices/modelSlice';
 import { clearSelection } from './store/slices/quickActionSlice';
-import type { CoworkPermissionResult } from './types/cowork';
-
-const getOpenClawProviderIdForConfig = (
-  providerName: string,
-  providerConfig: { authType?: string },
-): string => {
-  if (providerName === ProviderName.OpenAI && providerConfig.authType === 'oauth') {
-    return OpenClawProviderId.OpenAICodex;
-  }
-  return ProviderRegistry.getOpenClawProviderId(providerName);
-};
+import { CoworkCollaborationMode, type CoworkPermissionResult } from './types/cowork';
 
 const AGENT_TASK_SLOT_SHORTCUT_ACTIONS = [
   ShortcutAction.OpenAgentTask1,
@@ -117,6 +109,7 @@ const App: React.FC = () => {
   } | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const hasInitialized = useRef(false);
+  const hasReportedAppStartedRef = useRef(false);
   const previousUpdateStatusRef = useRef<AppUpdateRuntimeState['status']>(AppUpdateStatus.Idle);
   const shouldInstallReadyUpdateRef = useRef(false);
   const dispatch = useDispatch();
@@ -202,7 +195,10 @@ const App: React.FC = () => {
         if (config.providers) {
           Object.entries(config.providers).forEach(([providerName, providerConfig]) => {
             if (providerConfig.enabled && providerConfig.models) {
-              const openClawProviderId = getOpenClawProviderIdForConfig(providerName, providerConfig);
+              const openClawProviderId = ProviderRegistry.getOpenClawProviderIdForConfig(providerName, providerConfig);
+              if (providerName === ProviderName.Minimax && providerConfig.authType === ProviderAuthType.OAuth) {
+                mark('MiniMax OAuth provider resolved to OpenClaw minimax-portal');
+              }
               providerConfig.models.forEach((model: { id: string; name: string; supportsImage?: boolean }) => {
                 providerModels.push({
                   id: model.id,
@@ -235,6 +231,14 @@ const App: React.FC = () => {
 
         setIsInitialized(true);
         mark('shell ready');
+        if (!hasReportedAppStartedRef.current) {
+          hasReportedAppStartedRef.current = true;
+          void reportYdAnalyzer({
+            action: LogReporterAction.AppStarted,
+            providerModelCount: providerModels.length,
+            hasLoggedInUser: !!store.getState().auth.user?.yid,
+          });
+        }
 
         void waitWithTimeout(scheduledTaskService.init(), 5000, 'scheduledTaskService.init').catch((error) => {
           console.error('[App] initializeApp: scheduledTaskService.init failed:', error);
@@ -262,6 +266,12 @@ const App: React.FC = () => {
       unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if (authUser) {
+      void authService.fetchProfileSummary();
+    }
+  }, [authUser]);
 
   // Listen for Copilot token auto-refresh events from the main process
   useEffect(() => {
@@ -349,6 +359,10 @@ const App: React.FC = () => {
     dispatch(setActiveKitIds([kitId]));
     coworkService.clearSession({ restoreAgentSkills: true });
     dispatch(clearSelection());
+    dispatch(setDraftCollaborationMode({
+      draftKey: '__home__',
+      mode: CoworkCollaborationMode.Default,
+    }));
     // Set the draft prompt and kit selection in store BEFORE switching view, so that when
     // CoworkPromptInput mounts/updates with draftKey='__home__', it picks up both.
     dispatch(setDraftPrompt({ sessionId: '__home__', draft: text }));
@@ -356,7 +370,7 @@ const App: React.FC = () => {
     setMainView('cowork');
     window.setTimeout(() => {
       window.dispatchEvent(new CustomEvent(CoworkUiEvent.FocusInput, {
-        detail: { text },
+        detail: { resetCollaborationMode: true, text },
       }));
     }, 0);
   }, [dispatch]);
@@ -370,10 +384,14 @@ const App: React.FC = () => {
     const shouldClearInput = mainView === 'cowork' && !currentSessionId;
     coworkService.clearSession({ restoreAgentSkills: true });
     dispatch(clearSelection());
+    dispatch(setDraftCollaborationMode({
+      draftKey: '__home__',
+      mode: CoworkCollaborationMode.Default,
+    }));
     setMainView('cowork');
     window.setTimeout(() => {
       window.dispatchEvent(new CustomEvent(CoworkUiEvent.FocusInput, {
-        detail: { clear: shouldClearInput },
+        detail: { clear: shouldClearInput, resetCollaborationMode: true },
       }));
     }, 0);
   }, [dispatch, mainView, currentSessionId]);
@@ -382,6 +400,10 @@ const App: React.FC = () => {
     dispatch(setDraftPrompt({ sessionId: '__home__', draft: i18nService.t('skillCreatorPrompt') }));
     coworkService.clearSession();
     dispatch(clearSelection());
+    dispatch(setDraftCollaborationMode({
+      draftKey: '__home__',
+      mode: CoworkCollaborationMode.Default,
+    }));
     setMainView('cowork');
   }, [dispatch]);
 
@@ -481,8 +503,7 @@ const App: React.FC = () => {
     }
 
     if (appUpdateState.status === AppUpdateStatus.Error || appUpdateState.status === AppUpdateStatus.Available) {
-      const isManualUrl = updateInfo.url.includes('#') || updateInfo.url.endsWith('/download-list');
-      if (!isManualUrl) {
+      if (!isManualDownloadUrl(updateInfo.url)) {
         shouldInstallReadyUpdateRef.current = appUpdateState.status === AppUpdateStatus.Available;
         const retryResult = await window.electron.appUpdate.retryDownload();
         if (!retryResult.success) {
@@ -493,7 +514,7 @@ const App: React.FC = () => {
       }
     }
 
-    if (updateInfo.url.includes('#') || updateInfo.url.endsWith('/download-list')) {
+    if (isManualDownloadUrl(updateInfo.url)) {
       shouldInstallReadyUpdateRef.current = false;
       setShowUpdateModal(false);
       try {
@@ -516,7 +537,7 @@ const App: React.FC = () => {
 
   const handleRetryUpdate = useCallback(async () => {
     if (!updateInfo) return;
-    if (updateInfo.url.includes('#') || updateInfo.url.endsWith('/download-list')) {
+    if (isManualDownloadUrl(updateInfo.url)) {
       shouldInstallReadyUpdateRef.current = false;
       setShowUpdateModal(false);
       await window.electron.shell.openExternal(updateInfo.url);
@@ -553,7 +574,7 @@ const App: React.FC = () => {
       const allModels: { id: string; name: string; provider?: string; providerKey?: string; openClawProviderId?: string; supportsImage?: boolean }[] = [];
       Object.entries(config.providers).forEach(([providerName, providerConfig]) => {
         if (providerConfig.enabled && providerConfig.models) {
-          const openClawProviderId = getOpenClawProviderIdForConfig(providerName, providerConfig);
+          const openClawProviderId = ProviderRegistry.getOpenClawProviderIdForConfig(providerName, providerConfig);
           providerConfig.models.forEach((model: { id: string; name: string; supportsImage?: boolean }) => {
             allModels.push({
               id: model.id,
