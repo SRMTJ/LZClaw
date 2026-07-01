@@ -3020,6 +3020,52 @@ const focusMainWindowForReason = (reason: string): void => {
 
 let isQuitting = false;
 let isDataMigrationRestoreInProgress = false;
+let isHidingMainWindowAfterFullScreen = false;
+
+const hideMainWindowForClose = (win: BrowserWindow): void => {
+  if (win.isDestroyed()) return;
+
+  if (!isMac || !win.isFullScreen()) {
+    console.log(`[Main] hiding main window for close, platform=${process.platform}, fullscreen=${win.isFullScreen()}, maximized=${win.isMaximized()}, visible=${win.isVisible()}`);
+    win.hide();
+    return;
+  }
+
+  if (isHidingMainWindowAfterFullScreen) {
+    console.log('[Main] hide after full-screen close is already pending');
+    return;
+  }
+
+  console.log('[Main] main window close requested while macOS full-screen; leaving full-screen before hiding');
+  isHidingMainWindowAfterFullScreen = true;
+  let settled = false;
+  let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const finish = (source: 'leave-full-screen' | 'timeout') => {
+    if (settled) return;
+    settled = true;
+    isHidingMainWindowAfterFullScreen = false;
+    if (fallbackTimer) {
+      clearTimeout(fallbackTimer);
+      fallbackTimer = null;
+    }
+    if (!win.isDestroyed()) {
+      console.log(`[Main] hiding main window after macOS full-screen exit, source=${source}, fullscreen=${win.isFullScreen()}, visible=${win.isVisible()}`);
+      win.hide();
+    }
+  };
+
+  win.once('leave-full-screen', () => {
+    setTimeout(() => finish('leave-full-screen'), 100);
+  });
+  fallbackTimer = setTimeout(() => finish('timeout'), 1_500);
+  try {
+    win.setFullScreen(false);
+  } catch (error) {
+    console.warn('[Main] failed to leave macOS full-screen before hiding main window:', error);
+    finish('timeout');
+  }
+};
 
 // 存储活跃的流式请求控制器
 const activeStreamControllers = new Map<string, AbortController>();
@@ -3694,7 +3740,8 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.on('window-close', () => {
+  ipcMain.on('window-close', (event) => {
+    console.log(`[Main] window-close IPC received from renderer, url=${event.sender.getURL()}`);
     mainWindow?.close();
   });
 
@@ -10061,12 +10108,13 @@ if (!gotTheLock) {
     mainWindow.on('close', (e) => {
       windowStatePersist.cleanup();
       windowStatePersist.persist();
+      console.log(`[Main] main window close event, isQuitting=${isQuitting}, isDev=${isDev}, platform=${process.platform}, fullscreen=${mainWindow?.isFullScreen() ?? false}, visible=${mainWindow?.isVisible() ?? false}`);
 
       // In development, close should actually quit so `npm run electron:dev`
       // restarts from a clean process. In production we keep tray behavior.
       if (mainWindow && !isQuitting && !isDev) {
         e.preventDefault();
-        mainWindow.hide();
+        hideMainWindowForClose(mainWindow);
       }
     });
 
