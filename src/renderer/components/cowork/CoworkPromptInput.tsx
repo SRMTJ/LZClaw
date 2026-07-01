@@ -270,6 +270,7 @@ const ContextLabelMaxLength = {
 } as const;
 
 const READ_ONLY_CONTEXT_COMPACT_WIDTH = 168;
+const LARGE_TOOLBAR_COMPACT_WIDTH = 520;
 type GoalInputMode = 'start' | 'set';
 
 const truncateDisplayText = (value: string, maxLength: number): string => {
@@ -440,6 +441,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const [modelAccessPrompt, setModelAccessPrompt] = useState<ModelAccessPromptKind | null>(null);
     const [showVoiceLoginPrompt, setShowVoiceLoginPrompt] = useState(false);
     const [showVoiceQuotaPrompt, setShowVoiceQuotaPrompt] = useState(false);
+    const [isLargeToolbarCompact, setIsLargeToolbarCompact] = useState(false);
 
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const addMenuButtonRef = useRef<HTMLButtonElement>(null);
@@ -450,6 +452,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const agentButtonRef = useRef<HTMLButtonElement>(null);
     const agentMenuRef = useRef<HTMLDivElement>(null);
     const readOnlyContextGroupRef = useRef<HTMLDivElement>(null);
+    const largeToolbarRef = useRef<HTMLDivElement>(null);
     const dragDepthRef = useRef(0);
     const warningTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const modelPatchRequestIdRef = useRef(0);
@@ -872,6 +875,28 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     resizeObserver.observe(element);
     return () => resizeObserver.disconnect();
   }, [isLarge, showReadOnlyContext, useHomeContextLayout]);
+
+  useEffect(() => {
+    if (!isLarge || useHomeContextLayout) {
+      setIsLargeToolbarCompact(false);
+      return;
+    }
+
+    const element = largeToolbarRef.current;
+    if (!element) return;
+
+    const updateCompactState = () => {
+      const nextCompact = element.getBoundingClientRect().width < LARGE_TOOLBAR_COMPACT_WIDTH;
+      setIsLargeToolbarCompact(current => (current === nextCompact ? current : nextCompact));
+    };
+
+    updateCompactState();
+    if (typeof ResizeObserver === 'undefined') return;
+
+    const resizeObserver = new ResizeObserver(updateCompactState);
+    resizeObserver.observe(element);
+    return () => resizeObserver.disconnect();
+  }, [isLarge, useHomeContextLayout]);
 
   useEffect(() => {
     if (!showAgentMenu) return;
@@ -2228,6 +2253,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   };
   const readOnlyContextAgentName = getAgentDisplayName(readOnlyContextAgentForDisplay);
   const readOnlyContextAgentLabel = truncateDisplayText(readOnlyContextAgentName, ContextLabelMaxLength.Agent);
+  const useLargeToolbarCompactLayout = isLargeToolbarCompact && !useHomeContextLayout;
+  const largeToolbarGapClass = useLargeToolbarCompactLayout ? 'gap-1.5' : 'gap-3';
+  const largeToolbarControlGapClass = useLargeToolbarCompactLayout ? 'gap-1' : 'gap-2';
+  const largeModelTriggerMaxWidthClassName = useLargeToolbarCompactLayout ? 'max-w-[150px]' : undefined;
 
   // Sync when config is updated elsewhere (e.g. Settings panel)
   useEffect(() => {
@@ -2246,6 +2275,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         dropdownDirection="up"
         alignDropdownToTriggerEnd={useHomeContextLayout}
         portal={showReadOnlyContext}
+        triggerMaxWidthClassName={largeModelTriggerMaxWidthClassName}
         disabled={isPatchingModel || isPersistingAgentModel}
         value={agentModelIsInvalid && currentSession?.modelOverride
           ? { id: '__invalid__', name: currentSession.modelOverride.split('/').pop() || currentSession.modelOverride } as Model
@@ -2484,7 +2514,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   });
 
   const largeInputToolActions = (
-    <div className="flex items-center gap-0.5">
+    <div className={`flex items-center ${useLargeToolbarCompactLayout ? 'gap-0' : 'gap-0.5'}`}>
       {largeInputActions}
       <MediaModelPicker draftKey={draftKey} disabled={disabled || voiceInputLocksEditing} />
     </div>
@@ -2514,7 +2544,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       type="button"
       onClick={() => handleSubmit('button')}
       disabled={!canUseSubmitButton}
-      className={`flex ${largeSendButtonSizeClass} items-center justify-center rounded-full transition-all ${
+      className={`flex ${largeSendButtonSizeClass} shrink-0 items-center justify-center rounded-full transition-all ${
         canUseSubmitButton
           ? 'bg-neutral-950 text-white shadow-subtle hover:bg-neutral-800 active:scale-95 dark:bg-white dark:text-neutral-950 dark:hover:bg-neutral-200'
           : 'cursor-not-allowed bg-neutral-300 text-white dark:bg-neutral-700 dark:text-neutral-500'
@@ -2946,7 +2976,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                     onDismiss={() => setMentionPickerOpen(false)}
                   />
                 )}
-                <div className="relative flex items-center justify-between gap-3 px-4 pb-2 pt-1">
+                <div ref={largeToolbarRef} className={`relative flex items-center justify-between ${largeToolbarGapClass} px-4 pb-2 pt-1`}>
                   {voiceRecordingUiState.showFooterRecordingStatus && (
                     <div className="pointer-events-none absolute inset-x-0 top-1/2 z-20 flex -translate-y-1/2 justify-center">
                       <VoiceInputRecordingStatus
@@ -2955,10 +2985,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                       />
                     </div>
                   )}
-                  <div className="flex min-w-0 items-center gap-2">
+                  <div className={`flex min-w-0 items-center ${largeToolbarControlGapClass}`}>
                     {voiceRecordingUiState.showLargeInputControls && largeInputToolActions}
                   </div>
-                  <div className="flex shrink-0 items-center gap-2">
+                  <div className={`flex shrink-0 items-center ${largeToolbarControlGapClass}`}>
                     {contextUsageControl}
                     {voiceRecordingUiState.showLargeModelSelector && largeModelSelector}
                     {largeVoiceInputButton}
@@ -3073,7 +3103,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   onDismiss={() => setMentionPickerOpen(false)}
                 />
               )}
-              <div className={`relative flex items-center justify-between gap-3 px-4 ${isCompact ? 'pb-1.5 pt-0.5' : 'pb-2 pt-1.5'}`}>
+              <div ref={largeToolbarRef} className={`relative flex items-center justify-between ${largeToolbarGapClass} px-4 ${isCompact ? 'pb-1.5 pt-0.5' : 'pb-2 pt-1.5'}`}>
                 {voiceRecordingUiState.showFooterRecordingStatus && (
                   <div className="pointer-events-none absolute inset-x-0 top-1/2 z-20 flex -translate-y-1/2 justify-center">
                     <VoiceInputRecordingStatus
@@ -3082,7 +3112,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                     />
                   </div>
                 )}
-                <div className="flex min-w-0 items-center gap-2 relative">
+                <div className={`relative flex min-w-0 items-center ${largeToolbarControlGapClass}`}>
                   {voiceRecordingUiState.showLargeInputControls && showFolderSelector && (
                     <>
                       <div className="flex items-center">
@@ -3130,7 +3160,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   )}
                   {voiceRecordingUiState.showLargeInputControls && largeInputToolActions}
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
+                <div className={`flex shrink-0 items-center ${largeToolbarControlGapClass}`}>
                   {contextUsageControl}
                   {voiceRecordingUiState.showLargeModelSelector && largeModelSelector}
                   {largeVoiceInputButton}
