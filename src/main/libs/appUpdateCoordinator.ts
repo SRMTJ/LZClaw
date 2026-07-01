@@ -144,23 +144,19 @@ export class AppUpdateCoordinator {
         return { success: true, state: this.getState(), updateFound: this.getState().info !== null };
       }
       if (!info) {
-        if (
-          previousState.source === targetSource &&
-          previousState.status === AppUpdateStatus.Ready &&
-          previousState.readyFilePath != null &&
-          previousState.readyFileHash != null &&
-          previousState.info != null &&
-          this.compareVersions(previousState.info.latestVersion, currentVersion) > 0
-        ) {
-          console.log(
-            `[AppUpdate] no update from server, preserving existing ready update ${previousState.info.latestVersion}`,
-          );
-          const state = this.setState({
-            ...previousState,
-            errorMessage: null,
-          });
-          return { success: true, state, updateFound: true };
+        const readyFilePathsToCleanup = new Set<string>();
+        if (previousState.source === targetSource && previousState.readyFilePath) {
+          readyFilePathsToCleanup.add(previousState.readyFilePath);
         }
+        const existingReadyFile = this.getStoredReadyFile(targetSource);
+        if (existingReadyFile?.filePath) {
+          readyFilePathsToCleanup.add(existingReadyFile.filePath);
+        }
+        for (const readyFilePath of readyFilePathsToCleanup) {
+          await this.cleanupReadyFile(readyFilePath);
+        }
+        this.clearStoredReadyFile(targetSource);
+        await this.pruneCachedInstallerFiles(targetSource);
         const state = this.setState({
           ...initialState(),
           source: targetSource,

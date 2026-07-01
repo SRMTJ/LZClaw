@@ -2,7 +2,7 @@ import { ArchiveBoxIcon, ArrowPathIcon, ArrowPathRoundedSquareIcon, ChatBubbleLe
 import React, { useCallback,useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
-import { type AppUpdateInfo,type AppUpdateRuntimeState,AppUpdateSource,AppUpdateStatus } from '../../shared/appUpdate/constants';
+import { type AppUpdateInfo,type AppUpdateRuntimeState,AppUpdateStatus } from '../../shared/appUpdate/constants';
 import {
   type BrowserWebAccessConfig,
   defaultBrowserWebAccessConfig,
@@ -816,7 +816,6 @@ const Settings: React.FC<SettingsProps> = ({
     const unsubscribe = window.electron.appUpdate.onStateChanged((state) => {
       if (
         updateCheckTimerRef.current != null &&
-        state.source === AppUpdateSource.Manual &&
         state.status !== AppUpdateStatus.Idle
       ) {
         window.clearTimeout(updateCheckTimerRef.current);

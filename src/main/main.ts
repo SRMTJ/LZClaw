@@ -177,7 +177,6 @@ import {
   probeCoworkModelReadiness,
 } from './libs/coworkUtil';
 import {
-  getAgentTemplateUrl,
   assertDataMigrationSqliteSnapshotMatchesLiveSync,
   buildDataMigrationBackupFileName,
   consumeLastRestoreResultSync,
@@ -188,6 +187,7 @@ import {
   performPendingDataMigrationRestoreSync,
 } from './libs/dataMigration/dataMigrationService';
 import {
+  getAgentTemplateUrl,
   getHtmlSharePublicBaseUrl,
   getKitStoreUrl,
   getLoginUrlEndpoint,
@@ -5201,7 +5201,7 @@ if (!gotTheLock) {
       console.error('[DataMigration] backup failed:', error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to back up LobsterAI data',
+        error: error instanceof Error ? error.message : 'Failed to back up LZClaw data',
       };
     }
   });
@@ -5260,11 +5260,11 @@ if (!gotTheLock) {
         success,
         scheduledRestart: rendererReleased,
         rollbackPath: restoreResult?.rollbackPath,
-        error: success ? undefined : restoreResult?.error || 'Failed to import LobsterAI data backup',
+        error: success ? undefined : restoreResult?.error || 'Failed to import LZClaw data backup',
       };
     } catch (error) {
       isCleanupInProgress = false;
-      const message = error instanceof Error ? error.message : 'Failed to import LobsterAI data backup';
+      const message = error instanceof Error ? error.message : 'Failed to import LZClaw data backup';
       console.error('[DataMigration] restore scheduling failed:', error);
       if (rendererReleased) {
         dialog.showErrorBox(t('dataMigrationRestoreDialogTitle'), message);

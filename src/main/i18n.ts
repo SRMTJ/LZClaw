@@ -20,7 +20,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     trayShowWindow: '打开 LZClaw',
     trayNewTask: '新建任务',
     trayViewCompletedTask: '查看完成的任务',
-    trayCompletedTaskTooltip: 'LobsterAI - {count} 个任务已完成',
+    trayCompletedTaskTooltip: 'LZClaw - {count} 个任务已完成',
     traySettings: '设置',
     trayQuit: '退出',
     taskCompletionNotificationTitle: '任务已完成',
@@ -95,13 +95,13 @@ const translations: Record<LanguageType, Record<string, string>> = {
     authPlanStandard: '标准',
 
     // Data migration dialogs
-    dataMigrationBackupDialogTitle: '备份 LobsterAI 数据',
-    dataMigrationRestoreDialogTitle: '导入 LobsterAI 数据备份',
-    dataMigrationBackupArchiveFilter: 'LobsterAI 备份包',
+    dataMigrationBackupDialogTitle: '备份 LZClaw 数据',
+    dataMigrationRestoreDialogTitle: '导入 LZClaw 数据备份',
+    dataMigrationBackupArchiveFilter: 'LZClaw 备份包',
     dataMigrationAllFilesFilter: '所有文件',
     dataMigrationBackupBlockedByActiveWorkloads:
       '当前有正在运行的 Agent 或定时任务，请停止或等待任务完成后再备份。',
-    dataMigrationRestoreProgressTitle: '正在导入 LobsterAI 数据',
+    dataMigrationRestoreProgressTitle: '正在导入 LZClaw 数据',
     dataMigrationRestoreProgressDesc: '正在恢复备份并校验数据，完成后应用会自动重启。',
     dataMigrationRestoreProgressWarning: '请不要关闭应用或重启电脑，否则可能中断本次数据迁移。',
 
@@ -291,7 +291,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     trayShowWindow: 'Open LZClaw',
     trayNewTask: 'New Task',
     trayViewCompletedTask: 'View Completed Task',
-    trayCompletedTaskTooltip: 'LobsterAI - {count} completed task(s)',
+    trayCompletedTaskTooltip: 'LZClaw - {count} completed task(s)',
     traySettings: 'Settings',
     trayQuit: 'Quit',
     taskCompletionNotificationTitle: 'Task Complete',
@@ -379,15 +379,15 @@ const translations: Record<LanguageType, Record<string, string>> = {
     authPlanStandard: 'Standard',
 
     // Data migration dialogs
-    dataMigrationBackupDialogTitle: 'Back Up LobsterAI Data',
-    dataMigrationRestoreDialogTitle: 'Import LobsterAI Data Backup',
-    dataMigrationBackupArchiveFilter: 'LobsterAI Backup',
+    dataMigrationBackupDialogTitle: 'Back Up LZClaw Data',
+    dataMigrationRestoreDialogTitle: 'Import LZClaw Data Backup',
+    dataMigrationBackupArchiveFilter: 'LZClaw Backup',
     dataMigrationAllFilesFilter: 'All Files',
     dataMigrationBackupBlockedByActiveWorkloads:
       'An agent or scheduled task is still running. Stop it or wait for it to finish before backing up.',
-    dataMigrationRestoreProgressTitle: 'Importing LobsterAI data',
+    dataMigrationRestoreProgressTitle: 'Importing LZClaw data',
     dataMigrationRestoreProgressDesc:
-      'Restoring the backup and validating data. LobsterAI will restart automatically when finished.',
+      'Restoring the backup and validating data. LZClaw will restart automatically when finished.',
     dataMigrationRestoreProgressWarning:
       'Do not close the app or restart the computer, or the migration may be interrupted.',
 

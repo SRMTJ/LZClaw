@@ -19,8 +19,9 @@ export type AgentIpcChannel = typeof AgentIpcChannel[keyof typeof AgentIpcChanne
 
 export const LegacyAgentName = {
   Main: 'main',
+  Brand: 'LobsterAI',
 } as const;
 
 export const DefaultAgentProfile = {
-  Name: 'LobsterAI',
+  Name: 'LZClaw',
 } as const;

@@ -37,7 +37,7 @@ test('buildLzServiceEndpoints builds test login and update routes', () => {
     'http://127.0.0.1:5000/openapi/get/luna/hardware/lobsterai/test/update',
   );
   expect(endpoints.manualUpdateUrl).toBe(
-    'http://127.0.0.1:5000/openapi/get/luna/hardware/lobsterai/test/update-manual',
+    'http://127.0.0.1:5000/openapi/get/luna/hardware/lobsterai/test/update',
   );
   expect(endpoints.skillStoreUrl).toBe(
     'http://127.0.0.1:5000/openapi/get/luna/hardware/lobsterai/test/skill-store',
@@ -60,7 +60,7 @@ test('buildLzServiceEndpoints builds prod login and update routes', () => {
     'http://service.local/openapi/get/luna/hardware/lobsterai/prod/update',
   );
   expect(endpoints.manualUpdateUrl).toBe(
-    'http://service.local/openapi/get/luna/hardware/lobsterai/prod/update-manual',
+    'http://service.local/openapi/get/luna/hardware/lobsterai/prod/update',
   );
   expect(endpoints.skillStoreUrl).toBe(
     'http://service.local/openapi/get/luna/hardware/lobsterai/prod/skill-store',

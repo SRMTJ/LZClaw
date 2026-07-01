@@ -1,4 +1,4 @@
-export const LZ_SERVICE_DEFAULT_DEV_BASE_URL = 'https://lzclaw.srmtj.com';
+export const LZ_SERVICE_DEFAULT_DEV_BASE_URL = 'http://127.0.0.1:6003';
 export const LZ_SERVICE_DEFAULT_PROD_BASE_URL = 'https://lzclaw.srmtj.com';
 export const LZ_SERVICE_DEFAULT_BASE_URL = LZ_SERVICE_DEFAULT_DEV_BASE_URL;
 
@@ -40,7 +40,8 @@ export const buildLzServiceEndpoints = (
   serverApiBaseUrl: normalizeLzServiceBaseUrl(baseUrl),
   loginUrl: openApiUrl(baseUrl, environment, 'login-url'),
   updateUrl: openApiUrl(baseUrl, environment, 'update'),
-  manualUpdateUrl: openApiUrl(baseUrl, environment, 'update-manual'),
+  // Manual and automatic checks should resolve the same latest-version source.
+  manualUpdateUrl: openApiUrl(baseUrl, environment, 'update'),
   skillStoreUrl: openApiUrl(baseUrl, environment, 'skill-store'),
   agentTemplateUrl: openApiUrl(baseUrl, environment, 'agent-template'),
 });
