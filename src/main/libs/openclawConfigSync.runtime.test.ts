@@ -83,12 +83,20 @@ vi.mock('./openclawTokenProxy', () => ({
   getOpenClawTokenProxyPort: () => mockRuntimeState.proxyPort,
 }));
 
+const LZ_SERVICE_ENV_KEYS = ['LZ_SERVICE_BASE_URL'] as const;
+
 describe('OpenClawConfigSync runtime config output', () => {
   let tmpDir: string;
   let configPath: string;
   let stateDir: string;
+  let originalLzServiceEnv: Map<string, string | undefined>;
 
   beforeEach(() => {
+    originalLzServiceEnv = new Map();
+    for (const key of LZ_SERVICE_ENV_KEYS) {
+      originalLzServiceEnv.set(key, process.env[key]);
+      delete process.env[key];
+    }
     mockRuntimeState.proxyPort = null;
     mockRuntimeState.serverModels = [];
     mockRuntimeState.enabledProviders = [];
@@ -116,6 +124,14 @@ describe('OpenClawConfigSync runtime config output', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
     const { setSystemProxyEnabled } = await import('./systemProxy');
     setSystemProxyEnabled(false);
+    for (const key of LZ_SERVICE_ENV_KEYS) {
+      const previous = originalLzServiceEnv.get(key);
+      if (previous === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = previous;
+      }
+    }
   });
 
   const createSync = async (overrides: Record<string, unknown> = {}) => {
@@ -227,6 +243,69 @@ describe('OpenClawConfigSync runtime config output', () => {
 
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     expect(config.agents.defaults.mediaMaxMb).toBe(30);
+  });
+
+  test('enables diagnostics OpenTelemetry with the default LZService base URL', async () => {
+    const sync = await createSync();
+
+    const result = sync.sync('casdoor-otel-default');
+    expect(result.ok).toBe(true);
+
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.plugins.entries['diagnostics-otel']).toEqual({ enabled: true });
+    expect(config.plugins.allow).toContain('diagnostics-otel');
+    expect(config.diagnostics.otel).toMatchObject({
+      enabled: true,
+      tracesEndpoint: 'http://127.0.0.1:6003/api/v1/traces',
+      metricsEndpoint: 'http://127.0.0.1:6003/api/v1/metrics',
+      logsEndpoint: 'http://127.0.0.1:6003/api/v1/logs',
+      protocol: 'http/protobuf',
+      serviceName: 'lzclaw-openclaw-gateway',
+      traces: true,
+      metrics: true,
+      logs: true,
+      sampleRate: 0.2,
+      flushIntervalMs: 60000,
+    });
+  });
+
+  test('uses LZService base URL override for diagnostics OpenTelemetry', async () => {
+    process.env.LZ_SERVICE_BASE_URL = 'https://casdoor.example.com/api/';
+
+    const sync = await createSync();
+
+    const result = sync.sync('casdoor-otel-enabled');
+    expect(result.ok).toBe(true);
+
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.plugins.entries['diagnostics-otel']).toEqual({ enabled: true });
+    expect(config.plugins.allow).toContain('diagnostics-otel');
+    expect(config.diagnostics).toMatchObject({
+      enabled: true,
+      otel: {
+        enabled: true,
+        tracesEndpoint: 'https://casdoor.example.com/api/v1/traces',
+        metricsEndpoint: 'https://casdoor.example.com/api/v1/metrics',
+        logsEndpoint: 'https://casdoor.example.com/api/v1/logs',
+        protocol: 'http/protobuf',
+        serviceName: 'lzclaw-openclaw-gateway',
+        traces: true,
+        metrics: true,
+        logs: true,
+        sampleRate: 0.2,
+        flushIntervalMs: 60000,
+        captureContent: {
+          enabled: false,
+          inputMessages: false,
+          outputMessages: false,
+          toolInputs: false,
+          toolOutputs: false,
+          systemPrompt: false,
+          toolDefinitions: false,
+        },
+      },
+    });
+    expect(config.diagnostics.otel.endpoint).toBeUndefined();
   });
 
   test('writes model provider env-proxy transport when system proxy is enabled', async () => {

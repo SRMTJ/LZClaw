@@ -10,6 +10,23 @@ function commandExists(command) {
   return result.status === 0;
 }
 
+function isWslBashPath(candidate) {
+  const normalized = candidate.toLowerCase().replace(/\\/g, '/');
+  return (
+    normalized.endsWith('/windows/system32/bash.exe') ||
+    normalized.endsWith('/windows/sysnative/bash.exe') ||
+    normalized.includes('/windowsapps/bash.exe')
+  );
+}
+
+function isGitBashPath(candidate) {
+  const normalized = candidate.toLowerCase().replace(/\\/g, '/');
+  return (
+    normalized.endsWith('/git/bin/bash.exe') ||
+    normalized.endsWith('/git/usr/bin/bash.exe')
+  );
+}
+
 function resolveBashExecutable(rootDir) {
   if (process.platform !== 'win32') {
     return commandExists('bash') ? 'bash' : null;
@@ -18,6 +35,7 @@ function resolveBashExecutable(rootDir) {
   // On Windows, we must use Git Bash (MSYS2), NOT WSL's bash.
   // WSL bash (WindowsApps\bash.exe) runs in a separate Linux environment and
   // cannot access Windows-installed node, npm, pnpm, etc.
+  // C:\Windows\System32\bash.exe is also a WSL launcher on modern Windows.
 
   // 1. Check all bash locations, prefer Git Bash over WSL bash.
   try {
@@ -27,8 +45,10 @@ function resolveBashExecutable(rootDir) {
     });
     if (result.status === 0 && result.stdout) {
       const paths = result.stdout.trim().split(/\r?\n/).map(p => p.trim()).filter(Boolean);
-      const gitBash = paths.find(p => !p.toLowerCase().includes('windowsapps'));
+      const gitBash = paths.find(isGitBashPath);
       if (gitBash) return gitBash;
+      const nonWslBash = paths.find(p => !isWslBashPath(p));
+      if (nonWslBash) return nonWslBash;
     }
   } catch {}
 
@@ -80,6 +100,7 @@ if (!bashExecutable) {
   }
   process.exit(1);
 }
+console.log(`[run-build-openclaw-runtime] Using bash: ${bashExecutable}`);
 
 // On Windows, normalise the environment for bash:
 // 1. Bash expects "PATH" (uppercase) but Windows may use "Path" — merge all

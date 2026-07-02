@@ -866,6 +866,7 @@ const INTERNAL_PLUGIN_IDS = [
   'qqbot',
   'acpx',
   'browser',
+  'diagnostics-otel',
   'llm-task',
   'thread-ownership',
 

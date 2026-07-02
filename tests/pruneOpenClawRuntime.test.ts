@@ -7,6 +7,7 @@ const { shouldKeepBundledExtension } = require('../scripts/prune-openclaw-runtim
 test('pruneOpenClawRuntime keeps required bundled extensions', () => {
   expect(shouldKeepBundledExtension('openai')).toBe(true);
   expect(shouldKeepBundledExtension('browser')).toBe(true);
+  expect(shouldKeepBundledExtension('diagnostics-otel')).toBe(true);
   expect(shouldKeepBundledExtension('feishu')).toBe(true);
   expect(shouldKeepBundledExtension('xiaomi')).toBe(true);
 });

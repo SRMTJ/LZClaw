@@ -45,6 +45,7 @@ import {
 import { parseChannelSessionKey } from './openclawChannelSessionSync';
 import { OpenClawConfigImpact } from './openclawConfigImpact';
 import type { OpenClawEngineManager } from './openclawEngineManager';
+import { getServerApiBaseUrl } from './endpoints';
 import { getMainAgentWorkspacePath, readBootstrapFile } from './openclawMemoryFile';
 import { resolveOpenClawCatalogModelMaxTokens } from './openclawModelCatalog';
 
@@ -293,6 +294,72 @@ const MANAGED_WEB_SEARCH_POLICY_PROMPT = [
 ].join('\n');
 
 const BUNDLED_BROWSER_PLUGIN_ID = 'browser';
+const DIAGNOSTICS_OTEL_PLUGIN_ID = 'diagnostics-otel';
+const LZCLAW_OTEL_CONFIG = {
+  serviceName: 'lzclaw-openclaw-gateway',
+  traces: true,
+  metrics: true,
+  logs: true,
+  sampleRate: 0.2,
+  flushIntervalMs: 60000,
+  captureContent: {
+    enabled: false,
+    inputMessages: false,
+    outputMessages: false,
+    toolInputs: false,
+    toolOutputs: false,
+    systemPrompt: false,
+    toolDefinitions: false,
+  },
+} as const;
+
+type LzClawOtelConfigResolution = {
+  explicit: boolean;
+  enabled: boolean;
+  config?: Record<string, unknown>;
+};
+
+const isRecordObject = (value: unknown): value is Record<string, unknown> => (
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+);
+
+const normalizeOtelEndpoint = (value: string | null): string | null => {
+  if (!value) return null;
+  const normalized = value.trim().replace(/\/+$/, '');
+  return normalized.length > 0 ? normalized : null;
+};
+
+const normalizeCasdoorOtelBaseUrl = (value: string | null): string | null => {
+  const endpoint = normalizeOtelEndpoint(value);
+  if (!endpoint) return null;
+  return endpoint
+    .replace(/\/api\/v1$/i, '')
+    .replace(/\/api$/i, '');
+};
+
+const buildCasdoorOtelEndpoints = (baseUrl: string): Record<string, string> => ({
+  tracesEndpoint: `${baseUrl}/api/v1/traces`,
+  metricsEndpoint: `${baseUrl}/api/v1/metrics`,
+  logsEndpoint: `${baseUrl}/api/v1/logs`,
+});
+
+const resolveLzClawDiagnosticsOtelConfig = (): LzClawOtelConfigResolution => {
+  const casdoorBaseUrl = 'http://127.0.0.1:8066';
+  if (!casdoorBaseUrl) {
+    return { explicit: true, enabled: false };
+  }
+
+  return {
+    explicit: true,
+    enabled: true,
+    config: {
+      enabled: true,
+      ...buildCasdoorOtelEndpoints(casdoorBaseUrl),
+      protocol: 'http/protobuf',
+      ...LZCLAW_OTEL_CONFIG,
+    },
+  };
+};
 
 const MANAGED_BROWSER_POLICY_PROMPT = [
   '## Browser Policy',
@@ -1694,14 +1761,44 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
     // See: openclaw/openclaw#58678, #33310, #61613
     let existingGateway: Record<string, unknown> = {};
     let existingPlugins: Record<string, unknown> = {};
+    let existingDiagnostics: Record<string, unknown> = {};
     try {
       const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
       existingGateway = (existing.gateway ?? {}) as Record<string, unknown>;
       existingPlugins = (existing.plugins ?? {}) as Record<string, unknown>;
+      existingDiagnostics = isRecordObject(existing.diagnostics) ? existing.diagnostics : {};
     } catch {
       // First run or corrupt file — nothing to preserve.
     }
     const existingPluginEntries = (existingPlugins.entries ?? {}) as Record<string, unknown>;
+    const otelConfigResolution = resolveLzClawDiagnosticsOtelConfig();
+    const diagnosticsConfig: Record<string, unknown> | undefined = (() => {
+      const hasExistingDiagnostics = Object.keys(existingDiagnostics).length > 0;
+      if (!otelConfigResolution.explicit) {
+        return hasExistingDiagnostics ? existingDiagnostics : undefined;
+      }
+      if (!otelConfigResolution.enabled || !otelConfigResolution.config) {
+        if (!hasExistingDiagnostics) return undefined;
+        const existingOtel = isRecordObject(existingDiagnostics.otel) ? existingDiagnostics.otel : {};
+        return {
+          ...existingDiagnostics,
+          otel: {
+            ...existingOtel,
+            enabled: false,
+          },
+        };
+      }
+      return {
+        ...existingDiagnostics,
+        enabled: true,
+        otel: otelConfigResolution.config,
+      };
+    })();
+    const diagnosticsOtelConfig = diagnosticsConfig && isRecordObject(diagnosticsConfig.otel)
+      ? diagnosticsConfig.otel
+      : null;
+    const hasDiagnosticsOtelConfig = diagnosticsOtelConfig !== null;
+    const diagnosticsOtelEnabled = diagnosticsOtelConfig?.enabled === true;
     console.log(`${gwDiagTs()} existingGateway keys:`, Object.keys(existingGateway).sort().join(',') || '(empty)');
     console.log(`${gwDiagTs()} existingPlugins keys:`, Object.keys(existingPlugins).sort().join(',') || '(empty)');
     console.log(`${gwDiagTs()} existingPluginEntries keys:`, Object.keys(existingPluginEntries).sort().join(',') || '(empty)');
@@ -1840,6 +1937,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
         maxConcurrentRuns: 3,
         sessionRetention: '7d',
       },
+      ...(diagnosticsConfig ? { diagnostics: diagnosticsConfig } : {}),
       ...((() => {
         // Remove legacy package/directory ids from plugin entries.  OpenClaw
         // validates entries by the manifest `id`, so aliases like
@@ -1893,6 +1991,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
                 if (pluginMatches(plugin, 'openclaw-netease-bee')) return !!(neteaseBeeChanConfig?.enabled && neteaseBeeChanConfig.clientId && neteaseBeeChanConfig.secret);
                 if (pluginMatches(plugin, 'openclaw-weixin')) return true; // Always keep enabled for QR login discovery
                 if (pluginMatches(plugin, 'clawemail-email', EMAIL_PLUGIN_ID)) return !!emailConfig?.instances.some(i => i.enabled && i.email);
+                if (pluginMatches(plugin, DIAGNOSTICS_OTEL_PLUGIN_ID)) return diagnosticsOtelEnabled;
                 return true; // other plugins stay enabled
               })();
               return [plugin.pluginId, { enabled: pluginEnabled }];
@@ -1903,6 +2002,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
             : {}),
           ...(hasAskUserPlugin ? { 'ask-user-question': { enabled: true } } : {}),
           ...(hasMediaGenPlugin ? { 'lobster-media-generation': { enabled: true } } : {}),
+          ...(hasDiagnosticsOtelConfig ? { [DIAGNOSTICS_OTEL_PLUGIN_ID]: { enabled: diagnosticsOtelEnabled } } : {}),
           // Some OpenClaw versions auto-inject qwen-portal-auth for
           // Qwen/DashScope URLs. Declare it only when the plugin actually
           // exists, otherwise it becomes a stale entry on every startup.
@@ -1926,7 +2026,10 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
         const trustedPluginAllow = Array.from(new Set([
           ...existingAllow,
           BUNDLED_BROWSER_PLUGIN_ID,
-          ...preinstalledPlugins.map(plugin => plugin.pluginId),
+          ...(diagnosticsOtelEnabled ? [DIAGNOSTICS_OTEL_PLUGIN_ID] : []),
+          ...preinstalledPlugins
+            .filter(plugin => !pluginMatches(plugin, DIAGNOSTICS_OTEL_PLUGIN_ID) || diagnosticsOtelEnabled)
+            .map(plugin => plugin.pluginId),
           ...userPlugins.filter(plugin => plugin.enabled).map(plugin => plugin.pluginId),
         ])).sort();
 
