@@ -941,6 +941,10 @@ contextBridge.exposeInMainWorld('electron', {
   },
   auth: {
     login: (loginUrl?: string) => ipcRenderer.invoke('auth:login', { loginUrl }),
+    passwordLogin: (credentials: { account: string; password: string }) =>
+      ipcRenderer.invoke(AuthIpcChannel.PasswordLogin, credentials),
+    prepareLogin: (loginUrl?: string) => ipcRenderer.invoke(AuthIpcChannel.PrepareLogin, { loginUrl }),
+    cancelLogin: () => ipcRenderer.invoke(AuthIpcChannel.CancelLogin),
     exchange: (code: string) => ipcRenderer.invoke('auth:exchange', { code }),
     getUser: () => ipcRenderer.invoke('auth:getUser'),
     getQuota: () => ipcRenderer.invoke('auth:getQuota'),

@@ -75,6 +75,8 @@ const BUNDLED_EXTENSIONS_TO_KEEP = new Set([
   'telegram', 'discord', 'feishu', 'qqbot',
   // --- Core features ---
   'browser', 'memory-core', 'lobster', 'llm-task', 'zai',
+  // --- Diagnostics / monitoring ---
+  'diagnostics-otel',
   // --- Media / voice (bundled defaults, may be used by agents) ---
   'image-generation-core', 'media-understanding-core', 'speech-core', 'talk-voice',
   // --- Internal ---

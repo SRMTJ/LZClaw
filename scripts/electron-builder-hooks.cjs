@@ -64,6 +64,16 @@ function getOpenClawRuntimeBuildHint(targetId) {
   return `npm run openclaw:runtime:${targetId}`;
 }
 
+function resolvePreinstalledPluginDir(runtimeRoot, plugin) {
+  if (plugin?.runtimeOrigin === 'bundled') {
+    return path.join(runtimeRoot, 'dist', 'extensions', plugin.id);
+  }
+  if (plugin?.runtimeOrigin === 'state-npm') {
+    return path.join(runtimeRoot, 'preinstalled-extensions', plugin.id);
+  }
+  return path.join(runtimeRoot, 'third-party-extensions', plugin.id);
+}
+
 function syncCurrentOpenClawRuntimeForTarget(context) {
   const runtimeBase = path.join(__dirname, '..', 'vendor', 'openclaw-runtime');
   const currentRoot = path.join(runtimeBase, 'current');
@@ -102,12 +112,11 @@ function verifyPreinstalledPlugins(runtimeRoot, buildHint) {
     return;
   }
 
-  const extensionsDir = path.join(runtimeRoot, 'third-party-extensions');
   const missing = [];
 
   for (const plugin of plugins) {
     if (!plugin.id) continue;
-    const pluginDir = path.join(extensionsDir, plugin.id);
+    const pluginDir = resolvePreinstalledPluginDir(runtimeRoot, plugin);
     if (!existsSync(pluginDir)) {
       missing.push(plugin.id);
     }

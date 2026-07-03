@@ -22,6 +22,24 @@ interface AuthStateRefreshResult {
   quota: UserQuota | null;
 }
 
+const MOCK_AUTH_USER: UserProfile = {
+  yid: 'mock-lzclaw-user',
+  nickname: '模拟用户',
+  avatarUrl: null,
+  userId: 'mock-lzclaw-user',
+  id: 0,
+  status: 1,
+};
+
+const MOCK_AUTH_QUOTA: UserQuota = {
+  planName: '模拟套餐',
+  subscriptionStatus: 'active',
+  creditsLimit: 999_999,
+  creditsUsed: 0,
+  creditsRemaining: 999_999,
+  hasPaidCredits: true,
+};
+
 export interface PricingCatalogTextModel {
   modelId?: string;
   modelName?: string;
@@ -93,6 +111,7 @@ class AuthService {
   private unsubQuotaChanged: (() => void) | null = null;
   private unsubWindowState: (() => void) | null = null;
   private lastRefreshTime = 0;
+  private isMockLoggedIn = false;
 
   /**
    * Initialize: try to restore login state from persisted token.
@@ -132,7 +151,7 @@ class AuthService {
 
     // Refresh quota and models when Electron window gains focus — user may have purchased on portal
     this.unsubWindowState = window.electron.window.onStateChanged((state) => {
-      if (state.isFocused && store.getState().auth.isLoggedIn) {
+      if (state.isFocused && store.getState().auth.isLoggedIn && !this.isMockLoggedIn) {
         const now = Date.now();
         if (now - this.lastRefreshTime > 30_000) {
           this.lastRefreshTime = now;
@@ -145,39 +164,57 @@ class AuthService {
   }
 
   /**
-   * Initiate login (opens system browser).
+   * The unauthenticated app gate renders the password login form directly.
    */
   async login() {
-    const loginUrl = await this.fetchLoginUrl();
-    await window.electron.auth.login(loginUrl);
+    if (!store.getState().auth.isLoggedIn) {
+      store.dispatch(setLoggedOut());
+    }
   }
 
-  /**
-   * Fetch login URL from overmind, fallback to Portal login page.
-   */
-  private async fetchLoginUrl(): Promise<string> {
-    const { getLoginOvermindUrl } = await import('./endpoints');
-    const url = getLoginOvermindUrl();
-    try {
-      const response = await window.electron.api.fetch({
-        url,
-        method: 'GET',
-        headers: { Accept: 'application/json' },
-      });
-      if (response.ok && typeof response.data === 'object' && response.data !== null) {
-        const value = (response.data as any)?.data?.value;
-        if (typeof value === 'string' && value.trim()) {
-          console.log('[Auth] fetched login URL from overmind');
-          return value.trim();
-        }
-      }
-    } catch (e) {
-      console.error('[Auth] Failed to fetch login URL from overmind:', e);
+  async loginWithPassword(account: string, password: string): Promise<AuthStateRefreshResult> {
+    this.isMockLoggedIn = false;
+    const result = await window.electron.auth.passwordLogin({
+      account: account.trim(),
+      password,
+    });
+    if (!result.success || !result.user || !result.quota) {
+      throw new Error(result.error || '登录失败');
     }
-    // Fallback: use Portal login page directly
-    const { getPortalLoginUrl } = await import('./endpoints');
-    console.log('[Auth] using fallback portal login URL');
-    return getPortalLoginUrl();
+
+    store.dispatch(setLoggedIn({ user: result.user, quota: result.quota }));
+    await this.loadServerModels();
+    void this.fetchProfileSummary();
+    void this.refreshQuota();
+    return {
+      isLoggedIn: true,
+      user: result.user,
+      quota: result.quota,
+    };
+  }
+
+  async loginWithMockUser(): Promise<AuthStateRefreshResult> {
+    this.isMockLoggedIn = true;
+    store.dispatch(clearServerModels());
+    store.dispatch(setLoggedIn({ user: MOCK_AUTH_USER, quota: MOCK_AUTH_QUOTA }));
+    store.dispatch(setProfileSummary({
+      id: MOCK_AUTH_USER.id ?? 0,
+      nickname: MOCK_AUTH_USER.nickname,
+      avatarUrl: MOCK_AUTH_USER.avatarUrl,
+      totalCreditsRemaining: MOCK_AUTH_QUOTA.creditsRemaining,
+      creditItems: [{
+        type: 'subscription',
+        label: '模拟额度',
+        labelEn: 'Mock credits',
+        creditsRemaining: MOCK_AUTH_QUOTA.creditsRemaining,
+        expiresAt: null,
+      }],
+    }));
+    return {
+      isLoggedIn: true,
+      user: MOCK_AUTH_USER,
+      quota: MOCK_AUTH_QUOTA,
+    };
   }
 
   /**
@@ -187,6 +224,7 @@ class AuthService {
     try {
       const result = await window.electron.auth.exchange(code);
       if (result.success) {
+        this.isMockLoggedIn = false;
         store.dispatch(setLoggedIn({ user: result.user, quota: result.quota }));
         await this.loadServerModels();
         void this.fetchProfileSummary();
@@ -208,6 +246,7 @@ class AuthService {
     try {
       const result = await window.electron.auth.getUser();
       if (result.success && result.user) {
+        this.isMockLoggedIn = false;
         store.dispatch(setLoggedIn({ user: result.user, quota: result.quota }));
         await this.loadServerModels();
         void this.fetchProfileSummary();
@@ -218,6 +257,7 @@ class AuthService {
     }
 
     if (options.clearOnFailure) {
+      this.isMockLoggedIn = false;
       store.dispatch(setLoggedOut());
       store.dispatch(clearServerModels());
       await this.loadPublicPricingCatalogModels();
@@ -235,6 +275,7 @@ class AuthService {
    * Logout.
    */
   async logout() {
+    this.isMockLoggedIn = false;
     await window.electron.auth.logout();
     store.dispatch(setLoggedOut());
     store.dispatch(clearServerModels());
@@ -245,6 +286,7 @@ class AuthService {
    * Refresh quota information.
    */
   async refreshQuota() {
+    if (this.isMockLoggedIn) return;
     try {
       const result = await window.electron.auth.getQuota();
       if (result.success) {
@@ -259,6 +301,7 @@ class AuthService {
    * Fetch profile summary (credits breakdown).
    */
   async fetchProfileSummary() {
+    if (this.isMockLoggedIn) return;
     try {
       const result = await window.electron.auth.getProfileSummary();
       if (result.success && result.data) {
@@ -293,6 +336,7 @@ class AuthService {
    * Load available models from server and dispatch to store.
    */
   private async loadServerModels() {
+    if (this.isMockLoggedIn) return;
     try {
       const modelsResult = await window.electron.auth.getModels();
       if (modelsResult.success && modelsResult.models) {

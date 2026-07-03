@@ -3,6 +3,7 @@ import { describe, expect, test } from 'vitest';
 import {
   appendCallbackReturnTo,
   appendLoginParams,
+  closeActiveAuthLocalCallback,
   startAuthLocalCallback,
 } from './authLocalCallbackServer';
 
@@ -141,6 +142,16 @@ describe('startAuthLocalCallback', () => {
     expect(response.status).toBe(400);
     expect(body).toContain('登录失败');
     expect(codes).toEqual([]);
+  });
+
+  test('closes the active callback server on demand', async () => {
+    const callback = await startAuthLocalCallback({ onCode: () => {} });
+
+    await closeActiveAuthLocalCallback();
+
+    await expect(fetch(`${callback.redirectUri}?code=abc123&state=${callback.state}`))
+      .rejects
+      .toThrow();
   });
 
   test('returns 404 for non-callback paths', async () => {

@@ -1389,6 +1389,14 @@ interface IElectronAPI {
   };
   auth: {
     login: (loginUrl?: string) => Promise<{ success: boolean; error?: string }>;
+    passwordLogin: (credentials: { account: string; password: string }) => Promise<{
+      success: boolean;
+      user?: any;
+      quota?: any;
+      error?: string;
+    }>;
+    prepareLogin: (loginUrl?: string) => Promise<{ success: boolean; loginUrl?: string; error?: string }>;
+    cancelLogin: () => Promise<{ success: boolean; error?: string }>;
     exchange: (
       code: string,
     ) => Promise<{ success: boolean; user?: any; quota?: any; error?: string }>;
@@ -1451,6 +1459,20 @@ interface IElectronAPI {
   };
   auth: {
     login: (loginUrl?: string) => Promise<{ success: boolean; error?: string }>;
+    passwordLogin: (credentials: { account: string; password: string }) => Promise<{
+      success: boolean;
+      user?: import('../store/slices/authSlice').UserProfile;
+      quota?: {
+        planName: string;
+        subscriptionStatus: string;
+        creditsLimit: number;
+        creditsUsed: number;
+        creditsRemaining: number;
+      };
+      error?: string;
+    }>;
+    prepareLogin: (loginUrl?: string) => Promise<{ success: boolean; loginUrl?: string; error?: string }>;
+    cancelLogin: () => Promise<{ success: boolean; error?: string }>;
     exchange: (code: string) => Promise<{
       success: boolean;
       user?: import('../store/slices/authSlice').UserProfile;

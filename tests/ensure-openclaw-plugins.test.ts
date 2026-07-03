@@ -15,6 +15,10 @@ const {
   parseGitSpec,
   resolveGitPackSpec,
   resolvePluginInstallSource,
+  resolveRuntimePluginStaleTargetDirs,
+  resolveRuntimePluginTargetDir,
+  shouldInstallAsBundledRuntimeExtension,
+  shouldInstallAsStateNpmRuntimeExtension,
 } = require('../scripts/ensure-openclaw-plugins.cjs');
 
 describe('ensure-openclaw-plugins', () => {
@@ -120,6 +124,27 @@ describe('ensure-openclaw-plugins', () => {
       installSpec: '/tmp/local-plugin',
       pinnedDisplaySpec: '/tmp/local-plugin',
     });
+  });
+
+  test('places official diagnostics plugin in preinstalled state-npm staging', () => {
+    const runtimeRoot = path.join('runtime', 'current');
+    const thirdPartyDir = path.join(runtimeRoot, 'third-party-extensions');
+    const plugin = {
+      id: 'diagnostics-otel',
+      npm: '@openclaw/diagnostics-otel',
+      version: '2026.6.1',
+      runtimeOrigin: 'state-npm',
+    };
+
+    expect(shouldInstallAsBundledRuntimeExtension(plugin)).toBe(false);
+    expect(shouldInstallAsStateNpmRuntimeExtension(plugin)).toBe(true);
+    expect(resolveRuntimePluginTargetDir(runtimeRoot, thirdPartyDir, plugin)).toBe(
+      path.join(runtimeRoot, 'preinstalled-extensions', 'diagnostics-otel'),
+    );
+    expect(resolveRuntimePluginStaleTargetDirs(runtimeRoot, thirdPartyDir, plugin)).toEqual([
+      path.join(runtimeRoot, 'dist', 'extensions', 'diagnostics-otel'),
+      path.join(thirdPartyDir, 'diagnostics-otel'),
+    ]);
   });
 
   test('finds plugins installed in the legacy extensions directory', () => {

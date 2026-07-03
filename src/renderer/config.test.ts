@@ -83,6 +83,18 @@ test('defaultConfig enables usage analytics by default', () => {
   expect(defaultConfig.usageAnalyticsEnabled).toBe(true);
 });
 
+test('defaultConfig enables diagnostics OpenTelemetry by default', () => {
+  expect(defaultConfig.diagnosticsOtel).toMatchObject({
+    enabled: true,
+    serviceName: 'lzclaw-openclaw-gateway',
+    traces: true,
+    metrics: true,
+    logs: true,
+    sampleRate: 0.2,
+    flushIntervalMs: 60000,
+  });
+});
+
 test('defaultConfig gives DeepSeek V4 models 1M context', () => {
   expect(defaultConfig.providers?.[ProviderName.DeepSeek]?.models?.slice(0, 2)).toEqual([
     { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', supportsImage: false, supportsThinking: true, contextWindow: 1_000_000 },

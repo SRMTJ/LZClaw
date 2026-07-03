@@ -1,4 +1,4 @@
-import { ArchiveBoxIcon, ArrowPathIcon, ArrowPathRoundedSquareIcon, ChatBubbleLeftIcon, CheckCircleIcon, CpuChipIcon, CubeIcon, EnvelopeIcon, ExclamationTriangleIcon, GlobeAltIcon, InformationCircleIcon, MagnifyingGlassIcon, SunIcon, TrashIcon, WrenchScrewdriverIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { ArchiveBoxIcon, ArrowPathIcon, ArrowPathRoundedSquareIcon, ChartBarIcon, ChatBubbleLeftIcon, CheckCircleIcon, CpuChipIcon, CubeIcon, EnvelopeIcon, ExclamationTriangleIcon, GlobeAltIcon, InformationCircleIcon, MagnifyingGlassIcon, SunIcon, TrashIcon, WrenchScrewdriverIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import React, { useCallback,useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
@@ -10,6 +10,12 @@ import {
   normalizeBrowserWebAccessConfig,
 } from '../../shared/browserWebAccess/constants';
 import { DataMigrationRestoreStatus } from '../../shared/dataMigration/constants';
+import {
+  defaultDiagnosticsOtelSettings,
+  type DiagnosticsOtelSettings,
+  normalizeDiagnosticsOtelSettings,
+  type PartialDiagnosticsOtelSettings,
+} from '../../shared/diagnosticsOtel/constants';
 import { normalizeNotificationSettings } from '../../shared/notifications/constants';
 import { OpenClawEnginePhase, OpenClawGatewayRepairErrorCode } from '../../shared/openclawEngine/constants';
 import { ProviderAuthType, ProviderName, ProviderRegistry, resolveCodingPlanBaseUrl } from '../../shared/providers';
@@ -75,7 +81,7 @@ import ModelSettingsSection, { ModelEditorDialog } from './settings/ModelSetting
 import EmailSkillConfig from './skills/EmailSkillConfig';
 import ThemedSelect from './ui/ThemedSelect';
 
-type TabType = 'general' | 'appearance' | 'coworkAgentEngine' | 'model' | 'browserWebAccess' | 'coworkMemory' | 'coworkDreaming' | 'shortcuts' | 'im' | 'email' | 'plugins' | 'about';
+type TabType = 'general' | 'appearance' | 'coworkAgentEngine' | 'model' | 'browserWebAccess' | 'diagnosticsOtel' | 'coworkMemory' | 'coworkDreaming' | 'shortcuts' | 'im' | 'email' | 'plugins' | 'about';
 
 const waitForNextPaint = (): Promise<void> => new Promise(resolve => {
   window.requestAnimationFrame(() => {
@@ -1268,6 +1274,7 @@ const Settings: React.FC<SettingsProps> = ({
   const [useSystemProxy, setUseSystemProxy] = useState(false);
   const [sqliteAutoBackupEnabled, setSqliteAutoBackupEnabled] = useState(false);
   const [usageAnalyticsEnabled, setUsageAnalyticsEnabled] = useState(true);
+  const [diagnosticsOtel, setDiagnosticsOtel] = useState<DiagnosticsOtelSettings>(() => defaultDiagnosticsOtelSettings);
   const [taskCompletionNotificationsEnabled, setTaskCompletionNotificationsEnabled] = useState(true);
   const [browserWebAccess, setBrowserWebAccess] = useState<BrowserWebAccessConfig>(() => ({
     ...defaultBrowserWebAccessConfig,
@@ -1325,6 +1332,19 @@ const Settings: React.FC<SettingsProps> = ({
 
   // Add state for providers configuration
   const [providers, setProviders] = useState<ProvidersConfig>(() => getDefaultProviders());
+
+  const updateDiagnosticsOtel = useCallback((patch: PartialDiagnosticsOtelSettings) => {
+    setDiagnosticsOtel(prev => normalizeDiagnosticsOtelSettings({
+      ...prev,
+      ...patch,
+      captureContent: patch.captureContent
+        ? {
+            ...prev.captureContent,
+            ...patch.captureContent,
+          }
+        : prev.captureContent,
+    }));
+  }, []);
 
 
   // authType defaults to undefined on first open, which should behave as OAuth mode
@@ -1691,6 +1711,7 @@ const Settings: React.FC<SettingsProps> = ({
       setUseSystemProxy(config.useSystemProxy ?? false);
       setSqliteAutoBackupEnabled(config.sqliteAutoBackupEnabled === true);
       setUsageAnalyticsEnabled(config.usageAnalyticsEnabled !== false);
+      setDiagnosticsOtel(normalizeDiagnosticsOtelSettings(config.diagnosticsOtel));
       setTaskCompletionNotificationsEnabled(
         normalizeNotificationSettings(config.notificationSettings).taskCompletionNotificationsEnabled,
       );
@@ -2969,6 +2990,7 @@ const Settings: React.FC<SettingsProps> = ({
         useSystemProxy,
         sqliteAutoBackupEnabled,
         usageAnalyticsEnabled,
+        diagnosticsOtel,
         notificationSettings: {
           taskCompletionNotificationsEnabled,
         },
@@ -3917,6 +3939,7 @@ const Settings: React.FC<SettingsProps> = ({
       { key: 'model' as TabType,          label: i18nService.t('settingsCustomModel'), icon: <CubeIcon className="h-5 w-5" /> },
       { key: 'im' as TabType,             label: i18nService.t('imBot'),          icon: <ChatBubbleLeftIcon className="h-5 w-5" /> },
       { key: 'browserWebAccess' as TabType, label: i18nService.t('browserWebAccessTab'), icon: <GlobeAltIcon className="h-5 w-5" /> },
+      { key: 'diagnosticsOtel' as TabType, label: i18nService.t('diagnosticsOtelTab'), icon: <ChartBarIcon className="h-5 w-5" /> },
       { key: 'email' as TabType,          label: i18nService.t('emailTab'),       icon: <EnvelopeIcon className="h-5 w-5" /> },
       { key: 'coworkMemory' as TabType,   label: i18nService.t('coworkMemoryTitle'), icon: <BrainIcon className="h-5 w-5" /> },
       { key: 'coworkDreaming' as TabType, label: i18nService.t('coworkMemoryTabDreaming'), icon: <DreamingTabIcon className="h-5 w-5" /> },
@@ -4124,6 +4147,224 @@ const Settings: React.FC<SettingsProps> = ({
       </div>
     </div>
   );
+
+  const renderDiagnosticsOtelSettings = () => {
+    const disabled = !diagnosticsOtel.enabled;
+    const captureDisabled = disabled || !diagnosticsOtel.captureContent.enabled;
+    const parseNumberInput = (value: string, fallback: number): number => {
+      const parsed = value.trim() === '' ? fallback : Number(value);
+      return Number.isFinite(parsed) ? parsed : fallback;
+    };
+    const inputClassName = 'h-9 w-full rounded-lg border border-border bg-surface px-3 text-sm text-foreground outline-none transition-colors placeholder:text-secondary/70 focus:border-primary focus:ring-1 focus:ring-primary/25 disabled:cursor-not-allowed disabled:opacity-60';
+    const renderTextInput = (
+      labelKey: string,
+      value: string,
+      onChange: (value: string) => void,
+      placeholderKey: string,
+      helperKey?: string,
+    ) => (
+      <label className="block space-y-2">
+        <span className="text-xs font-medium text-foreground">{i18nService.t(labelKey)}</span>
+        <input
+          type="text"
+          value={value}
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={i18nService.t(placeholderKey)}
+          className={inputClassName}
+        />
+        {helperKey && (
+          <span className="block text-xs leading-5 text-secondary">{i18nService.t(helperKey)}</span>
+        )}
+      </label>
+    );
+    const renderNumberInput = (
+      labelKey: string,
+      value: number,
+      onChange: (value: number) => void,
+      options: { min: number; max: number; step: number; helperKey?: string },
+    ) => (
+      <label className="block space-y-2">
+        <span className="text-xs font-medium text-foreground">{i18nService.t(labelKey)}</span>
+        <input
+          type="number"
+          min={options.min}
+          max={options.max}
+          step={options.step}
+          value={value}
+          disabled={disabled}
+          onChange={(event) => onChange(parseNumberInput(event.target.value, value))}
+          className={inputClassName}
+        />
+        {options.helperKey && (
+          <span className="block text-xs leading-5 text-secondary">{i18nService.t(options.helperKey)}</span>
+        )}
+      </label>
+    );
+
+    return (
+      <div className="space-y-8 pb-2">
+        <SettingsToggleRow
+          title={i18nService.t('diagnosticsOtelEnabled')}
+          description={i18nService.t('diagnosticsOtelEnabledDescription')}
+          checked={diagnosticsOtel.enabled}
+          onToggle={() => updateDiagnosticsOtel({ enabled: !diagnosticsOtel.enabled })}
+        />
+
+        <section className="space-y-4">
+          <h4 className="text-sm font-medium text-foreground">
+            {i18nService.t('diagnosticsOtelEndpointTitle')}
+          </h4>
+          <div className="grid gap-4">
+            {renderTextInput(
+              'diagnosticsOtelServiceName',
+              diagnosticsOtel.serviceName,
+              value => updateDiagnosticsOtel({ serviceName: value }),
+              'diagnosticsOtelServiceNamePlaceholder',
+            )}
+            {renderTextInput(
+              'diagnosticsOtelEndpointBaseUrl',
+              diagnosticsOtel.endpointBaseUrl,
+              value => updateDiagnosticsOtel({ endpointBaseUrl: value }),
+              'diagnosticsOtelEndpointBaseUrlPlaceholder',
+              'diagnosticsOtelEndpointBaseUrlHint',
+            )}
+            <div className="grid gap-4 md:grid-cols-3">
+              {renderTextInput(
+                'diagnosticsOtelTracesEndpoint',
+                diagnosticsOtel.tracesEndpoint,
+                value => updateDiagnosticsOtel({ tracesEndpoint: value }),
+                'diagnosticsOtelTracesEndpointPlaceholder',
+              )}
+              {renderTextInput(
+                'diagnosticsOtelMetricsEndpoint',
+                diagnosticsOtel.metricsEndpoint,
+                value => updateDiagnosticsOtel({ metricsEndpoint: value }),
+                'diagnosticsOtelMetricsEndpointPlaceholder',
+              )}
+              {renderTextInput(
+                'diagnosticsOtelLogsEndpoint',
+                diagnosticsOtel.logsEndpoint,
+                value => updateDiagnosticsOtel({ logsEndpoint: value }),
+                'diagnosticsOtelLogsEndpointPlaceholder',
+              )}
+            </div>
+          </div>
+        </section>
+
+        <section className="space-y-4">
+          <h4 className="text-sm font-medium text-foreground">
+            {i18nService.t('diagnosticsOtelSignalsTitle')}
+          </h4>
+          <div className="grid gap-4 md:grid-cols-3">
+            <SettingsToggleRow
+              title={i18nService.t('diagnosticsOtelTraces')}
+              description={i18nService.t('diagnosticsOtelTracesDescription')}
+              checked={diagnosticsOtel.traces}
+              disabled={disabled}
+              onToggle={() => updateDiagnosticsOtel({ traces: !diagnosticsOtel.traces })}
+            />
+            <SettingsToggleRow
+              title={i18nService.t('diagnosticsOtelMetrics')}
+              description={i18nService.t('diagnosticsOtelMetricsDescription')}
+              checked={diagnosticsOtel.metrics}
+              disabled={disabled}
+              onToggle={() => updateDiagnosticsOtel({ metrics: !diagnosticsOtel.metrics })}
+            />
+            <SettingsToggleRow
+              title={i18nService.t('diagnosticsOtelLogs')}
+              description={i18nService.t('diagnosticsOtelLogsDescription')}
+              checked={diagnosticsOtel.logs}
+              disabled={disabled}
+              onToggle={() => updateDiagnosticsOtel({ logs: !diagnosticsOtel.logs })}
+            />
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            {renderNumberInput(
+              'diagnosticsOtelSampleRate',
+              diagnosticsOtel.sampleRate,
+              value => updateDiagnosticsOtel({ sampleRate: value }),
+              { min: 0, max: 1, step: 0.01, helperKey: 'diagnosticsOtelSampleRateHint' },
+            )}
+            {renderNumberInput(
+              'diagnosticsOtelFlushIntervalMs',
+              diagnosticsOtel.flushIntervalMs,
+              value => updateDiagnosticsOtel({ flushIntervalMs: value }),
+              { min: 1000, max: 600000, step: 1000, helperKey: 'diagnosticsOtelFlushIntervalMsHint' },
+            )}
+          </div>
+        </section>
+
+        <section className="space-y-4">
+          <SettingsToggleRow
+            title={i18nService.t('diagnosticsOtelCaptureContent')}
+            description={i18nService.t('diagnosticsOtelCaptureContentDescription')}
+            checked={diagnosticsOtel.captureContent.enabled}
+            disabled={disabled}
+            onToggle={() => updateDiagnosticsOtel({
+              captureContent: { enabled: !diagnosticsOtel.captureContent.enabled },
+            })}
+          />
+          <div className="grid gap-4 md:grid-cols-2">
+            <SettingsToggleRow
+              title={i18nService.t('diagnosticsOtelCaptureInputMessages')}
+              description={i18nService.t('diagnosticsOtelCaptureInputMessagesDescription')}
+              checked={diagnosticsOtel.captureContent.inputMessages}
+              disabled={captureDisabled}
+              onToggle={() => updateDiagnosticsOtel({
+                captureContent: { inputMessages: !diagnosticsOtel.captureContent.inputMessages },
+              })}
+            />
+            <SettingsToggleRow
+              title={i18nService.t('diagnosticsOtelCaptureOutputMessages')}
+              description={i18nService.t('diagnosticsOtelCaptureOutputMessagesDescription')}
+              checked={diagnosticsOtel.captureContent.outputMessages}
+              disabled={captureDisabled}
+              onToggle={() => updateDiagnosticsOtel({
+                captureContent: { outputMessages: !diagnosticsOtel.captureContent.outputMessages },
+              })}
+            />
+            <SettingsToggleRow
+              title={i18nService.t('diagnosticsOtelCaptureToolInputs')}
+              description={i18nService.t('diagnosticsOtelCaptureToolInputsDescription')}
+              checked={diagnosticsOtel.captureContent.toolInputs}
+              disabled={captureDisabled}
+              onToggle={() => updateDiagnosticsOtel({
+                captureContent: { toolInputs: !diagnosticsOtel.captureContent.toolInputs },
+              })}
+            />
+            <SettingsToggleRow
+              title={i18nService.t('diagnosticsOtelCaptureToolOutputs')}
+              description={i18nService.t('diagnosticsOtelCaptureToolOutputsDescription')}
+              checked={diagnosticsOtel.captureContent.toolOutputs}
+              disabled={captureDisabled}
+              onToggle={() => updateDiagnosticsOtel({
+                captureContent: { toolOutputs: !diagnosticsOtel.captureContent.toolOutputs },
+              })}
+            />
+            <SettingsToggleRow
+              title={i18nService.t('diagnosticsOtelCaptureSystemPrompt')}
+              description={i18nService.t('diagnosticsOtelCaptureSystemPromptDescription')}
+              checked={diagnosticsOtel.captureContent.systemPrompt}
+              disabled={captureDisabled}
+              onToggle={() => updateDiagnosticsOtel({
+                captureContent: { systemPrompt: !diagnosticsOtel.captureContent.systemPrompt },
+              })}
+            />
+            <SettingsToggleRow
+              title={i18nService.t('diagnosticsOtelCaptureToolDefinitions')}
+              description={i18nService.t('diagnosticsOtelCaptureToolDefinitionsDescription')}
+              checked={diagnosticsOtel.captureContent.toolDefinitions}
+              disabled={captureDisabled}
+              onToggle={() => updateDiagnosticsOtel({
+                captureContent: { toolDefinitions: !diagnosticsOtel.captureContent.toolDefinitions },
+              })}
+            />
+          </div>
+        </section>
+      </div>
+    );
+  };
 
   const renderTabContent = () => {
     switch(activeTab) {
@@ -4654,6 +4895,9 @@ const Settings: React.FC<SettingsProps> = ({
             onChange={setBrowserWebAccess}
           />
         );
+
+      case 'diagnosticsOtel':
+        return renderDiagnosticsOtelSettings();
 
       case 'model':
         return (

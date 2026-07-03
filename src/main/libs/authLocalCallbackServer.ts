@@ -19,6 +19,10 @@ export interface AuthLocalCallback {
 
 let activeCallback: AuthLocalCallback | null = null;
 
+export async function closeActiveAuthLocalCallback(): Promise<void> {
+  await activeCallback?.close();
+}
+
 const escapeHtml = (value: string): string =>
   value.replace(/[<>&"]/g, (char) => {
     if (char === '<') return '&lt;';

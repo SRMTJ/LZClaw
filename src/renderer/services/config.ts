@@ -1,6 +1,7 @@
 import { ApiFormat, type ProviderConfig, ProviderName, ProviderRegistry } from '@shared/providers';
 
 import { normalizeBrowserWebAccessConfig } from '../../shared/browserWebAccess/constants';
+import { normalizeDiagnosticsOtelSettings } from '../../shared/diagnosticsOtel/constants';
 import { normalizeNotificationSettings } from '../../shared/notifications/constants';
 import {
   AppConfig,
@@ -514,6 +515,7 @@ const hydrateStoredConfig = (storedConfig: AppConfig): AppConfig => {
     providers: mergedProviders as AppConfig['providers'],
     providerModelMigrationVersions,
     browserWebAccess: normalizeBrowserWebAccessConfig(storedConfig.browserWebAccess),
+    diagnosticsOtel: normalizeDiagnosticsOtelSettings(storedConfig.diagnosticsOtel),
     notificationSettings: normalizeNotificationSettings(storedConfig.notificationSettings),
   });
 };
@@ -572,6 +574,9 @@ class ConfigService {
         : {}),
       browserWebAccess: normalizeBrowserWebAccessConfig(
         newConfig.browserWebAccess ?? base.browserWebAccess,
+      ),
+      diagnosticsOtel: normalizeDiagnosticsOtelSettings(
+        newConfig.diagnosticsOtel ?? base.diagnosticsOtel,
       ),
       notificationSettings: normalizeNotificationSettings(
         newConfig.notificationSettings ?? base.notificationSettings,

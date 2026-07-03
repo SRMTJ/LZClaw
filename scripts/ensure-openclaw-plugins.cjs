@@ -11,7 +11,7 @@
  * Flow per plugin:
  *   1. Checks a local cache in vendor/openclaw-plugins/{id}/
  *   2. Installs via `openclaw plugins install` if not cached at the right version
- *   3. Copies the plugin into vendor/openclaw-runtime/current/extensions/{id}/
+ *   3. Copies the plugin into the runtime extension directory
  *
  * Environment variables:
  *   OPENCLAW_SKIP_PLUGINS          – Set to "1" to skip this script entirely
@@ -38,6 +38,9 @@ const {
 // ---------------------------------------------------------------------------
 
 const rootDir = path.resolve(__dirname, '..');
+const BUNDLED_RUNTIME_ORIGIN = 'bundled';
+const STATE_NPM_RUNTIME_ORIGIN = 'state-npm';
+
 function log(msg) {
   console.log(`[openclaw-plugins] ${msg}`);
 }
@@ -58,6 +61,34 @@ function copyDirRecursive(src, dest) {
     filter: sourcePath =>
       !shouldExcludeLinkedPeer || path.resolve(sourcePath) !== path.resolve(linkedOpenClawPeer),
   });
+}
+
+function shouldInstallAsBundledRuntimeExtension(plugin) {
+  return plugin?.runtimeOrigin === BUNDLED_RUNTIME_ORIGIN;
+}
+
+function shouldInstallAsStateNpmRuntimeExtension(plugin) {
+  return plugin?.runtimeOrigin === STATE_NPM_RUNTIME_ORIGIN;
+}
+
+function resolveRuntimePluginTargetDir(runtimeCurrentDir, runtimeExtensionsDir, plugin) {
+  if (shouldInstallAsBundledRuntimeExtension(plugin)) {
+    return path.join(runtimeCurrentDir, 'dist', 'extensions', plugin.id);
+  }
+  if (shouldInstallAsStateNpmRuntimeExtension(plugin)) {
+    return path.join(runtimeCurrentDir, 'preinstalled-extensions', plugin.id);
+  }
+  return path.join(runtimeExtensionsDir, plugin.id);
+}
+
+function resolveRuntimePluginStaleTargetDirs(runtimeCurrentDir, runtimeExtensionsDir, plugin) {
+  const possibleDirs = [
+    path.join(runtimeCurrentDir, 'dist', 'extensions', plugin.id),
+    path.join(runtimeCurrentDir, 'preinstalled-extensions', plugin.id),
+    path.join(runtimeExtensionsDir, plugin.id),
+  ];
+  const targetDir = resolveRuntimePluginTargetDir(runtimeCurrentDir, runtimeExtensionsDir, plugin);
+  return possibleDirs.filter(candidate => path.resolve(candidate) !== path.resolve(targetDir));
 }
 
 function isSameOrDescendant(candidatePath, targetPath) {
@@ -601,7 +632,8 @@ function main() {
     const { id, npm: npmSpec, version, optional } = plugin;
     const cacheDir = path.join(pluginCacheBase, id);
     const installInfoPath = path.join(cacheDir, 'plugin-install-info.json');
-    const targetDir = path.join(runtimeExtensionsDir, id);
+    const targetDir = resolveRuntimePluginTargetDir(runtimeCurrentDir, runtimeExtensionsDir, plugin);
+    const staleTargetDirs = resolveRuntimePluginStaleTargetDirs(runtimeCurrentDir, runtimeExtensionsDir, plugin);
 
     log(`--- Plugin: ${id} (${npmSpec}@${version}) ---`);
 
@@ -729,6 +761,13 @@ function main() {
     if (fs.existsSync(targetDir)) {
       fs.rmSync(targetDir, { recursive: true, force: true });
     }
+    for (const staleTargetDir of staleTargetDirs) {
+      if (fs.existsSync(staleTargetDir)) {
+        fs.rmSync(staleTargetDir, { recursive: true, force: true });
+        log(`Removed stale ${id} from ${path.relative(rootDir, staleTargetDir)}`);
+      }
+    }
+    ensureDir(path.dirname(targetDir));
     copyDirRecursive(cacheDir, targetDir);
 
     // Remove the plugin-install-info.json from the target (it's cache metadata only)
@@ -763,4 +802,8 @@ module.exports = {
   parseGitSpec,
   resolveGitPackSpec,
   resolvePluginInstallSource,
+  resolveRuntimePluginStaleTargetDirs,
+  resolveRuntimePluginTargetDir,
+  shouldInstallAsBundledRuntimeExtension,
+  shouldInstallAsStateNpmRuntimeExtension,
 };

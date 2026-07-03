@@ -34,7 +34,7 @@ import { AppIpcChannel } from '../shared/app/constants';
 import { AppSettingsAutoLaunchErrorCode, AppSettingsIpc } from '../shared/appSettings/constants';
 import { AppUpdateIpc } from '../shared/appUpdate/constants';
 import { ArtifactBrowserPartition, ArtifactPreviewIpc, ArtifactPreviewProtocol } from '../shared/artifactPreview/constants';
-import { AuthIpcChannel } from '../shared/auth/constants';
+import { AuthIpcChannel, AuthLoginWebviewPartition } from '../shared/auth/constants';
 import {
   type BrowserDiagnosticResultStep,
   BrowserDiagnosticStatus,
@@ -69,6 +69,7 @@ import {
   type DataMigrationLastRestoreResult,
   DataMigrationRestoreStatus,
 } from '../shared/dataMigration/constants';
+import type { PartialDiagnosticsOtelSettings } from '../shared/diagnosticsOtel/constants';
 import { DialogIpc } from '../shared/dialog/constants';
 import {
   HtmlShareAccessMode,
@@ -150,6 +151,7 @@ import { AuthCallbackRouter } from './libs/authCallbackRouter';
 import {
   appendCallbackReturnTo,
   appendLoginParams,
+  closeActiveAuthLocalCallback,
   startAuthLocalCallback,
 } from './libs/authLocalCallbackServer';
 import {
@@ -1581,6 +1583,7 @@ const getOpenClawConfigSync = (): OpenClawConfigSync => {
       engineManager: getOpenClawEngineManager(),
       getCoworkConfig: () => getCoworkStore().getConfig(),
       getBrowserWebAccessConfig: () => getStore().get<AppConfigSettings>('app_config')?.browserWebAccess,
+      getDiagnosticsOtelSettings: () => getStore().get<AppConfigSettings>('app_config')?.diagnosticsOtel,
       isEnterprise: () => !!getStore().get('enterprise_config'),
       getOpenClawSessionPolicy: () => loadOpenClawSessionPolicyConfig(getStore()),
       getSkillsList: () =>
@@ -2964,6 +2967,7 @@ type AppConfigSettings = {
   useSystemProxy?: boolean;
   sqliteAutoBackupEnabled?: boolean;
   usageAnalyticsEnabled?: boolean;
+  diagnosticsOtel?: PartialDiagnosticsOtelSettings;
   notificationSettings?: Partial<NotificationSettings>;
   browserWebAccess?: Partial<BrowserWebAccessConfig>;
 };
@@ -4562,48 +4566,7 @@ if (!gotTheLock) {
     return quota;
   };
 
-  ipcMain.handle('auth:login', async (_event, { loginUrl }: { loginUrl?: string } = {}) => {
-    const baseUrl = loginUrl || `${getServerApiBaseUrl()}/login`;
-    const fallbackUrl = appendLoginParams(baseUrl, { source: 'electron' });
-    let localCallback: Awaited<ReturnType<typeof startAuthLocalCallback>> | null = null;
-
-    try {
-      console.log('[Auth] starting browser login with local callback server');
-      localCallback = await startAuthLocalCallback({
-        onCode: code => {
-          authCallbackRouter.handleAuthCode(code);
-          focusMainWindow('local auth callback');
-        },
-      });
-      const returnTo = appendLoginParams(baseUrl, {
-        source: 'electron',
-        electronLogin: 'success',
-      });
-      const finalUrl = appendLoginParams(baseUrl, {
-        source: 'electron',
-        redirect_uri: appendCallbackReturnTo(localCallback.redirectUri, returnTo),
-        state: localCallback.state,
-      });
-      console.log('[Auth] opening portal login with local callback redirect');
-      await shell.openExternal(finalUrl);
-      return { success: true };
-    } catch (error) {
-      await localCallback?.close();
-      console.warn('[Auth] local callback login failed, falling back to deep link login:', error);
-      try {
-        await shell.openExternal(fallbackUrl);
-        return { success: true };
-      } catch (fallbackError) {
-        console.error('[Auth] login failed:', fallbackError);
-        return {
-          success: false,
-          error: fallbackError instanceof Error ? fallbackError.message : 'Failed to open login',
-        };
-      }
-    }
-  });
-
-  ipcMain.handle('auth:exchange', async (_event, { code }: { code: string }) => {
+  const exchangeAuthCode = async (code: string) => {
     try {
       const serverBaseUrl = getServerApiBaseUrl();
       const exchangeUrl = `${serverBaseUrl}/api/auth/exchange`;
@@ -4643,6 +4606,154 @@ if (!gotTheLock) {
         error: error instanceof Error ? error.message : 'Exchange failed',
       };
     }
+  };
+
+  const prepareAuthLoginUrl = async (loginUrl?: string): Promise<{
+    success: boolean;
+    loginUrl?: string;
+    fallbackUrl: string;
+    error?: string;
+  }> => {
+    const baseUrl = loginUrl || `${getServerApiBaseUrl()}/login`;
+    const fallbackUrl = appendLoginParams(baseUrl, { source: 'electron' });
+    let localCallback: Awaited<ReturnType<typeof startAuthLocalCallback>> | null = null;
+
+    try {
+      console.log('[Auth] starting in-app login with local callback server');
+      localCallback = await startAuthLocalCallback({
+        onCode: code => {
+          authCallbackRouter.handleAuthCode(code);
+          focusMainWindow('local auth callback');
+        },
+      });
+      const returnTo = appendLoginParams(baseUrl, {
+        source: 'electron',
+        electronLogin: 'success',
+      });
+      const finalUrl = appendLoginParams(baseUrl, {
+        source: 'electron',
+        redirect_uri: appendCallbackReturnTo(localCallback.redirectUri, returnTo),
+        state: localCallback.state,
+      });
+
+      return {
+        success: true,
+        loginUrl: finalUrl,
+        fallbackUrl,
+      };
+    } catch (error) {
+      await localCallback?.close();
+      const message = error instanceof Error ? error.message : 'Failed to prepare login';
+      console.warn('[Auth] failed to prepare local callback login:', error);
+      return {
+        success: false,
+        fallbackUrl,
+        error: message,
+      };
+    }
+  };
+
+  ipcMain.handle(AuthIpcChannel.PrepareLogin, async (_event, { loginUrl }: { loginUrl?: string } = {}) => {
+    const prepared = await prepareAuthLoginUrl(loginUrl);
+    if (!prepared.success || !prepared.loginUrl) {
+      return {
+        success: false,
+        error: prepared.error || 'Failed to prepare login',
+      };
+    }
+    return {
+      success: true,
+      loginUrl: prepared.loginUrl,
+    };
+  });
+
+  ipcMain.handle(AuthIpcChannel.CancelLogin, async () => {
+    try {
+      await closeActiveAuthLocalCallback();
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to cancel login',
+      };
+    }
+  });
+
+  ipcMain.handle(
+    AuthIpcChannel.PasswordLogin,
+    async (_event, { account, password }: { account?: string; password?: string } = {}) => {
+      const trimmedAccount = typeof account === 'string' ? account.trim() : '';
+      const rawPassword = typeof password === 'string' ? password : '';
+      if (!trimmedAccount) {
+        return { success: false, error: '请输入账号' };
+      }
+      if (!rawPassword) {
+        return { success: false, error: '请输入密码' };
+      }
+
+      try {
+        const serverBaseUrl = getServerApiBaseUrl();
+        const loginUrl = `${serverBaseUrl}/api/auth/mock-login`;
+        console.log(`[Auth] requesting password login at ${loginUrl}`);
+        const resp = await net.fetch(loginUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(withKeyfromBody({
+            phone: trimmedAccount,
+            password: rawPassword,
+          })),
+        });
+        const body = (await resp.json().catch((): null => null)) as {
+          code: number;
+          message?: string;
+          data?: {
+            authCode?: string;
+          };
+        } | null;
+        if (!resp.ok || body?.code !== 0 || !body.data?.authCode) {
+          return { success: false, error: body?.message || `Login failed: ${resp.status}` };
+        }
+        return await exchangeAuthCode(body.data.authCode);
+      } catch (error) {
+        console.error('[Auth] password login failed:', error);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : '登录失败',
+        };
+      }
+    },
+  );
+
+  ipcMain.handle('auth:login', async (_event, { loginUrl }: { loginUrl?: string } = {}) => {
+    const prepared = await prepareAuthLoginUrl(loginUrl);
+    const fallbackUrl = prepared.fallbackUrl;
+    if (prepared.success && prepared.loginUrl) {
+      console.log('[Auth] opening portal login with local callback redirect');
+      try {
+        await shell.openExternal(prepared.loginUrl);
+        return { success: true };
+      } catch (error) {
+        await closeActiveAuthLocalCallback();
+        console.warn('[Auth] failed to open local callback login, falling back to deep link login:', error);
+      }
+    } else {
+      console.warn('[Auth] local callback login failed, falling back to deep link login:', prepared.error);
+    }
+
+    try {
+      await shell.openExternal(fallbackUrl);
+      return { success: true };
+    } catch (fallbackError) {
+      console.error('[Auth] login failed:', fallbackError);
+      return {
+        success: false,
+        error: fallbackError instanceof Error ? fallbackError.message : 'Failed to open login',
+      };
+    }
+  });
+
+  ipcMain.handle('auth:exchange', async (_event, { code }: { code: string }) => {
+    return exchangeAuthCode(code);
   });
 
   ipcMain.handle('auth:getUser', async () => {
@@ -9519,6 +9630,11 @@ if (!gotTheLock) {
     });
 
     mainWindow.webContents.on('will-attach-webview', (event, webPreferences, params) => {
+      const requestedPartition = params.partition;
+      const webviewPartition = requestedPartition === AuthLoginWebviewPartition
+        ? AuthLoginWebviewPartition
+        : ArtifactBrowserPartition.Default;
+
       webPreferences.nodeIntegration = false;
       webPreferences.nodeIntegrationInSubFrames = false;
       webPreferences.contextIsolation = true;
@@ -9526,10 +9642,10 @@ if (!gotTheLock) {
       webPreferences.webSecurity = true;
       webPreferences.plugins = false;
       webPreferences.devTools = isDev;
-      webPreferences.partition = ArtifactBrowserPartition.Default;
+      webPreferences.partition = webviewPartition;
       delete webPreferences.preload;
 
-      params.partition = ArtifactBrowserPartition.Default;
+      params.partition = webviewPartition;
       params.allowpopups = 'false';
 
       const src = params.src ?? '';

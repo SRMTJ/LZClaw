@@ -8,6 +8,10 @@ import {
   defaultNotificationSettings,
   type NotificationSettings,
 } from '../shared/notifications/constants';
+import {
+  defaultDiagnosticsOtelSettings,
+  type DiagnosticsOtelSettings,
+} from '../shared/diagnosticsOtel/constants';
 
 export const ShortcutAction = {
   NewChat: 'newChat',
@@ -85,6 +89,8 @@ export interface AppConfig {
   sqliteAutoBackupEnabled?: boolean;
   // 是否允许发送基础产品使用统计
   usageAnalyticsEnabled?: boolean;
+  // OpenClaw diagnostics OpenTelemetry 配置
+  diagnosticsOtel?: DiagnosticsOtelSettings;
   // 通知配置
   notificationSettings?: NotificationSettings;
   // 浏览器与网页访问配置
@@ -138,6 +144,7 @@ export const defaultConfig: AppConfig = {
   useSystemProxy: false,
   sqliteAutoBackupEnabled: false,
   usageAnalyticsEnabled: true,
+  diagnosticsOtel: defaultDiagnosticsOtelSettings,
   notificationSettings: defaultNotificationSettings,
   browserWebAccess: defaultBrowserWebAccessConfig,
   app: {

@@ -168,7 +168,10 @@ const PortalMenuIcon: React.FC<{ src: string; darkInvert?: boolean }> = ({
   />
 );
 
-const UserMenu: React.FC<{ onClose: () => void }> = ({ onClose }) => {
+const UserMenu: React.FC<{
+  onClose: () => void;
+  onShowPersonalCenter?: () => void;
+}> = ({ onClose, onShowPersonalCenter }) => {
   const user = useSelector((state: RootState) => state.auth.user);
   const profileSummary = useSelector((state: RootState) => state.auth.profileSummary);
   const [creditsExpanded, setCreditsExpanded] = useState(false);
@@ -274,6 +277,15 @@ const UserMenu: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     }
   };
 
+  const handlePersonalCenter = () => {
+    reportAccountMenuAction('open_personal_center', {
+      creditItemCount: creditItems.length,
+      hasCredits,
+    });
+    onShowPersonalCenter?.();
+    onClose();
+  };
+
   const phoneSuffix = user?.phone ? user.phone.slice(-4) : '';
 
   const totalCredits = profileSummary?.totalCreditsRemaining ?? 0;
@@ -359,6 +371,13 @@ const UserMenu: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
       {/* Actions */}
       <div className="py-1">
+        {onShowPersonalCenter && (
+          <AccountMenuAction
+            icon={<UserAvatarIcon className="h-4 w-4 shrink-0 text-secondary" />}
+            label={i18nService.t('personalCenter')}
+            onClick={handlePersonalCenter}
+          />
+        )}
         {campaignActionLabel && (
           <AccountMenuAction
             icon={<PortalMenuIcon src={promoSubscriptionIconUrl} darkInvert />}
@@ -391,7 +410,9 @@ const UserMenu: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   );
 };
 
-const LoginButton: React.FC = () => {
+const LoginButton: React.FC<{ onShowPersonalCenter?: () => void }> = ({
+  onShowPersonalCenter,
+}) => {
   const { isLoggedIn, isLoading, profileSummary, user } = useSelector((state: RootState) => state.auth);
   const [showMenu, setShowMenu] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -464,7 +485,12 @@ const LoginButton: React.FC = () => {
           </>
         )}
       </button>
-      {showMenu && isLoggedIn && <UserMenu onClose={() => setShowMenu(false)} />}
+      {showMenu && isLoggedIn && (
+        <UserMenu
+          onClose={() => setShowMenu(false)}
+          onShowPersonalCenter={onShowPersonalCenter}
+        />
+      )}
     </div>
   );
 };

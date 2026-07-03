@@ -18,6 +18,7 @@ import {
 } from './gatewayLogRotation';
 import { getCodexHomeDir } from './openaiCodexAuth';
 import { migrateLegacyCronStorageWithDoctor } from './openclawCronLegacyMigration';
+import { syncDiagnosticsOtelStateNpmProject } from './openclawDiagnosticsOtelState';
 import { cleanupStaleThirdPartyPluginsFromBundledDir, listLocalOpenClawExtensionIds,syncLocalOpenClawExtensionsIntoRuntime } from './openclawLocalExtensions';
 import { ensureOpenClawWorkerShims } from './openclawWorkerShims';
 import { appendPythonRuntimeToEnv } from './pythonRuntime';
@@ -460,6 +461,12 @@ export class OpenClawEngineManager extends EventEmitter {
 
     this.ensureBareEntryFiles(runtime.root);
     console.log(`[OpenClaw] startGateway: ensureBareEntryFiles done (${elapsed()})`);
+    const diagnosticsOtelSync = syncDiagnosticsOtelStateNpmProject(runtime.root, this.stateDir);
+    if (diagnosticsOtelSync.synced) {
+      console.log(`[OpenClaw] synced diagnostics-otel npm project: ${diagnosticsOtelSync.packageDir}`);
+    } else if (diagnosticsOtelSync.skippedReason !== 'up-to-date') {
+      console.warn(`[OpenClaw] diagnostics-otel npm project sync skipped: ${diagnosticsOtelSync.skippedReason}`);
+    }
     const openclawEntry = this.resolveOpenClawEntry(runtime.root);
     console.log(`[OpenClaw] startGateway: resolveOpenClawEntry done (${elapsed()}), entry=${openclawEntry}`);
     if (!openclawEntry) {

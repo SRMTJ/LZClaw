@@ -63,6 +63,12 @@
         "id": "clawemail-email",
         "npm": "@clawemail/email",
         "version": "0.9.12"
+      },
+      {
+        "id": "diagnostics-otel",
+        "npm": "@openclaw/diagnostics-otel",
+        "version": "2026.6.1",
+        "runtimeOrigin": "state-npm"
       }
     ]
   },

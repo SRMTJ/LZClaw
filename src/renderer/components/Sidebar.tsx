@@ -37,6 +37,7 @@ import LoginButton from './LoginButton';
 
 interface SidebarProps {
   onShowSettings: () => void;
+  onShowPersonalCenter: () => void;
   onShowLogin?: () => void;
   activeView: 'cowork' | 'skills' | 'scheduledTasks' | 'kits' | 'mcp';
   onShowSkills: () => void;
@@ -125,6 +126,7 @@ const reportSidebarAction = (
 
 const Sidebar: React.FC<SidebarProps> = ({
   onShowSettings,
+  onShowPersonalCenter,
   activeView,
   onShowSkills,
   onShowCowork,
@@ -738,7 +740,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         <div className="flex items-center gap-1 pb-2 pl-3 pr-2 pt-1">
           {!hideLogin && (
             <div className="flex-1 min-w-0">
-              <LoginButton />
+              <LoginButton onShowPersonalCenter={onShowPersonalCenter} />
             </div>
           )}
           <button

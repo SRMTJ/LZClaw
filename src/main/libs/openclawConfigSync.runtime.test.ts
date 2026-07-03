@@ -229,6 +229,90 @@ describe('OpenClawConfigSync runtime config output', () => {
     expect(config.agents.defaults.mediaMaxMb).toBe(30);
   });
 
+  test('enables diagnostics OpenTelemetry with the current LZService base URL', async () => {
+    const sync = await createSync();
+
+    const result = sync.sync('casdoor-otel-default');
+    expect(result.ok).toBe(true);
+
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.plugins.entries['diagnostics-otel']).toEqual({ enabled: true });
+    expect(config.plugins.allow).toContain('diagnostics-otel');
+    expect(config.diagnostics.otel).toMatchObject({
+      enabled: true,
+      tracesEndpoint: 'https://lobsterai-server.inner.youdao.com/api/v1/traces',
+      metricsEndpoint: 'https://lobsterai-server.inner.youdao.com/api/v1/metrics',
+      logsEndpoint: 'https://lobsterai-server.inner.youdao.com/api/v1/logs',
+      protocol: 'http/protobuf',
+      serviceName: 'lzclaw-openclaw-gateway',
+      traces: true,
+      metrics: true,
+      logs: true,
+      sampleRate: 0.2,
+      flushIntervalMs: 60000,
+    });
+  });
+
+  test('disables diagnostics OpenTelemetry when app settings turn it off', async () => {
+    const sync = await createSync({
+      getDiagnosticsOtelSettings: () => ({ enabled: false }),
+    });
+
+    const result = sync.sync('casdoor-otel-disabled');
+    expect(result.ok).toBe(true);
+
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.plugins.entries['diagnostics-otel']?.enabled).not.toBe(true);
+    expect(config.plugins.allow).not.toContain('diagnostics-otel');
+    expect(config.diagnostics?.otel).toBeUndefined();
+  });
+
+  test('writes diagnostics OpenTelemetry overrides from app settings', async () => {
+    const sync = await createSync({
+      getDiagnosticsOtelSettings: () => ({
+        enabled: true,
+        serviceName: 'custom-openclaw-gateway',
+        endpointBaseUrl: 'https://otel.example.com/api',
+        metrics: false,
+        sampleRate: 1,
+        flushIntervalMs: 10000,
+        captureContent: {
+          enabled: true,
+          outputMessages: true,
+          toolOutputs: true,
+        },
+      }),
+    });
+
+    const result = sync.sync('casdoor-otel-overrides');
+    expect(result.ok).toBe(true);
+
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.plugins.entries['diagnostics-otel']).toEqual({ enabled: true });
+    expect(config.plugins.allow).toContain('diagnostics-otel');
+    expect(config.diagnostics.otel).toMatchObject({
+      enabled: true,
+      tracesEndpoint: 'https://otel.example.com/api/v1/traces',
+      metricsEndpoint: 'https://otel.example.com/api/v1/metrics',
+      logsEndpoint: 'https://otel.example.com/api/v1/logs',
+      serviceName: 'custom-openclaw-gateway',
+      traces: true,
+      metrics: false,
+      logs: true,
+      sampleRate: 1,
+      flushIntervalMs: 10000,
+      captureContent: {
+        enabled: true,
+        inputMessages: false,
+        outputMessages: true,
+        toolInputs: false,
+        toolOutputs: true,
+        systemPrompt: false,
+        toolDefinitions: false,
+      },
+    });
+  });
+
   test('writes model provider env-proxy transport when system proxy is enabled', async () => {
     const { setSystemProxyEnabled } = await import('./systemProxy');
     setSystemProxyEnabled(true);
