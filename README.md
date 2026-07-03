@@ -34,9 +34,7 @@
 <h3 align="center"><a href="https://lobsterai.youdao.com/#/download-list"><ins>Download LobsterAI</ins></a></h3>
 
 <p align="center">
-  <video src="https://ydhardwarecommon.nosdn.127.net/3209ef49b4abda6b213aef338063b86f.mp4" controls width="900">
-    Your browser does not support video playback.
-  </video>
+  <img src="docs/res/mainpage_en.png" alt="main page" />
 </p>
 
 LobsterAI is a desktop Agent that can operate in your real working environment: local files, terminal commands, browser workflows, documents, spreadsheets, slides, IM channels, scheduled jobs, and project workspaces.
@@ -106,7 +104,7 @@ Sessions and app data live locally in SQLite. OpenClaw workspace memory uses fil
 
 ### Desktop
 
-Download the latest macOS and Windows installers from [GitHub Releases](https://github.com/netease-youdao/LobsterAI/releases).
+Download the latest macOS and Windows installers from [Official Website](https://lobsterai.youdao.com/) or [GitHub Releases](https://github.com/netease-youdao/LobsterAI/releases).
 
 ### Run From Source
 

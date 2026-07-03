@@ -809,6 +809,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     engineStartingTip5: '对 AI 说"记住……"，重要信息会写入长期记忆，下次对话自动生效',
     engineStartingTip6: 'AI 执行敏感操作前会先请求你的确认，可以放心交给它',
     coworkOpenClawError: 'OpenClaw 网关未能在规定时间内启动成功。',
+    coworkOpenClawQuickRepair: '一键修复',
+    coworkOpenClawErrorRepairHint:
+      '推荐使用一键修复：自动备份并重建 OpenClaw 配置后重新启动网关，可解决大多数启动失败问题；不会删除聊天记录、模型配置、技能或工作区文件。',
+    coworkOpenClawErrorShort: '网关启动失败',
+    coworkOpenClawErrorDefer: '稍后处理',
     openClawMaintenanceTitle: '运行维护',
     openClawRepairGatewayStateTitle: '修复启动问题',
     openClawRepairGatewayStateDesc: '备份并重建 OpenClaw 配置，然后重新启动网关。',
@@ -3482,6 +3487,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
     engineStartingTip5: 'Tell AI to "remember..." and it saves key facts to long-term memory for future chats',
     engineStartingTip6: 'AI asks for your approval before sensitive operations, so you stay in control',
     coworkOpenClawError: 'OpenClaw gateway failed to become healthy in time.',
+    coworkOpenClawQuickRepair: 'Quick Repair',
+    coworkOpenClawErrorRepairHint:
+      'Quick Repair backs up and rebuilds the OpenClaw config, then restarts the gateway. It resolves most startup failures and keeps chats, model settings, skills, and workspace files.',
+    coworkOpenClawErrorShort: 'Gateway failed to start',
+    coworkOpenClawErrorDefer: 'Later',
     openClawMaintenanceTitle: 'Run Maintenance',
     openClawRepairGatewayStateTitle: 'Repair Startup',
     openClawRepairGatewayStateDesc: 'Back up and rebuild the OpenClaw config, then restart the gateway.',
@@ -5400,13 +5410,28 @@ const translations: Record<LanguageType, Record<string, string>> = {
   },
 };
 
+// localStorage key read by index.html's pre-React splash to localize its title
+const LANGUAGE_HINT_STORAGE_KEY = 'lobster-language';
+
+// 初始化完成前的语言：优先上次启动持久化的提示，其次系统语言（与 splash 的推断逻辑一致）
+const readLanguageHint = (): LanguageType => {
+  try {
+    const hint = localStorage.getItem(LANGUAGE_HINT_STORAGE_KEY);
+    if (hint === 'zh' || hint === 'en') {
+      return hint;
+    }
+    return navigator.language === 'zh-CN' ? 'zh' : 'en';
+  } catch {
+    return 'zh';
+  }
+};
+
 class I18nService {
   private currentLanguage: LanguageType = 'zh';
   private listeners = new Set<() => void>();
 
   constructor() {
-    // 默认使用中文
-    this.currentLanguage = 'zh';
+    this.currentLanguage = readLanguageHint();
   }
 
   // 初始化语言设置
@@ -5473,6 +5498,14 @@ class I18nService {
       // 默认使用英文
       this.currentLanguage = 'en';
     }
+    this.persistLanguageHint(this.currentLanguage);
+  }
+
+  // 持久化语言提示，供 index.html 的启动屏在下次启动时读取
+  private persistLanguageHint(language: LanguageType): void {
+    try {
+      localStorage.setItem(LANGUAGE_HINT_STORAGE_KEY, language);
+    } catch { /* storage unavailable */ }
   }
 
   // 根据系统语言推断应用语言
@@ -5497,6 +5530,8 @@ class I18nService {
     if (!persist) {
       return;
     }
+
+    this.persistLanguageHint(language);
 
     // 更新配置
     try {

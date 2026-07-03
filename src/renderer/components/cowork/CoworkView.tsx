@@ -1,4 +1,4 @@
-import { ShieldCheckIcon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon, ExclamationTriangleIcon, ShieldCheckIcon } from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
@@ -704,36 +704,55 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
     </div>
   );
 
-  // Engine status banner for error/non-running states (starting overlay is now global in App.tsx)
-  const engineStatusBanner = shouldShowEngineStatus && openClawStatus && openClawStatus.phase !== 'starting' ? (
-    <div className={`shrink-0 flex items-center justify-between px-4 py-2 text-xs ${isEngineError
-      ? 'bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300'
-      : 'bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300'
-    }`}>
-      <div className="flex items-center gap-2">
-        <span>{resolveEngineStatusText(openClawStatus)}</span>
-        {typeof openClawStatus.progressPercent === 'number' && (
-          <span className="opacity-70">({Math.round(openClawStatus.progressPercent)}%)</span>
-        )}
+  // Non-blocking engine states (ready/not_installed/installing) float below
+  // the title bar as a lightweight notice; starting and blocking startup
+  // failures render as global overlays in App.tsx.
+  const engineStatusBanner = shouldShowEngineStatus && !isEngineError && openClawStatus && openClawStatus.phase !== 'starting' ? (
+    <div className="pointer-events-none absolute inset-x-0 top-14 z-30 flex justify-center px-4">
+      <div className="pointer-events-auto w-full max-w-xl rounded-2xl border border-amber-200 bg-surface p-4 shadow-lg animate-fade-in-down dark:border-amber-900/60">
+        <div className="flex items-start gap-3">
+          <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-50 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400">
+            <ExclamationTriangleIcon className="h-5 w-5" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-medium text-foreground">
+              {resolveEngineStatusText(openClawStatus)}
+              {typeof openClawStatus.progressPercent === 'number' && (
+                <span className="ml-1 font-normal text-secondary">
+                  ({Math.round(openClawStatus.progressPercent)}%)
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+        <div className="mt-3 flex items-center justify-between gap-3">
+          <button
+            type="button"
+            onClick={() => onRequestAppSettings?.({ initialTab: 'coworkAgentEngine' })}
+            className="text-xs text-secondary underline-offset-2 transition-colors hover:text-foreground hover:underline"
+          >
+            {i18nService.t('coworkOpenClawGoToSettingsInstall')}
+          </button>
+          <button
+            type="button"
+            onClick={handleRestartGateway}
+            disabled={isRestartingGateway}
+            className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface px-3 text-xs font-medium text-foreground transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-60 active:scale-[0.98]"
+          >
+            {isRestartingGateway && (
+              <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
+            )}
+            {i18nService.t('coworkOpenClawRestartGateway')}
+          </button>
+        </div>
       </div>
-      <button
-        type="button"
-        onClick={handleRestartGateway}
-        disabled={isRestartingGateway}
-        className={`shrink-0 rounded px-2 py-0.5 text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${isEngineError
-          ? 'bg-red-600 text-white hover:bg-red-700 dark:bg-red-700 dark:hover:bg-red-600'
-          : 'bg-amber-600 text-white hover:bg-amber-700 dark:bg-amber-700 dark:hover:bg-amber-600'
-        }`}
-      >
-        {i18nService.t('coworkOpenClawRestartGateway')}
-      </button>
     </div>
   ) : null;
 
   // When there's a current session, show the session detail view
   if (currentSession) {
     return (
-      <div className="flex-1 flex flex-col h-full">
+      <div className="relative flex-1 flex flex-col h-full">
         {engineStatusBanner}
         <CoworkSessionDetail
           onManageSkills={() => onShowSkills?.()}
@@ -751,8 +770,8 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
 
   // Home view - no current session
   return (
-    <div className="flex-1 flex flex-col bg-background h-full">
-      {/* Engine status banner for error states */}
+    <div className="relative flex-1 flex flex-col bg-background h-full">
+      {/* Engine status banner for non-blocking states */}
       {engineStatusBanner}
 
       {/* Header */}
