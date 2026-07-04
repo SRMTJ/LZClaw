@@ -114,8 +114,9 @@ describe('OpenClawConfigSync runtime config output', () => {
 
   afterEach(async () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
-    const { setSystemProxyEnabled } = await import('./systemProxy');
+    const { restoreOriginalProxyEnv, setSystemProxyEnabled } = await import('./systemProxy');
     setSystemProxyEnabled(false);
+    restoreOriginalProxyEnv();
   });
 
   const createSync = async (overrides: Record<string, unknown> = {}) => {
@@ -275,6 +276,58 @@ describe('OpenClawConfigSync runtime config output', () => {
 
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     expect(config.models.providers.openai.request.proxy).toEqual({ mode: 'env-proxy' });
+  });
+
+  test('writes managed browser proxy args when system proxy is enabled', async () => {
+    const { applySystemProxyEnv, setSystemProxyEnabled } = await import('./systemProxy');
+    setSystemProxyEnabled(true);
+    applySystemProxyEnv('http://127.0.0.1:7890');
+
+    const sync = await createSync();
+
+    const result = sync.sync('browser-system-proxy');
+    expect(result.ok).toBe(true);
+
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.browser.extraArgs).toEqual(['--proxy-server=http://127.0.0.1:7890']);
+  });
+
+  test('does not write managed browser proxy args in strict browser network mode', async () => {
+    const { BrowserNetworkMode } = await import('../../shared/browserWebAccess/constants');
+    const { applySystemProxyEnv, setSystemProxyEnabled } = await import('./systemProxy');
+    setSystemProxyEnabled(true);
+    applySystemProxyEnv('http://127.0.0.1:7890');
+
+    const sync = await createSync({
+      getBrowserWebAccessConfig: () => ({
+        networkMode: BrowserNetworkMode.Strict,
+      }),
+    });
+
+    const result = sync.sync('browser-system-proxy-strict');
+    expect(result.ok).toBe(true);
+
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.browser.extraArgs).toBeUndefined();
+    expect(config.browser.ssrfPolicy.dangerouslyAllowPrivateNetwork).toBe(false);
+  });
+
+  test('does not write managed browser proxy args when browser proxy following is disabled', async () => {
+    const { applySystemProxyEnv, setSystemProxyEnabled } = await import('./systemProxy');
+    setSystemProxyEnabled(true);
+    applySystemProxyEnv('http://127.0.0.1:7890');
+
+    const sync = await createSync({
+      getBrowserWebAccessConfig: () => ({
+        followGlobalProxy: false,
+      }),
+    });
+
+    const result = sync.sync('browser-system-proxy-disabled');
+    expect(result.ok).toBe(true);
+
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.browser.extraArgs).toBeUndefined();
   });
 
   test('does not create an agent model allowlist for OpenAI OAuth when system proxy is enabled', async () => {
