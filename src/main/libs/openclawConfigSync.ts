@@ -58,7 +58,7 @@ const gwDiagTs = (): string => {
 };
 import { findBundledExtensionsDir, findThirdPartyExtensionsDir, hasBundledOpenClawExtension, resolveOpenClawExtensionPluginId } from './openclawLocalExtensions';
 import { getOpenClawTokenProxyPort } from './openclawTokenProxy';
-import { isSystemProxyEnabled } from './systemProxy';
+import { getActiveSystemProxyUrl, isSystemProxyEnabled } from './systemProxy';
 
 export type AskUserCallbackConfig = {
   callbackUrl: string;
@@ -90,6 +90,7 @@ export const OPENCLAW_AGENT_TIMEOUT_SECONDS = 3600;
 const DINGTALK_OPENCLAW_CHANNEL = 'dingtalk-connector';
 export const OPENCLAW_BINDING_ANY_ACCOUNT_ID = '*';
 const OPENCLAW_DEFAULT_MODEL_MAX_TOKENS = 8192;
+const CHROME_PROXY_SERVER_ARG_PREFIX = '--proxy-server=';
 
 const OpenClawContextCacheProvider = {
   DashScope: 'dashscope',
@@ -1301,6 +1302,19 @@ const buildStreamingModeConfig = (
   mode,
 });
 
+const buildManagedBrowserProxyExtraArgs = (browserWebAccess: BrowserWebAccessConfig): string[] => {
+  if (
+    !isSystemProxyEnabled()
+    || !browserWebAccess.followGlobalProxy
+    || browserWebAccess.networkMode !== BrowserNetworkMode.ProxyCompatible
+  ) {
+    return [];
+  }
+
+  const proxyUrl = getActiveSystemProxyUrl()?.trim();
+  return proxyUrl ? [`${CHROME_PROXY_SERVER_ARG_PREFIX}${proxyUrl}`] : [];
+};
+
 type OpenClawConfigSyncDeps = {
   engineManager: OpenClawEngineManager;
   getCoworkConfig: () => CoworkConfig;
@@ -1425,6 +1439,7 @@ export class OpenClawConfigSync {
   private buildBrowserConfig(browserWebAccess: BrowserWebAccessConfig): Record<string, unknown> {
     const allowedHostnames = normalizeBrowserHostnamePolicyList(browserWebAccess.allowedHostnames);
     const blockedHostnames = normalizeBrowserHostnamePolicyList(browserWebAccess.blockedHostnames);
+    const extraArgs = buildManagedBrowserProxyExtraArgs(browserWebAccess);
     const ssrfPolicy = browserWebAccess.networkMode === BrowserNetworkMode.Strict
       ? {
           dangerouslyAllowPrivateNetwork: false,
@@ -1443,6 +1458,7 @@ export class OpenClawConfigSync {
       defaultProfile: BrowserRuntimeProfile.Managed,
       evaluateEnabled: browserWebAccess.evaluateEnabled,
       ...(browserWebAccess.headless === true ? { headless: true } : {}),
+      ...(extraArgs.length > 0 ? { extraArgs } : {}),
       ssrfPolicy,
     };
   }
