@@ -2583,6 +2583,7 @@ const getCoworkEngineRouter = () => {
             getDefaultCwd: (agentId?: string) =>
               resolveAgentDefaultWorkingDirectory(agentId) || os.homedir(),
             resolveJobName: jobId => getCronJobService().getJobNameSync(jobId),
+            resolveJobDelivery: jobId => getCronJobService().getJobDeliverySync(jobId),
           });
           openClawRuntimeAdapter.setChannelSessionSync(channelSessionSync);
         }
