@@ -1,8 +1,6 @@
 import {
   ArrowPathIcon,
   ChatBubbleLeftRightIcon,
-  LockClosedIcon,
-  UserCircleIcon,
 } from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useMemo,useRef, useState } from 'react';
 import { useDispatch,useSelector } from 'react-redux';
@@ -93,41 +91,24 @@ const INIT_STEP_TIMEOUT_MS_DEFAULT = 16_000;
 const shouldAlwaysShowOnboardingOnStartup = import.meta.env.DEV;
 
 const LoginRequiredScreen: React.FC<{
-  onLogin: (account: string, password: string) => Promise<void>;
+  onLogin: () => Promise<void>;
   onMockLogin: () => Promise<void>;
 }> = ({ onLogin, onMockLogin }) => {
-  const [account, setAccount] = useState('');
-  const [password, setPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const allowMockLogin = import.meta.env.DEV;
 
-  const canSubmit = account.trim().length > 0 && password.length > 0 && !isSubmitting;
-
-  const submitCredentials = useCallback(async (nextAccount: string, nextPassword: string) => {
-    if (!nextAccount.trim()) {
-      setErrorMessage('请输入账号');
-      return;
-    }
-    if (!nextPassword) {
-      setErrorMessage('请输入密码');
-      return;
-    }
-
+  const handleEnterpriseLogin = useCallback(() => {
     setIsSubmitting(true);
     setErrorMessage(null);
-    try {
-      await onLogin(nextAccount, nextPassword);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : '登录失败，请稍后重试。');
-    } finally {
-      setIsSubmitting(false);
-    }
+    void onLogin()
+      .catch((error) => {
+        setErrorMessage(error instanceof Error ? error.message : '登录失败，请稍后重试。');
+      })
+      .finally(() => {
+        setIsSubmitting(false);
+      });
   }, [onLogin]);
-
-  const handleSubmit = useCallback((event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    void submitCredentials(account, password);
-  }, [account, password, submitCredentials]);
 
   const handleMockLogin = useCallback(() => {
     setIsSubmitting(true);
@@ -143,8 +124,7 @@ const LoginRequiredScreen: React.FC<{
 
   return (
     <div className="flex min-h-0 flex-1 items-center justify-center bg-background px-6">
-      <form
-        onSubmit={handleSubmit}
+      <div
         className="flex w-full max-w-[440px] flex-col rounded-lg border border-border bg-surface-raised p-8 shadow-xl"
       >
         <div className="flex flex-col items-center text-center">
@@ -153,79 +133,42 @@ const LoginRequiredScreen: React.FC<{
           </div>
           <h1 className="text-xl font-semibold text-foreground">登录 LZClaw</h1>
           <p className="mt-3 text-sm leading-6 text-muted">
-            请输入账号和密码，登录完成后进入工作台。
+            使用企业账号完成统一身份认证，登录成功后进入工作台。
           </p>
         </div>
 
-        <div className="mt-7 space-y-4">
-          <label className="block text-left text-sm font-medium text-foreground" htmlFor="lzclaw-login-account">
-            账号
-          </label>
-          <div className="flex h-11 items-center rounded-md border border-border bg-background px-3 transition-colors focus-within:border-primary">
-            <UserCircleIcon className="mr-2 h-5 w-5 shrink-0 text-muted" />
-            <input
-              id="lzclaw-login-account"
-              value={account}
-              onChange={(event) => {
-                setAccount(event.target.value);
-                setErrorMessage(null);
-              }}
-              autoComplete="username"
-              className="h-full min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted"
-              placeholder="手机号或账号"
-              disabled={isSubmitting}
-            />
-          </div>
-
-          <label className="block text-left text-sm font-medium text-foreground" htmlFor="lzclaw-login-password">
-            密码
-          </label>
-          <div className="flex h-11 items-center rounded-md border border-border bg-background px-3 transition-colors focus-within:border-primary">
-            <LockClosedIcon className="mr-2 h-5 w-5 shrink-0 text-muted" />
-            <input
-              id="lzclaw-login-password"
-              type="password"
-              value={password}
-              onChange={(event) => {
-                setPassword(event.target.value);
-                setErrorMessage(null);
-              }}
-              autoComplete="current-password"
-              className="h-full min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted"
-              placeholder="请输入密码"
-              disabled={isSubmitting}
-            />
-          </div>
-        </div>
-
         {errorMessage && (
-          <div className="mt-4 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm leading-5 text-red-500">
+          <div className="mt-6 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm leading-5 text-red-500">
             {errorMessage}
           </div>
         )}
 
-        <div className="mt-4 rounded-md border border-border bg-background px-3 py-2 text-xs leading-5 text-muted">
-          模拟登录只写入本地登录态，不请求登录接口。
-        </div>
-
         <button
-          type="submit"
-          disabled={!canSubmit}
+          type="button"
+          onClick={handleEnterpriseLogin}
+          disabled={isSubmitting}
           className="mt-6 inline-flex h-10 items-center justify-center rounded-md bg-primary px-5 text-sm font-medium text-white transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-70"
         >
           {isSubmitting && <ArrowPathIcon className="mr-2 h-4 w-4 animate-spin" />}
-          {isSubmitting ? '正在登录' : '登录'}
+          {isSubmitting ? '正在打开浏览器' : '使用企业账号登录'}
         </button>
 
-        <button
-          type="button"
-          onClick={handleMockLogin}
-          disabled={isSubmitting}
-          className="mt-3 inline-flex h-10 items-center justify-center rounded-md border border-border bg-background px-5 text-sm font-medium text-foreground transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-70"
-        >
-          {isSubmitting ? '正在登录' : '模拟登录'}
-        </button>
-      </form>
+        {allowMockLogin && (
+          <>
+            <div className="mt-4 rounded-md border border-border bg-background px-3 py-2 text-xs leading-5 text-muted">
+              模拟登录只写入本地登录态，不请求登录接口。
+            </div>
+            <button
+              type="button"
+              onClick={handleMockLogin}
+              disabled={isSubmitting}
+              className="mt-3 inline-flex h-10 items-center justify-center rounded-md border border-border bg-background px-5 text-sm font-medium text-foreground transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              {isSubmitting ? '正在登录' : '模拟登录'}
+            </button>
+          </>
+        )}
+      </div>
     </div>
   );
 };
@@ -635,8 +578,8 @@ const App: React.FC = () => {
     });
   }, [showToast]);
 
-  const handlePasswordLogin = useCallback(async (account: string, password: string) => {
-    await authService.loginWithPassword(account, password);
+  const handleEnterpriseLogin = useCallback(async () => {
+    await authService.login();
   }, []);
 
   const handleMockLogin = useCallback(async () => {
@@ -1240,7 +1183,7 @@ const App: React.FC = () => {
           />
         ) : (
           <LoginRequiredScreen
-            onLogin={handlePasswordLogin}
+            onLogin={handleEnterpriseLogin}
             onMockLogin={handleMockLogin}
           />
         )}

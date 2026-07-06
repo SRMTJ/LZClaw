@@ -149,7 +149,6 @@ import {
 import { AppUpdateCoordinator, INSTALLATION_UUID_KEY } from './libs/appUpdateCoordinator';
 import { AuthCallbackRouter } from './libs/authCallbackRouter';
 import {
-  appendCallbackReturnTo,
   appendLoginParams,
   closeActiveAuthLocalCallback,
   startAuthLocalCallback,
@@ -3581,19 +3580,32 @@ if (!gotTheLock) {
         const tokens = getAuthTokens();
         if (!tokens?.refreshToken) return null;
         const serverBaseUrl = getServerApiBaseUrl();
-        const refreshUrl = `${serverBaseUrl}/api/auth/refresh`;
+        const refreshUrl = `${serverBaseUrl}/api/auth/workstation/refresh`;
         console.log(`[Auth] requesting token refresh (reason: ${reason}) at ${refreshUrl}`);
         const resp = await net.fetch(refreshUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(withKeyfromBody({ refreshToken: tokens.refreshToken })),
+          body: JSON.stringify(withKeyfromBody({
+            refreshToken: tokens.refreshToken,
+            refresh_token: tokens.refreshToken,
+          })),
         });
         if (resp.ok) {
-          const body = await resp.json() as { code: number; data: { accessToken: string; refreshToken?: string } };
-          if (body.code === 0 && body.data) {
-            saveAuthTokens(body.data.accessToken, body.data.refreshToken || tokens.refreshToken);
+          const body = await resp.json() as {
+            code: number;
+            data?: {
+              accessToken?: string;
+              access_token?: string;
+              refreshToken?: string;
+              refresh_token?: string;
+            };
+          };
+          const accessToken = body.data?.accessToken || body.data?.access_token;
+          const refreshToken = body.data?.refreshToken || body.data?.refresh_token || tokens.refreshToken;
+          if (body.code === 0 && accessToken) {
+            saveAuthTokens(accessToken, refreshToken);
             console.log(`[Auth] token refresh succeeded (reason: ${reason})`);
-            resolvedToken = body.data.accessToken;
+            resolvedToken = accessToken;
             // Token proxy handles fresh tokens dynamically — no need
             // to restart the gateway on token refresh.
             syncOpenClawConfig({ reason: `token-refresh:${reason}`, restartGatewayIfRunning: false }).catch((err) => {
@@ -4569,12 +4581,12 @@ if (!gotTheLock) {
   const exchangeAuthCode = async (code: string) => {
     try {
       const serverBaseUrl = getServerApiBaseUrl();
-      const exchangeUrl = `${serverBaseUrl}/api/auth/exchange`;
+      const exchangeUrl = `${serverBaseUrl}/api/auth/workstation/sso/exchange`;
       console.log(`[Auth] requesting auth exchange at ${exchangeUrl}`);
       const resp = await net.fetch(exchangeUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(withKeyfromBody({ authCode: code })),
+        body: JSON.stringify(withKeyfromBody({ code })),
       });
       if (!resp.ok) {
         return { success: false, error: `Exchange failed: ${resp.status}` };
@@ -4614,8 +4626,11 @@ if (!gotTheLock) {
     fallbackUrl: string;
     error?: string;
   }> => {
-    const baseUrl = loginUrl || `${getServerApiBaseUrl()}/login`;
-    const fallbackUrl = appendLoginParams(baseUrl, { source: 'electron' });
+    const baseUrl = loginUrl || `${getServerApiBaseUrl()}/api/auth/workstation/sso/start`;
+    const fallbackUrl = appendLoginParams(baseUrl, {
+      source: 'electron',
+      redirect_uri: 'lobsterai://auth/callback',
+    });
     let localCallback: Awaited<ReturnType<typeof startAuthLocalCallback>> | null = null;
 
     try {
@@ -4626,13 +4641,9 @@ if (!gotTheLock) {
           focusMainWindow('local auth callback');
         },
       });
-      const returnTo = appendLoginParams(baseUrl, {
-        source: 'electron',
-        electronLogin: 'success',
-      });
       const finalUrl = appendLoginParams(baseUrl, {
         source: 'electron',
-        redirect_uri: appendCallbackReturnTo(localCallback.redirectUri, returnTo),
+        redirect_uri: localCallback.redirectUri,
         state: localCallback.state,
       });
 
@@ -4691,36 +4702,10 @@ if (!gotTheLock) {
         return { success: false, error: '请输入密码' };
       }
 
-      try {
-        const serverBaseUrl = getServerApiBaseUrl();
-        const loginUrl = `${serverBaseUrl}/api/auth/mock-login`;
-        console.log(`[Auth] requesting password login at ${loginUrl}`);
-        const resp = await net.fetch(loginUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(withKeyfromBody({
-            phone: trimmedAccount,
-            password: rawPassword,
-          })),
-        });
-        const body = (await resp.json().catch((): null => null)) as {
-          code: number;
-          message?: string;
-          data?: {
-            authCode?: string;
-          };
-        } | null;
-        if (!resp.ok || body?.code !== 0 || !body.data?.authCode) {
-          return { success: false, error: body?.message || `Login failed: ${resp.status}` };
-        }
-        return await exchangeAuthCode(body.data.authCode);
-      } catch (error) {
-        console.error('[Auth] password login failed:', error);
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : '登录失败',
-        };
-      }
+      return {
+        success: false,
+        error: '账号密码登录已停用，请使用企业账号 SSO 登录',
+      };
     },
   );
 
@@ -4761,31 +4746,26 @@ if (!gotTheLock) {
       const tokens = getAuthTokens();
       if (!tokens) return { success: false };
       const serverBaseUrl = getServerApiBaseUrl();
-      // Fetch user profile
-      const profileResp = await fetchWithAuth(`${serverBaseUrl}/api/user/profile`);
+      const profileResp = await fetchWithAuth(`${serverBaseUrl}/api/workstation/me`);
       if (!profileResp.ok) return { success: false };
       const profileBody = (await profileResp.json()) as {
         code: number;
-        data: Record<string, unknown>;
-      };
-      if (profileBody.code !== 0 || !profileBody.data) return { success: false };
-      saveAuthUser(profileBody.data);
-      // Fetch quota separately
-      const quotaResp = await fetchWithAuth(`${serverBaseUrl}/api/user/quota`);
-      let quota = null;
-      if (quotaResp.ok) {
-        const quotaBody = (await quotaResp.json()) as {
-          code: number;
-          data: Record<string, unknown>;
+        data?: {
+          user?: Record<string, unknown>;
+          quota?: Record<string, unknown>;
+          workspace?: Record<string, unknown>;
         };
-        if (quotaBody.code === 0 && quotaBody.data) {
-          const previousQuotaGateState = getAuthQuotaGateState();
-          quota = normalizeQuota(quotaBody.data);
-          syncOpenClawConfigIfAuthQuotaGateChanged(previousQuotaGateState);
-        }
+      };
+      const user = profileBody.data?.user;
+      if (profileBody.code !== 0 || !user) return { success: false };
+      saveAuthUser(user);
+      const previousQuotaGateState = getAuthQuotaGateState();
+      const quota = profileBody.data?.quota ? normalizeQuota(profileBody.data.quota) : null;
+      if (quota) {
+        syncOpenClawConfigIfAuthQuotaGateChanged(previousQuotaGateState);
       }
-      console.log('[Auth] getUser profile data:', JSON.stringify(profileBody.data));
-      return { success: true, user: profileBody.data, quota };
+      console.log('[Auth] getUser profile data:', JSON.stringify(user));
+      return { success: true, user, quota, workspace: profileBody.data?.workspace ?? null };
     } catch {
       return { success: false };
     }
@@ -4796,7 +4776,7 @@ if (!gotTheLock) {
       const tokens = getAuthTokens();
       if (!tokens) return { success: false };
       const serverBaseUrl = getServerApiBaseUrl();
-      const resp = await fetchWithAuth(`${serverBaseUrl}/api/user/quota`);
+      const resp = await fetchWithAuth(`${serverBaseUrl}/api/workstation/quota`);
       if (!resp.ok) return { success: false };
       const body = (await resp.json()) as { code: number; data: Record<string, unknown> };
       if (body.code !== 0 || !body.data) return { success: false };
@@ -4814,13 +4794,36 @@ if (!gotTheLock) {
       const tokens = getAuthTokens();
       if (!tokens) return { success: false };
       const serverBaseUrl = getServerApiBaseUrl();
-      const profileSummaryUrl = appendKeyfromQuery(`${serverBaseUrl}/api/user/profile-summary`);
+      const profileSummaryUrl = appendKeyfromQuery(`${serverBaseUrl}/api/workstation/me`);
       console.log(`[Auth] requesting profile summary at ${profileSummaryUrl}`);
       const resp = await fetchWithAuth(profileSummaryUrl);
       if (!resp.ok) return { success: false };
-      const body = (await resp.json()) as { code: number; data: Record<string, unknown> };
-      if (body.code !== 0 || !body.data) return { success: false };
-      return { success: true, data: body.data };
+      const body = (await resp.json()) as {
+        code: number;
+        data?: {
+          user?: Record<string, unknown>;
+          quota?: Record<string, unknown>;
+        };
+      };
+      if (body.code !== 0 || !body.data?.user || !body.data?.quota) return { success: false };
+      const quota = normalizeQuota(body.data.quota);
+      const user = body.data.user;
+      return {
+        success: true,
+        data: {
+          id: typeof user.id === 'number' ? user.id : 0,
+          nickname: typeof user.nickname === 'string' ? user.nickname : '',
+          avatarUrl: typeof user.avatarUrl === 'string' ? user.avatarUrl : null,
+          totalCreditsRemaining: quota.creditsRemaining,
+          creditItems: [{
+            type: 'subscription',
+            label: quota.planName,
+            labelEn: quota.planName,
+            creditsRemaining: quota.creditsRemaining,
+            expiresAt: null,
+          }],
+        },
+      };
     } catch {
       return { success: false };
     }
@@ -4831,7 +4834,7 @@ if (!gotTheLock) {
       const tokens = getAuthTokens();
       if (tokens) {
         const serverBaseUrl = getServerApiBaseUrl();
-        const logoutUrl = `${serverBaseUrl}/api/auth/logout`;
+        const logoutUrl = `${serverBaseUrl}/api/auth/workstation/logout`;
         console.log(`[Auth] requesting logout at ${logoutUrl}`);
         await net
           .fetch(logoutUrl, {
@@ -4899,7 +4902,7 @@ if (!gotTheLock) {
   ipcMain.handle(AuthIpcChannel.GetPricingCatalog, async () => {
     try {
       const serverBaseUrl = getServerApiBaseUrl();
-      const url = `${serverBaseUrl}/api/models/pricing-catalog`;
+      const url = `${serverBaseUrl}/api/workstation/models/pricing-catalog`;
       console.log(`[Auth:getPricingCatalog] requesting public pricing catalog at ${url}`);
       const resp = await net.fetch(url, {
         method: 'GET',
@@ -4945,7 +4948,7 @@ if (!gotTheLock) {
         return { success: false };
       }
       const serverBaseUrl = getServerApiBaseUrl();
-      const url = appendKeyfromQuery(`${serverBaseUrl}/api/models/available`);
+      const url = appendKeyfromQuery(`${serverBaseUrl}/api/workstation/models/available`);
       console.log(`[Auth:getModels] requesting available models at ${url}`);
       const resp = await fetchWithAuth(url);
       console.log('[Auth:getModels] Response status:', resp.status);
@@ -10208,22 +10211,32 @@ if (!gotTheLock) {
       if (!tokens?.refreshToken) return null;
       const serverBaseUrl = getServerApiBaseUrl();
       try {
-        const refreshUrl = `${serverBaseUrl}/api/auth/refresh`;
+        const refreshUrl = `${serverBaseUrl}/api/auth/workstation/refresh`;
         console.log(`[Auth] requesting proxy token refresh at ${refreshUrl}`);
         const resp = await net.fetch(refreshUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(withKeyfromBody({ refreshToken: tokens.refreshToken })),
+          body: JSON.stringify(withKeyfromBody({
+            refreshToken: tokens.refreshToken,
+            refresh_token: tokens.refreshToken,
+          })),
         });
         if (resp.ok) {
           const body = (await resp.json()) as {
             code: number;
-            data: { accessToken: string; refreshToken?: string };
+            data?: {
+              accessToken?: string;
+              access_token?: string;
+              refreshToken?: string;
+              refresh_token?: string;
+            };
           };
-          if (body.code === 0 && body.data) {
-            saveAuthTokens(body.data.accessToken, body.data.refreshToken || tokens.refreshToken);
+          const accessToken = body.data?.accessToken || body.data?.access_token;
+          const refreshToken = body.data?.refreshToken || body.data?.refresh_token || tokens.refreshToken;
+          if (body.code === 0 && accessToken) {
+            saveAuthTokens(accessToken, refreshToken);
             console.log('[Auth] proxy token refresh succeeded');
-            return body.data.accessToken;
+            return accessToken;
           }
         }
       } catch (err) {
@@ -10354,6 +10367,7 @@ if (!gotTheLock) {
         );
       }
     }
+    refreshEndpointsTestMode(store);
     profiler.measure('enterpriseConfigSync');
 
     bindCoworkRuntimeForwarder();

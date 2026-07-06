@@ -41,7 +41,7 @@ export async function runStartupCacheWarmup(deps: StartupCacheWarmupDeps): Promi
   await Promise.allSettled([
     (async () => {
       try {
-        const resp = await fetchWithAuth(`${serverBaseUrl}/api/user/quota`, {
+        const resp = await fetchWithAuth(`${serverBaseUrl}/api/workstation/quota`, {
           signal: AbortSignal.timeout(WARMUP_TIMEOUT),
         });
         if (!resp.ok) return;
@@ -62,7 +62,7 @@ export async function runStartupCacheWarmup(deps: StartupCacheWarmupDeps): Promi
     })(),
     (async () => {
       try {
-        const url = appendKeyfromQuery(`${serverBaseUrl}/api/models/available`);
+        const url = appendKeyfromQuery(`${serverBaseUrl}/api/workstation/models/available`);
         const resp = await fetchWithAuth(url, {
           signal: AbortSignal.timeout(WARMUP_TIMEOUT),
         });

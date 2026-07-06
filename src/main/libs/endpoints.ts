@@ -4,6 +4,20 @@ import { HtmlSharePublicRoute } from '../../shared/htmlShare/constants';
 import type { SqliteStore } from '../sqliteStore';
 
 let cachedTestMode: boolean | null = null;
+let cachedServerApiBaseUrl: string | null = null;
+
+const normalizeBaseUrl = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim().replace(/\/+$/, '');
+  if (!trimmed) return null;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    return parsed.toString().replace(/\/+$/, '');
+  } catch {
+    return null;
+  }
+};
 
 /**
  * Read testMode from store and cache it.
@@ -11,7 +25,12 @@ let cachedTestMode: boolean | null = null;
  */
 export function refreshEndpointsTestMode(store: SqliteStore): void {
   const appConfig = store.get<any>('app_config');
+  const enterpriseConfig = store.get<any>('enterprise_config');
   cachedTestMode = appConfig?.app?.testMode === true;
+  cachedServerApiBaseUrl =
+    normalizeBaseUrl(enterpriseConfig?.auth?.apiBaseUrl)
+    ?? normalizeBaseUrl(appConfig?.auth?.apiBaseUrl)
+    ?? normalizeBaseUrl(appConfig?.app?.serverApiBaseUrl);
 }
 
 /**
@@ -27,6 +46,9 @@ export const isTestModeEnabled = (): boolean => {
  * Used for auth exchange/refresh, models, proxy, etc.
  */
 export const getServerApiBaseUrl = (): string => {
+  const envOverride = normalizeBaseUrl(process.env.LZCLAW_SERVER_API_BASE_URL);
+  if (cachedServerApiBaseUrl) return cachedServerApiBaseUrl;
+  if (envOverride) return envOverride;
   return isTestModeEnabled()
     ? 'https://lobsterai-server.inner.youdao.com'
     : 'https://lobsterai-server.youdao.com';

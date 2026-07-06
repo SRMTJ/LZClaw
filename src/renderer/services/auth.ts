@@ -163,12 +163,11 @@ class AuthService {
     });
   }
 
-  /**
-   * The unauthenticated app gate renders the password login form directly.
-   */
   async login() {
-    if (!store.getState().auth.isLoggedIn) {
-      store.dispatch(setLoggedOut());
+    this.isMockLoggedIn = false;
+    const result = await window.electron.auth.login();
+    if (!result?.success) {
+      throw new Error(result?.error || '无法打开企业登录');
     }
   }
 

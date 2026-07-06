@@ -11,6 +11,9 @@ export type EnterpriseUIAction = 'hide' | 'disable' | 'readonly';
 export type EnterpriseManifest = {
   version: string;
   name: string;
+  auth?: {
+    apiBaseUrl?: string;
+  };
   ui?: Record<string, EnterpriseUIAction>;
   disableUpdate?: boolean;
   sync: {
