@@ -30,6 +30,18 @@ const LegacyQualifiedProviderMigration: Record<string, readonly string[]> = {
   [OpenClawProviderId.OpenAICodex]: [OpenClawProviderId.OpenAI],
 };
 
+function normalizeSubagentAllowAgentIds(agent: Agent): string[] {
+  const seen = new Set<string>();
+  const allowAgentIds: string[] = [];
+  for (const id of agent.subagentAllowAgentIds ?? []) {
+    const normalized = id.trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    allowAgentIds.push(normalized);
+  }
+  return allowAgentIds;
+}
+
 export function parsePrimaryModelRef(primaryModel: string): ManagedSessionModelTarget | null {
   const normalized = primaryModel.trim();
   const slashIndex = normalized.indexOf('/');
@@ -193,6 +205,7 @@ export function buildAgentEntry(
   });
   const primaryModel = qualified.status === 'qualified' ? qualified.primaryModel : fallbackPrimaryModel;
   const legacyIcon = isDesignedAgentAvatarIcon(agent.icon) ? '' : agent.icon;
+  const subagentAllowAgentIds = normalizeSubagentAllowAgentIds(agent);
 
   return {
     id: agent.id,
@@ -204,6 +217,11 @@ export function buildAgentEntry(
       },
     } : {}),
     ...(agent.skillIds && agent.skillIds.length > 0 ? { skills: agent.skillIds } : {}),
+    ...(subagentAllowAgentIds.length > 0 ? {
+      subagents: {
+        allowAgents: subagentAllowAgentIds,
+      },
+    } : {}),
     ...(options?.workspace ? { workspace: options.workspace } : {}),
     ...(agent.workingDirectory?.trim() ? { cwd: path.resolve(agent.workingDirectory.trim()) } : {}),
     model: {

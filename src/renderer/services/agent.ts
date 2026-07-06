@@ -49,6 +49,7 @@ class AgentService {
           isDefault: a.isDefault,
           source: a.source,
           skillIds: a.skillIds ?? [],
+          subagentAllowAgentIds: a.subagentAllowAgentIds ?? [],
         }));
         store.dispatch(setAgents(mappedAgents));
       }
@@ -68,6 +69,7 @@ class AgentService {
     workingDirectory?: string;
     icon?: string;
     skillIds?: string[];
+    subagentAllowAgentIds?: string[];
   }): Promise<Agent | null> {
     try {
       const agent = await window.electron?.agents?.create(request);
@@ -85,6 +87,7 @@ class AgentService {
           isDefault: agent.isDefault,
           source: agent.source,
           skillIds: agent.skillIds ?? [],
+          subagentAllowAgentIds: agent.subagentAllowAgentIds ?? [],
         }));
         return agent;
       }
@@ -104,6 +107,7 @@ class AgentService {
     workingDirectory?: string;
     icon?: string;
     skillIds?: string[];
+    subagentAllowAgentIds?: string[];
     enabled?: boolean;
     pinned?: boolean;
   }): Promise<Agent | null> {
@@ -123,6 +127,7 @@ class AgentService {
             pinned: agent.pinned ?? false,
             pinOrder: agent.pinOrder ?? null,
             skillIds,
+            subagentAllowAgentIds: agent.subagentAllowAgentIds ?? [],
           },
         }));
         // Only sync active skills when skillIds were explicitly updated,
@@ -217,6 +222,7 @@ class AgentService {
           isDefault: agent.isDefault,
           source: agent.source,
           skillIds: agent.skillIds ?? [],
+          subagentAllowAgentIds: agent.subagentAllowAgentIds ?? [],
         }));
         return agent;
       }

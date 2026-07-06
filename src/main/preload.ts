@@ -288,6 +288,7 @@ contextBridge.exposeInMainWorld('electron', {
       workingDirectory?: string;
       icon?: string;
       skillIds?: string[];
+      subagentAllowAgentIds?: string[];
       source?: string;
       presetId?: string;
     }) => {
@@ -305,6 +306,7 @@ contextBridge.exposeInMainWorld('electron', {
         workingDirectory?: string;
         icon?: string;
         skillIds?: string[];
+        subagentAllowAgentIds?: string[];
         enabled?: boolean;
         pinned?: boolean;
       },

@@ -134,6 +134,28 @@ function normalizeMemoryText(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
 
+function normalizeStringIdList(values: string[] | undefined): string[] {
+  if (!Array.isArray(values)) return [];
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const normalized = value.trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    result.push(normalized);
+  }
+  return result;
+}
+
+function parseStringIdList(value: string | null | undefined): string[] {
+  if (!value) return [];
+  try {
+    return normalizeStringIdList(JSON.parse(value) as string[]);
+  } catch {
+    return [];
+  }
+}
+
 function extractConversationSearchTerms(value: string): string[] {
   const normalized = normalizeMemoryText(value).toLowerCase();
   if (!normalized) return [];
@@ -357,6 +379,7 @@ export interface Agent {
   workingDirectory: string;
   icon: string;
   skillIds: string[];
+  subagentAllowAgentIds: string[];
   enabled: boolean;
   pinned: boolean;
   pinOrder?: number | null;
@@ -377,6 +400,7 @@ export interface CreateAgentRequest {
   workingDirectory?: string;
   icon?: string;
   skillIds?: string[];
+  subagentAllowAgentIds?: string[];
   source?: AgentSource;
   presetId?: string;
 }
@@ -390,6 +414,7 @@ export interface UpdateAgentRequest {
   workingDirectory?: string;
   icon?: string;
   skillIds?: string[];
+  subagentAllowAgentIds?: string[];
   enabled?: boolean;
   pinned?: boolean;
 }
@@ -2702,6 +2727,7 @@ export class CoworkStore {
       working_directory?: string | null;
       icon: string;
       skill_ids: string;
+      subagent_allow_agent_ids?: string | null;
       enabled: number;
       pinned?: number | null;
       pin_order?: number | null;
@@ -2730,6 +2756,7 @@ export class CoworkStore {
       working_directory?: string | null;
       icon: string;
       skill_ids: string;
+      subagent_allow_agent_ids?: string | null;
       enabled: number;
       pinned?: number | null;
       pin_order?: number | null;
@@ -2769,8 +2796,8 @@ export class CoworkStore {
       this.db
         .prepare(
           `
-        INSERT INTO agents (id, name, description, system_prompt, identity, model, working_directory, icon, skill_ids, enabled, is_default, source, preset_id, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?)
+        INSERT INTO agents (id, name, description, system_prompt, identity, model, working_directory, icon, skill_ids, subagent_allow_agent_ids, enabled, is_default, source, preset_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?)
       `,
         )
         .run(
@@ -2782,7 +2809,8 @@ export class CoworkStore {
           request.model || '',
           request.workingDirectory || '',
           normalizeAgentAvatarIcon(request.icon),
-          JSON.stringify(request.skillIds || []),
+          JSON.stringify(normalizeStringIdList(request.skillIds)),
+          JSON.stringify(normalizeStringIdList(request.subagentAllowAgentIds)),
           request.source || 'custom',
           request.presetId || '',
           now,
@@ -2846,7 +2874,11 @@ export class CoworkStore {
     }
     if (updates.skillIds !== undefined) {
       setClauses.push('skill_ids = ?');
-      values.push(JSON.stringify(updates.skillIds));
+      values.push(JSON.stringify(normalizeStringIdList(updates.skillIds)));
+    }
+    if (updates.subagentAllowAgentIds !== undefined) {
+      setClauses.push('subagent_allow_agent_ids = ?');
+      values.push(JSON.stringify(normalizeStringIdList(updates.subagentAllowAgentIds)));
     }
     if (updates.enabled !== undefined) {
       setClauses.push('enabled = ?');
@@ -2900,6 +2932,7 @@ export class CoworkStore {
     working_directory?: string | null;
     icon: string;
     skill_ids: string;
+    subagent_allow_agent_ids?: string | null;
     enabled: number;
     pinned?: number | null;
     pin_order?: number | null;
@@ -2909,12 +2942,8 @@ export class CoworkStore {
     created_at: number;
     updated_at: number;
   }): Agent {
-    let skillIds: string[] = [];
-    try {
-      skillIds = JSON.parse(row.skill_ids);
-    } catch {
-      skillIds = [];
-    }
+    const skillIds = parseStringIdList(row.skill_ids);
+    const subagentAllowAgentIds = parseStringIdList(row.subagent_allow_agent_ids);
     return {
       id: row.id,
       name: row.name,
@@ -2925,6 +2954,7 @@ export class CoworkStore {
       workingDirectory: row.working_directory || '',
       icon: row.icon,
       skillIds,
+      subagentAllowAgentIds,
       enabled: Boolean(row.enabled),
       pinned: Boolean(row.pinned),
       pinOrder: row.pinned ? (row.pin_order ?? null) : null,

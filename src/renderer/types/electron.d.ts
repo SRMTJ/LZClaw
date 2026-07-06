@@ -591,6 +591,7 @@ interface IElectronAPI {
       workingDirectory?: string;
       icon?: string;
       skillIds?: string[];
+      subagentAllowAgentIds?: string[];
       source?: string;
       presetId?: string;
     }) => Promise<Agent>;
@@ -605,6 +606,7 @@ interface IElectronAPI {
         workingDirectory?: string;
         icon?: string;
         skillIds?: string[];
+        subagentAllowAgentIds?: string[];
         enabled?: boolean;
         pinned?: boolean;
       },
