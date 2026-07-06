@@ -8,6 +8,7 @@ export interface UserProfile {
   userId?: string;         // exchange endpoint only (string "6")
   id?: number;             // profile endpoint only (number 6)
   status?: number;         // profile endpoint only
+  enterpriseName?: string;
 }
 
 export interface UserQuota {
@@ -17,6 +18,14 @@ export interface UserQuota {
   creditsUsed: number;        // credits used
   creditsRemaining: number;   // credits remaining
   hasPaidCredits?: boolean;   // true if user has subscription, boost, or invitation credits
+}
+
+export interface WorkstationWorkspace {
+  id: string;
+  name: string;
+  code?: string;
+  role?: string;
+  status?: string;
 }
 
 export interface CreditItem {
@@ -61,6 +70,8 @@ interface AuthState {
   isLoading: boolean;
   user: UserProfile | null;
   quota: UserQuota | null;
+  workspace: WorkstationWorkspace | null;
+  workspaces: WorkstationWorkspace[];
   profileSummary: ProfileSummary | null;
 }
 
@@ -69,6 +80,8 @@ const initialState: AuthState = {
   isLoading: true,
   user: null,
   quota: null,
+  workspace: null,
+  workspaces: [],
   profileSummary: null,
 };
 
@@ -79,17 +92,26 @@ const authSlice = createSlice({
     setAuthLoading(state, action: PayloadAction<boolean>) {
       state.isLoading = action.payload;
     },
-    setLoggedIn(state, action: PayloadAction<{ user: UserProfile; quota: UserQuota }>) {
+    setLoggedIn(state, action: PayloadAction<{
+      user: UserProfile;
+      quota: UserQuota;
+      workspace?: WorkstationWorkspace | null;
+      workspaces?: WorkstationWorkspace[];
+    }>) {
       state.isLoggedIn = true;
       state.isLoading = false;
       state.user = action.payload.user;
       state.quota = action.payload.quota;
+      state.workspace = action.payload.workspace ?? null;
+      state.workspaces = action.payload.workspaces ?? [];
     },
     setLoggedOut(state) {
       state.isLoggedIn = false;
       state.isLoading = false;
       state.user = null;
       state.quota = null;
+      state.workspace = null;
+      state.workspaces = [];
       state.profileSummary = null;
     },
     updateQuota(state, action: PayloadAction<UserQuota>) {

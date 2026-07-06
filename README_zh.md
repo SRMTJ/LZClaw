@@ -152,6 +152,8 @@ npm run lint
 npx eslint --ext ts,tsx --report-unused-disable-directives --max-warnings 0 <files>
 ```
 
+本地 AIZhongtai/Casdoor SSO 登录联调见 [`docs/server-integration/aizhongtai-casdoor-sso.md`](docs/server-integration/aizhongtai-casdoor-sso.md)。
+
 ### OpenClaw Runtime
 
 锁定的 OpenClaw 版本和第三方插件列表位于 `package.json` 的 `openclaw` 字段。

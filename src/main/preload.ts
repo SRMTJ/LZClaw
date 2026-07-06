@@ -992,6 +992,9 @@ contextBridge.exposeInMainWorld('electron', {
     exchange: (code: string) => ipcRenderer.invoke('auth:exchange', { code }),
     getUser: () => ipcRenderer.invoke('auth:getUser'),
     getQuota: () => ipcRenderer.invoke('auth:getQuota'),
+    getWorkspaces: () => ipcRenderer.invoke(AuthIpcChannel.GetWorkspaces),
+    switchWorkspace: (enterpriseId: string) =>
+      ipcRenderer.invoke(AuthIpcChannel.SwitchWorkspace, { enterpriseId }),
     logout: () => ipcRenderer.invoke('auth:logout'),
     refreshToken: () => ipcRenderer.invoke('auth:refreshToken'),
     getAccessToken: () => ipcRenderer.invoke('auth:getAccessToken'),
@@ -1005,6 +1008,11 @@ contextBridge.exposeInMainWorld('electron', {
       const handler = (_event: any, data: { code: string }) => callback(data);
       ipcRenderer.on(AuthIpcChannel.Callback, handler);
       return () => ipcRenderer.removeListener(AuthIpcChannel.Callback, handler);
+    },
+    onSessionInvalidated: (callback: (data: { reason?: string }) => void) => {
+      const handler = (_event: any, data: { reason?: string }) => callback(data);
+      ipcRenderer.on(AuthIpcChannel.SessionInvalidated, handler);
+      return () => ipcRenderer.removeListener(AuthIpcChannel.SessionInvalidated, handler);
     },
     onQuotaChanged: (callback: () => void) => {
       const handler = () => callback();

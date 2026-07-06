@@ -161,6 +161,10 @@ import {
 import { AppUpdateCoordinator, INSTALLATION_UUID_KEY } from './libs/appUpdateCoordinator';
 import { AuthCallbackRouter } from './libs/authCallbackRouter';
 import {
+  closeActiveAuthLoginWindow,
+  openAuthLoginWindow,
+} from './libs/authLoginWindow';
+import {
   appendLoginParams,
   closeActiveAuthLocalCallback,
   startAuthLocalCallback,
@@ -3447,6 +3451,7 @@ if (!gotTheLock) {
    * Parse a lobsterai:// deep link and send (or buffer) the auth code.
    */
   const handleDeepLink = (url: string) => {
+    closeActiveAuthLoginWindow();
     authCallbackRouter.handleDeepLink(url);
   };
 
@@ -3766,10 +3771,13 @@ if (!gotTheLock) {
 
   // ── Auth IPC handlers ──
 
+  let authSessionInvalidated = false;
+
   /**
    * Helper: Persist auth tokens into the kv store.
    */
   const saveAuthTokens = (accessToken: string, refreshToken: string) => {
+    authSessionInvalidated = false;
     getStore().set('auth_tokens', { accessToken, refreshToken });
   };
 
@@ -3808,6 +3816,30 @@ if (!gotTheLock) {
     } catch (error) {
       console.warn('[Auth] failed to clear auth user for attribution:', error);
     }
+  };
+
+  const invalidateAuthSessionAfterRefreshRejection = (reason: string) => {
+    if (authSessionInvalidated && !getAuthTokens()) return;
+    authSessionInvalidated = true;
+    clearAuthTokens();
+    clearAuthUser();
+    clearServerModelMetadata();
+    const defaultGateState = createDefaultAuthQuotaGateState();
+    cachedSubscriptionStatus = defaultGateState.subscriptionStatus;
+    cachedMediaGenerationEntitled = defaultGateState.mediaGenerationEntitled;
+
+    syncOpenClawConfig({
+      reason: `auth-session-invalidated:${reason}`,
+      restartGatewayIfRunning: false,
+    }).catch((error) => {
+      console.warn('[Auth] failed to sync OpenClaw config after session invalidation:', error);
+    });
+
+    BrowserWindow.getAllWindows().forEach(win => {
+      if (!win.isDestroyed()) {
+        win.webContents.send(AuthIpcChannel.SessionInvalidated, { reason });
+      }
+    });
   };
 
   const getOrCreateInstallationId = (): string | null => {
@@ -3869,6 +3901,7 @@ if (!gotTheLock) {
       return pendingTokenRefresh;
     }
     let resolvedToken: string | null = null;
+    let refreshRejected = false;
     pendingTokenRefresh = (async () => {
       try {
         const tokens = getAuthTokens();
@@ -3884,32 +3917,42 @@ if (!gotTheLock) {
             refresh_token: tokens.refreshToken,
           })),
         });
-        if (resp.ok) {
-          const body = await resp.json() as {
-            code: number;
-            data?: {
-              accessToken?: string;
-              access_token?: string;
-              refreshToken?: string;
-              refresh_token?: string;
-            };
+        if (!resp.ok) {
+          refreshRejected = resp.status === 400 || resp.status === 401 || resp.status === 403;
+          console.warn(`[Auth] token refresh returned HTTP ${resp.status} (reason: ${reason})`);
+          return null;
+        }
+
+        const body = await resp.json() as {
+          code: number;
+          data?: {
+            accessToken?: string;
+            access_token?: string;
+            refreshToken?: string;
+            refresh_token?: string;
           };
-          const accessToken = body.data?.accessToken || body.data?.access_token;
-          const refreshToken = body.data?.refreshToken || body.data?.refresh_token || tokens.refreshToken;
-          if (body.code === 0 && accessToken) {
-            saveAuthTokens(accessToken, refreshToken);
-            console.log(`[Auth] token refresh succeeded (reason: ${reason})`);
-            resolvedToken = accessToken;
-            // Token proxy handles fresh tokens dynamically — no need
-            // to restart the gateway on token refresh.
-            syncOpenClawConfig({ reason: `token-refresh:${reason}`, restartGatewayIfRunning: false }).catch((err) => {
-              console.warn('[Auth] post-refresh OpenClaw config sync failed:', err);
-            });
-          }
+        };
+        const accessToken = body.data?.accessToken || body.data?.access_token;
+        const refreshToken = body.data?.refreshToken || body.data?.refresh_token || tokens.refreshToken;
+        if (body.code === 0 && accessToken) {
+          saveAuthTokens(accessToken, refreshToken);
+          console.log(`[Auth] token refresh succeeded (reason: ${reason})`);
+          resolvedToken = accessToken;
+          // Token proxy handles fresh tokens dynamically — no need
+          // to restart the gateway on token refresh.
+          syncOpenClawConfig({ reason: `token-refresh:${reason}`, restartGatewayIfRunning: false }).catch((err) => {
+            console.warn('[Auth] post-refresh OpenClaw config sync failed:', err);
+          });
+        } else {
+          refreshRejected = true;
+          console.warn(`[Auth] token refresh was rejected by server response body (reason: ${reason})`);
         }
       } catch (err) {
         console.warn(`[Auth] token refresh failed (reason: ${reason}):`, err);
       } finally {
+        if (!resolvedToken && refreshRejected) {
+          invalidateAuthSessionAfterRefreshRejection(reason);
+        }
         pendingTokenRefresh = null;
       }
       return resolvedToken;
@@ -4872,6 +4915,43 @@ if (!gotTheLock) {
     return quota;
   };
 
+  type WorkstationSessionData = {
+    accessToken: string;
+    refreshToken: string;
+    user: Record<string, unknown>;
+    quota: Record<string, unknown>;
+    workspace?: Record<string, unknown> | null;
+    workspaces?: Record<string, unknown>[];
+  };
+
+  const saveWorkstationSession = (data: WorkstationSessionData) => {
+    saveAuthTokens(data.accessToken, data.refreshToken);
+    saveAuthUser(data.user);
+    console.log('[Auth] workstation session user data:', JSON.stringify(data.user));
+    const previousQuotaGateState = getAuthQuotaGateState();
+    const quota = normalizeQuota(data.quota);
+    syncOpenClawConfigIfAuthQuotaGateChanged(previousQuotaGateState);
+    return {
+      success: true,
+      user: data.user,
+      quota,
+      workspace: data.workspace ?? null,
+      workspaces: Array.isArray(data.workspaces) ? data.workspaces : [],
+    };
+  };
+
+  const readWorkstationError = async (resp: Response, fallback: string) => {
+    try {
+      const body = await resp.json() as {
+        message?: string;
+        error?: { message?: string };
+      };
+      return body.error?.message || body.message || fallback;
+    } catch {
+      return fallback;
+    }
+  };
+
   const exchangeAuthCode = async (code: string) => {
     try {
       const serverBaseUrl = getServerApiBaseUrl();
@@ -4883,28 +4963,17 @@ if (!gotTheLock) {
         body: JSON.stringify(withKeyfromBody({ code })),
       });
       if (!resp.ok) {
-        return { success: false, error: `Exchange failed: ${resp.status}` };
+        return { success: false, error: await readWorkstationError(resp, `Exchange failed: ${resp.status}`) };
       }
       const body = (await resp.json()) as {
         code: number;
         message?: string;
-        data: {
-          accessToken: string;
-          refreshToken: string;
-          user: Record<string, unknown>;
-          quota: Record<string, unknown>;
-        };
+        data: WorkstationSessionData;
       };
       if (body.code !== 0 || !body.data) {
         return { success: false, error: body.message || 'Exchange failed' };
       }
-      saveAuthTokens(body.data.accessToken, body.data.refreshToken);
-      saveAuthUser(body.data.user);
-      console.log('[Auth] exchange user data:', JSON.stringify(body.data.user));
-      const previousQuotaGateState = getAuthQuotaGateState();
-      const quota = normalizeQuota(body.data.quota);
-      syncOpenClawConfigIfAuthQuotaGateChanged(previousQuotaGateState);
-      return { success: true, user: body.data.user, quota };
+      return saveWorkstationSession(body.data);
     } catch (error) {
       console.error('[Auth] exchange failed:', error);
       return {
@@ -4932,6 +5001,7 @@ if (!gotTheLock) {
       localCallback = await startAuthLocalCallback({
         onCode: code => {
           authCallbackRouter.handleAuthCode(code);
+          closeActiveAuthLoginWindow();
           focusMainWindow('local auth callback');
         },
       });
@@ -4974,6 +5044,7 @@ if (!gotTheLock) {
 
   ipcMain.handle(AuthIpcChannel.CancelLogin, async () => {
     try {
+      closeActiveAuthLoginWindow();
       await closeActiveAuthLocalCallback();
       return { success: true };
     } catch (error) {
@@ -4996,10 +5067,36 @@ if (!gotTheLock) {
         return { success: false, error: '请输入密码' };
       }
 
-      return {
-        success: false,
-        error: '账号密码登录已停用，请使用企业账号 SSO 登录',
-      };
+      try {
+        const serverBaseUrl = getServerApiBaseUrl();
+        const loginUrl = `${serverBaseUrl}/api/auth/workstation/password/login`;
+        const resp = await net.fetch(loginUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(withKeyfromBody({
+            account: trimmedAccount,
+            password: rawPassword,
+          })),
+        });
+        if (!resp.ok) {
+          return { success: false, error: await readWorkstationError(resp, `登录失败: ${resp.status}`) };
+        }
+        const body = (await resp.json()) as {
+          code: number;
+          message?: string;
+          data?: WorkstationSessionData;
+        };
+        if (body.code !== 0 || !body.data) {
+          return { success: false, error: body.message || '登录失败' };
+        }
+        return saveWorkstationSession(body.data);
+      } catch (error) {
+        console.error('[Auth] password login failed:', error);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : '登录失败',
+        };
+      }
     },
   );
 
@@ -5007,13 +5104,21 @@ if (!gotTheLock) {
     const prepared = await prepareAuthLoginUrl(loginUrl);
     const fallbackUrl = prepared.fallbackUrl;
     if (prepared.success && prepared.loginUrl) {
-      console.log('[Auth] opening portal login with local callback redirect');
+      console.log('[Auth] opening in-app login window with local callback redirect');
       try {
-        await shell.openExternal(prepared.loginUrl);
+        await openAuthLoginWindow({
+          loginUrl: prepared.loginUrl,
+          parent: mainWindow,
+          isDev,
+          onClosed: () => {
+            void closeActiveAuthLocalCallback();
+          },
+        });
         return { success: true };
       } catch (error) {
+        closeActiveAuthLoginWindow();
         await closeActiveAuthLocalCallback();
-        console.warn('[Auth] failed to open local callback login, falling back to deep link login:', error);
+        console.warn('[Auth] failed to open in-app login window, falling back to deep link login:', error);
       }
     } else {
       console.warn('[Auth] local callback login failed, falling back to deep link login:', prepared.error);
@@ -5048,6 +5153,7 @@ if (!gotTheLock) {
           user?: Record<string, unknown>;
           quota?: Record<string, unknown>;
           workspace?: Record<string, unknown>;
+          workspaces?: Record<string, unknown>[];
         };
       };
       const user = profileBody.data?.user;
@@ -5059,9 +5165,92 @@ if (!gotTheLock) {
         syncOpenClawConfigIfAuthQuotaGateChanged(previousQuotaGateState);
       }
       console.log('[Auth] getUser profile data:', JSON.stringify(user));
-      return { success: true, user, quota, workspace: profileBody.data?.workspace ?? null };
+      return {
+        success: true,
+        user,
+        quota,
+        workspace: profileBody.data?.workspace ?? null,
+        workspaces: Array.isArray(profileBody.data?.workspaces) ? profileBody.data.workspaces : [],
+      };
     } catch {
       return { success: false };
+    }
+  });
+
+  ipcMain.handle(AuthIpcChannel.GetWorkspaces, async () => {
+    try {
+      const tokens = getAuthTokens();
+      if (!tokens) return { success: false };
+      const serverBaseUrl = getServerApiBaseUrl();
+      const resp = await fetchWithAuth(`${serverBaseUrl}/api/workstation/workspaces`);
+      if (!resp.ok) return { success: false };
+      const body = (await resp.json()) as {
+        code: number;
+        data?: Record<string, unknown>[];
+        message?: string;
+      };
+      if (body.code !== 0 || !Array.isArray(body.data)) {
+        return { success: false, error: body.message || 'Failed to load workspaces' };
+      }
+      return { success: true, workspaces: body.data };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to load workspaces',
+      };
+    }
+  });
+
+  ipcMain.handle(AuthIpcChannel.SwitchWorkspace, async (_event, { enterpriseId }: { enterpriseId?: string } = {}) => {
+    const targetEnterpriseId = typeof enterpriseId === 'string' ? enterpriseId.trim() : '';
+    if (!targetEnterpriseId) {
+      return { success: false, error: 'enterpriseId is required' };
+    }
+    try {
+      const tokens = getAuthTokens();
+      if (!tokens) return { success: false, error: 'Not logged in' };
+      const serverBaseUrl = getServerApiBaseUrl();
+      const resp = await fetchWithAuth(`${serverBaseUrl}/api/auth/workstation/switch-workspace`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(withKeyfromBody({ enterpriseId: targetEnterpriseId })),
+      });
+      if (!resp.ok) {
+        return { success: false, error: `Switch workspace failed: ${resp.status}` };
+      }
+      const body = (await resp.json()) as {
+        code: number;
+        message?: string;
+        data?: {
+          accessToken?: string;
+          refreshToken?: string;
+          user?: Record<string, unknown>;
+          quota?: Record<string, unknown>;
+          workspace?: Record<string, unknown> | null;
+          workspaces?: Record<string, unknown>[];
+        };
+      };
+      if (body.code !== 0 || !body.data?.accessToken || !body.data?.refreshToken || !body.data.user || !body.data.quota) {
+        return { success: false, error: body.message || 'Switch workspace failed' };
+      }
+      saveAuthTokens(body.data.accessToken, body.data.refreshToken);
+      saveAuthUser(body.data.user);
+      const previousQuotaGateState = getAuthQuotaGateState();
+      const quota = normalizeQuota(body.data.quota);
+      syncOpenClawConfigIfAuthQuotaGateChanged(previousQuotaGateState);
+      return {
+        success: true,
+        user: body.data.user,
+        quota,
+        workspace: body.data.workspace ?? null,
+        workspaces: Array.isArray(body.data.workspaces) ? body.data.workspaces : [],
+      };
+    } catch (error) {
+      console.error('[Auth] switch workspace failed:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Switch workspace failed',
+      };
     }
   });
 

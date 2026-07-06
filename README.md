@@ -152,6 +152,8 @@ npm run lint
 npx eslint --ext ts,tsx --report-unused-disable-directives --max-warnings 0 <files>
 ```
 
+For local AIZhongtai/Casdoor SSO login integration, see [`docs/server-integration/aizhongtai-casdoor-sso.md`](docs/server-integration/aizhongtai-casdoor-sso.md).
+
 ### OpenClaw Runtime
 
 The pinned OpenClaw version and third-party plugin list live in `package.json` under `openclaw`.

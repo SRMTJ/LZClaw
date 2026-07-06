@@ -51,6 +51,36 @@ describe('getServerApiBaseUrl', () => {
     expect(getServerApiBaseUrl()).toBe('http://127.0.0.1:8080');
   });
 
+  test('uses LZCLAW_SERVER_API_BASE_URL before app_config serverApiBaseUrl', () => {
+    process.env.LZCLAW_SERVER_API_BASE_URL = 'http://127.0.0.1:8081/';
+    const store = new MemoryStore();
+    store.set('app_config', {
+      app: {
+        serverApiBaseUrl: 'https://stale-app-api.example.com/',
+      },
+    });
+
+    refreshEndpointsTestMode(store as any);
+
+    expect(getServerApiBaseUrl()).toBe('http://127.0.0.1:8081');
+  });
+
+  test('uses app_config auth apiBaseUrl when no enterprise or env override exists', () => {
+    const store = new MemoryStore();
+    store.set('app_config', {
+      auth: {
+        apiBaseUrl: 'https://app-auth-api.example.com/',
+      },
+      app: {
+        serverApiBaseUrl: 'https://legacy-app-api.example.com/',
+      },
+    });
+
+    refreshEndpointsTestMode(store as any);
+
+    expect(getServerApiBaseUrl()).toBe('https://app-auth-api.example.com');
+  });
+
   test('keeps existing test mode fallback when no explicit base URL exists', () => {
     const store = new MemoryStore();
     store.set('app_config', {

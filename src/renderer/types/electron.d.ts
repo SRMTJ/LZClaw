@@ -391,6 +391,14 @@ interface ProfileSummaryData {
   creditsResetCampaign?: CreditsResetCampaignStatusData;
 }
 
+interface AuthWorkspaceData {
+  id: string;
+  name: string;
+  code?: string;
+  role?: string;
+  status?: string;
+}
+
 interface ClientBannerData {
   id: number;
   placement: string;
@@ -1469,15 +1477,39 @@ interface IElectronAPI {
       success: boolean;
       user?: any;
       quota?: any;
+      workspace?: AuthWorkspaceData | null;
+      workspaces?: AuthWorkspaceData[];
       error?: string;
     }>;
     prepareLogin: (loginUrl?: string) => Promise<{ success: boolean; loginUrl?: string; error?: string }>;
     cancelLogin: () => Promise<{ success: boolean; error?: string }>;
     exchange: (
       code: string,
-    ) => Promise<{ success: boolean; user?: any; quota?: any; error?: string }>;
-    getUser: () => Promise<{ success: boolean; user?: any; quota?: any }>;
+    ) => Promise<{
+      success: boolean;
+      user?: any;
+      quota?: any;
+      workspace?: AuthWorkspaceData | null;
+      workspaces?: AuthWorkspaceData[];
+      error?: string;
+    }>;
+    getUser: () => Promise<{
+      success: boolean;
+      user?: any;
+      quota?: any;
+      workspace?: AuthWorkspaceData | null;
+      workspaces?: AuthWorkspaceData[];
+    }>;
     getQuota: () => Promise<{ success: boolean; quota?: any }>;
+    getWorkspaces: () => Promise<{ success: boolean; workspaces?: AuthWorkspaceData[]; error?: string }>;
+    switchWorkspace: (enterpriseId: string) => Promise<{
+      success: boolean;
+      user?: any;
+      quota?: any;
+      workspace?: AuthWorkspaceData | null;
+      workspaces?: AuthWorkspaceData[];
+      error?: string;
+    }>;
     logout: () => Promise<{ success: boolean }>;
     refreshToken: () => Promise<{ success: boolean; accessToken?: string }>;
     getAccessToken: () => Promise<string | null>;
@@ -1518,6 +1550,7 @@ interface IElectronAPI {
     getActiveClientBanners: () => Promise<{ success: boolean; data?: ClientBannerData[] }>;
     getPendingCallback: () => Promise<string | null>;
     onCallback: (callback: (data: { code: string }) => void) => () => void;
+    onSessionInvalidated: (callback: (data: { reason?: string }) => void) => () => void;
     onQuotaChanged: (callback: () => void) => () => void;
   };
   media: {
@@ -1534,61 +1567,6 @@ interface IElectronAPI {
   };
   networkStatus: {
     send: (status: 'online' | 'offline') => void;
-  };
-  auth: {
-    login: (loginUrl?: string) => Promise<{ success: boolean; error?: string }>;
-    passwordLogin: (credentials: { account: string; password: string }) => Promise<{
-      success: boolean;
-      user?: import('../store/slices/authSlice').UserProfile;
-      quota?: {
-        planName: string;
-        subscriptionStatus: string;
-        creditsLimit: number;
-        creditsUsed: number;
-        creditsRemaining: number;
-      };
-      error?: string;
-    }>;
-    prepareLogin: (loginUrl?: string) => Promise<{ success: boolean; loginUrl?: string; error?: string }>;
-    cancelLogin: () => Promise<{ success: boolean; error?: string }>;
-    exchange: (code: string) => Promise<{
-      success: boolean;
-      user?: import('../store/slices/authSlice').UserProfile;
-      quota?: {
-        planName: string;
-        subscriptionStatus: string;
-        creditsLimit: number;
-        creditsUsed: number;
-        creditsRemaining: number;
-      };
-      error?: string;
-    }>;
-    getUser: () => Promise<{
-      success: boolean;
-      user?: import('../store/slices/authSlice').UserProfile;
-      quota?: {
-        planName: string;
-        subscriptionStatus: string;
-        creditsLimit: number;
-        creditsUsed: number;
-        creditsRemaining: number;
-      };
-    }>;
-    getQuota: () => Promise<{
-      success: boolean;
-      quota?: {
-        planName: string;
-        subscriptionStatus: string;
-        creditsLimit: number;
-        creditsUsed: number;
-        creditsRemaining: number;
-      };
-    }>;
-    logout: () => Promise<{ success: boolean }>;
-    refreshToken: () => Promise<{ success: boolean; accessToken?: string }>;
-    getAccessToken: () => Promise<string | null>;
-    getPendingCallback: () => Promise<string | null>;
-    onCallback: (callback: (data: { code: string }) => void) => () => void;
   };
   qwen: Record<string, never>;
   feishu: {

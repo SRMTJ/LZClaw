@@ -93,36 +93,35 @@ const INIT_STEP_TIMEOUT_MS_DEFAULT = 16_000;
 const shouldAlwaysShowOnboardingOnStartup = import.meta.env.DEV;
 
 const LoginRequiredScreen: React.FC<{
-  onLogin: () => Promise<void>;
-  onMockLogin: () => Promise<void>;
-}> = ({ onLogin, onMockLogin }) => {
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  onPasswordLogin: (account: string, password: string) => Promise<void>;
+}> = ({ onPasswordLogin }) => {
+  const [account, setAccount] = useState('');
+  const [password, setPassword] = useState('');
+  const [submittingMode, setSubmittingMode] = useState<'password' | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const allowMockLogin = import.meta.env.DEV;
+  const isSubmitting = submittingMode !== null;
 
-  const handleEnterpriseLogin = useCallback(() => {
-    setIsSubmitting(true);
+  const handlePasswordLogin = useCallback((event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const trimmedAccount = account.trim();
+    if (!trimmedAccount) {
+      setErrorMessage('请输入账号');
+      return;
+    }
+    if (!password) {
+      setErrorMessage('请输入密码');
+      return;
+    }
+    setSubmittingMode('password');
     setErrorMessage(null);
-    void onLogin()
+    void onPasswordLogin(trimmedAccount, password)
       .catch((error) => {
         setErrorMessage(error instanceof Error ? error.message : '登录失败，请稍后重试。');
       })
       .finally(() => {
-        setIsSubmitting(false);
+        setSubmittingMode(null);
       });
-  }, [onLogin]);
-
-  const handleMockLogin = useCallback(() => {
-    setIsSubmitting(true);
-    setErrorMessage(null);
-    void onMockLogin()
-      .catch((error) => {
-        setErrorMessage(error instanceof Error ? error.message : '模拟登录失败，请稍后重试。');
-      })
-      .finally(() => {
-        setIsSubmitting(false);
-      });
-  }, [onMockLogin]);
+  }, [account, onPasswordLogin, password]);
 
   return (
     <div className="flex min-h-0 flex-1 items-center justify-center bg-background px-6">
@@ -135,7 +134,7 @@ const LoginRequiredScreen: React.FC<{
           </div>
           <h1 className="text-xl font-semibold text-foreground">登录 LZClaw</h1>
           <p className="mt-3 text-sm leading-6 text-muted">
-            使用企业账号完成统一身份认证，登录成功后进入工作台。
+            使用企业账号密码登录，登录成功后进入工作台。
           </p>
         </div>
 
@@ -145,31 +144,40 @@ const LoginRequiredScreen: React.FC<{
           </div>
         )}
 
-        <button
-          type="button"
-          onClick={handleEnterpriseLogin}
-          disabled={isSubmitting}
-          className="mt-6 inline-flex h-10 items-center justify-center rounded-md bg-primary px-5 text-sm font-medium text-white transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-70"
-        >
-          {isSubmitting && <ArrowPathIcon className="mr-2 h-4 w-4 animate-spin" />}
-          {isSubmitting ? '正在打开浏览器' : '使用企业账号登录'}
-        </button>
-
-        {allowMockLogin && (
-          <>
-            <div className="mt-4 rounded-md border border-border bg-background px-3 py-2 text-xs leading-5 text-muted">
-              模拟登录只写入本地登录态，不请求登录接口。
-            </div>
-            <button
-              type="button"
-              onClick={handleMockLogin}
+        <form className="mt-6 flex flex-col gap-3" onSubmit={handlePasswordLogin}>
+          <label className="flex flex-col gap-1.5 text-sm text-foreground">
+            <span>账号</span>
+            <input
+              type="text"
+              autoComplete="username"
+              value={account}
+              onChange={(event) => setAccount(event.target.value)}
               disabled={isSubmitting}
-              className="mt-3 inline-flex h-10 items-center justify-center rounded-md border border-border bg-background px-5 text-sm font-medium text-foreground transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-70"
-            >
-              {isSubmitting ? '正在登录' : '模拟登录'}
-            </button>
-          </>
-        )}
+              placeholder="手机号 / 用户名 / 邮箱"
+              className="h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted focus:border-primary disabled:cursor-not-allowed disabled:opacity-70"
+            />
+          </label>
+          <label className="flex flex-col gap-1.5 text-sm text-foreground">
+            <span>密码</span>
+            <input
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              disabled={isSubmitting}
+              className="h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none transition-colors focus:border-primary disabled:cursor-not-allowed disabled:opacity-70"
+            />
+          </label>
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            className="mt-1 inline-flex h-10 items-center justify-center rounded-md bg-primary px-5 text-sm font-medium text-white transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            {submittingMode === 'password' && <ArrowPathIcon className="mr-2 h-4 w-4 animate-spin" />}
+            {submittingMode === 'password' ? '正在登录' : '登录'}
+          </button>
+        </form>
+
       </div>
     </div>
   );
@@ -582,18 +590,10 @@ const App: React.FC = () => {
 
   const handleShowLogin = useCallback(() => {
     setShowWelcome(false);
-    void authService.login().catch((error: unknown) => {
-      console.error('[App] failed to prepare login form:', error);
-      showToast(error instanceof Error ? error.message : '登录准备失败');
-    });
-  }, [showToast]);
-
-  const handleEnterpriseLogin = useCallback(async () => {
-    await authService.login();
   }, []);
 
-  const handleMockLogin = useCallback(async () => {
-    await authService.loginWithMockUser();
+  const handlePasswordLogin = useCallback(async (account: string, password: string) => {
+    await authService.loginWithPassword(account, password);
   }, []);
 
   const runUpdateCheck = useCallback(async () => {
@@ -1187,8 +1187,7 @@ const App: React.FC = () => {
           />
         ) : (
           <LoginRequiredScreen
-            onLogin={handleEnterpriseLogin}
-            onMockLogin={handleMockLogin}
+            onPasswordLogin={handlePasswordLogin}
           />
         )}
       </div>

@@ -1,6 +1,7 @@
 import {
   ArrowPathIcon,
   ArrowRightOnRectangleIcon,
+  BuildingOffice2Icon,
   CreditCardIcon,
   IdentificationIcon,
   UserCircleIcon,
@@ -64,9 +65,12 @@ const InfoRow: React.FC<{ label: string; value: React.ReactNode }> = ({ label, v
 const PersonalCenter: React.FC<PersonalCenterProps> = ({ onClose }) => {
   const user = useSelector((state: RootState) => state.auth.user);
   const quota = useSelector((state: RootState) => state.auth.quota);
+  const workspace = useSelector((state: RootState) => state.auth.workspace);
+  const workspaces = useSelector((state: RootState) => state.auth.workspaces);
   const profileSummary = useSelector((state: RootState) => state.auth.profileSummary);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [switchingWorkspaceId, setSwitchingWorkspaceId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const displayName = user?.nickname?.trim()
@@ -84,6 +88,8 @@ const PersonalCenter: React.FC<PersonalCenterProps> = ({ onClose }) => {
 
   const totalCredits = profileSummary?.totalCreditsRemaining ?? quota?.creditsRemaining;
   const creditItems = profileSummary?.creditItems ?? [];
+  const activeWorkspaceId = workspace?.id || '';
+  const canSwitchWorkspace = workspaces.length > 1;
 
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
@@ -111,6 +117,20 @@ const PersonalCenter: React.FC<PersonalCenterProps> = ({ onClose }) => {
       setIsLoggingOut(false);
     }
   }, [onClose]);
+
+  const handleWorkspaceChange = useCallback(async (event: React.ChangeEvent<HTMLSelectElement>) => {
+    const nextWorkspaceId = event.target.value;
+    if (!nextWorkspaceId || nextWorkspaceId === activeWorkspaceId) return;
+    setSwitchingWorkspaceId(nextWorkspaceId);
+    setErrorMessage(null);
+    try {
+      await authService.switchWorkspace(nextWorkspaceId);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : i18nService.t('personalCenterSwitchWorkspaceFailed'));
+    } finally {
+      setSwitchingWorkspaceId(null);
+    }
+  }, [activeWorkspaceId]);
 
   return (
     <Modal
@@ -191,6 +211,47 @@ const PersonalCenter: React.FC<PersonalCenterProps> = ({ onClose }) => {
                   label={i18nService.t('personalCenterSubscriptionStatus')}
                   value={formatStatus(quota?.subscriptionStatus)}
                 />
+              </section>
+
+              <section className="rounded-xl border border-border bg-surface p-5">
+                <div className="mb-3 flex items-center gap-2">
+                  <BuildingOffice2Icon className="h-5 w-5 text-primary" />
+                  <h3 className="text-sm font-semibold text-foreground">
+                    {i18nService.t('personalCenterWorkspace')}
+                  </h3>
+                </div>
+                <InfoRow
+                  label={i18nService.t('personalCenterCurrentWorkspace')}
+                  value={workspace?.name || user?.enterpriseName || '-'}
+                />
+                {workspace?.role && (
+                  <InfoRow label={i18nService.t('personalCenterWorkspaceRole')} value={workspace.role} />
+                )}
+                {canSwitchWorkspace && (
+                  <div className="pt-3">
+                    <label className="mb-2 block text-sm text-secondary" htmlFor="workspace-switcher">
+                      {i18nService.t('personalCenterSwitchWorkspace')}
+                    </label>
+                    <select
+                      id="workspace-switcher"
+                      value={activeWorkspaceId}
+                      onChange={handleWorkspaceChange}
+                      disabled={isRefreshing || isLoggingOut || Boolean(switchingWorkspaceId)}
+                      className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground outline-none transition-colors focus:border-primary disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {workspaces.map(item => (
+                        <option key={item.id} value={item.id}>
+                          {item.name}
+                        </option>
+                      ))}
+                    </select>
+                    {switchingWorkspaceId && (
+                      <div className="mt-2 text-xs text-secondary">
+                        {i18nService.t('personalCenterSwitchingWorkspace')}
+                      </div>
+                    )}
+                  </div>
+                )}
               </section>
 
               <section className="rounded-xl border border-border bg-surface p-5">

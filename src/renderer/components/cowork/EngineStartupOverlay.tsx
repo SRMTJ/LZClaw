@@ -104,6 +104,7 @@ const EngineStartupOverlay: React.FC<EngineStartupOverlayProps> = ({ bootstrappi
 
   const isStarting = status?.phase === 'starting';
   const visible = bootstrapping || isStarting;
+  const isAppBootstrapping = bootstrapping && !isStarting;
 
   // Fade in only when the overlay appears mid-session (e.g. engine restart),
   // not on app start where the static splash / bootstrap tree already showed it.
@@ -163,6 +164,13 @@ const EngineStartupOverlay: React.FC<EngineStartupOverlayProps> = ({ bootstrappi
   const progressPercent = typeof status?.progressPercent === 'number'
     ? Math.max(0, Math.min(100, Math.round(status.progressPercent)))
     : null;
+  const title = i18nService.t(isAppBootstrapping ? 'appStartingTitle' : 'engineStartingTitle');
+  const subtitle = isAppBootstrapping
+    ? i18nService.t('appStartingSubtitle')
+    : status
+      ? resolveEngineStatusText(status)
+      : i18nService.t('loading');
+  const slowHint = i18nService.t(isAppBootstrapping ? 'appStartingSlowHint' : 'engineStartingSlowHint');
 
   return (
     <div className={`fixed inset-0 z-[100] flex items-center justify-center bg-surface ${animateIn ? 'animate-fade-in' : ''}`}>
@@ -179,7 +187,7 @@ const EngineStartupOverlay: React.FC<EngineStartupOverlayProps> = ({ bootstrappi
           <div className="absolute -inset-2 rounded-3xl bg-primary/20 blur-xl animate-pulse" aria-hidden="true" />
           <img
             src="logo.png"
-            alt="LobsterAI"
+            alt="LZClaw"
             width={72}
             height={72}
             className="relative rounded-2xl select-none"
@@ -188,10 +196,10 @@ const EngineStartupOverlay: React.FC<EngineStartupOverlayProps> = ({ bootstrappi
         </div>
 
         <h1 className="text-2xl font-bold text-foreground mb-2 text-center">
-          {i18nService.t('engineStartingTitle')}
+          {title}
         </h1>
         <p className="text-sm text-secondary mb-8 text-center">
-          {status ? resolveEngineStatusText(status) : i18nService.t('loading')}
+          {subtitle}
         </p>
 
         {/* progress bar with shimmer */}
@@ -217,7 +225,7 @@ const EngineStartupOverlay: React.FC<EngineStartupOverlayProps> = ({ bootstrappi
         </div>
         <div className="mt-1.5 flex w-full items-center justify-between gap-3 min-h-[1rem]">
           <span className={`text-xs text-muted transition-opacity duration-500 ${showSlowHint ? 'opacity-100' : 'opacity-0'}`}>
-            {i18nService.t('engineStartingSlowHint')}
+            {slowHint}
           </span>
           {progressPercent !== null && (
             <span className="text-xs tabular-nums text-secondary shrink-0">{progressPercent}%</span>

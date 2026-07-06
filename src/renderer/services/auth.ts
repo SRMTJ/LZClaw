@@ -9,6 +9,7 @@ import {
   updateQuota,
   type UserProfile,
   type UserQuota,
+  type WorkstationWorkspace,
 } from '../store/slices/authSlice';
 import type { Model } from '../store/slices/modelSlice';
 import {
@@ -20,6 +21,8 @@ interface AuthStateRefreshResult {
   isLoggedIn: boolean;
   user: UserProfile | null;
   quota: UserQuota | null;
+  workspace: WorkstationWorkspace | null;
+  workspaces: WorkstationWorkspace[];
 }
 
 const MOCK_AUTH_USER: UserProfile = {
@@ -108,6 +111,7 @@ export function mapPricingCatalogToPublicServerModels(
 
 class AuthService {
   private unsubCallback: (() => void) | null = null;
+  private unsubSessionInvalidated: (() => void) | null = null;
   private unsubQuotaChanged: (() => void) | null = null;
   private unsubWindowState: (() => void) | null = null;
   private lastRefreshTime = 0;
@@ -125,6 +129,13 @@ class AuthService {
     // Listen for OAuth callback from protocol handler
     this.unsubCallback = window.electron.auth.onCallback(async ({ code }) => {
       await this.handleCallback(code);
+    });
+
+    this.unsubSessionInvalidated = window.electron.auth.onSessionInvalidated(() => {
+      this.isMockLoggedIn = false;
+      store.dispatch(setLoggedOut());
+      store.dispatch(clearServerModels());
+      void this.loadPublicPricingCatalogModels();
     });
 
     try {
@@ -181,7 +192,12 @@ class AuthService {
       throw new Error(result.error || '登录失败');
     }
 
-    store.dispatch(setLoggedIn({ user: result.user, quota: result.quota }));
+    store.dispatch(setLoggedIn({
+      user: result.user,
+      quota: result.quota,
+      workspace: result.workspace ?? null,
+      workspaces: result.workspaces ?? [],
+    }));
     await this.loadServerModels();
     void this.fetchProfileSummary();
     void this.refreshQuota();
@@ -189,13 +205,15 @@ class AuthService {
       isLoggedIn: true,
       user: result.user,
       quota: result.quota,
+      workspace: result.workspace ?? null,
+      workspaces: result.workspaces ?? [],
     };
   }
 
   async loginWithMockUser(): Promise<AuthStateRefreshResult> {
     this.isMockLoggedIn = true;
     store.dispatch(clearServerModels());
-    store.dispatch(setLoggedIn({ user: MOCK_AUTH_USER, quota: MOCK_AUTH_QUOTA }));
+    store.dispatch(setLoggedIn({ user: MOCK_AUTH_USER, quota: MOCK_AUTH_QUOTA, workspace: null, workspaces: [] }));
     store.dispatch(setProfileSummary({
       id: MOCK_AUTH_USER.id ?? 0,
       nickname: MOCK_AUTH_USER.nickname,
@@ -213,6 +231,8 @@ class AuthService {
       isLoggedIn: true,
       user: MOCK_AUTH_USER,
       quota: MOCK_AUTH_QUOTA,
+      workspace: null,
+      workspaces: [],
     };
   }
 
@@ -224,7 +244,12 @@ class AuthService {
       const result = await window.electron.auth.exchange(code);
       if (result.success) {
         this.isMockLoggedIn = false;
-        store.dispatch(setLoggedIn({ user: result.user, quota: result.quota }));
+        store.dispatch(setLoggedIn({
+          user: result.user,
+          quota: result.quota,
+          workspace: result.workspace ?? null,
+          workspaces: result.workspaces ?? [],
+        }));
         await this.loadServerModels();
         void this.fetchProfileSummary();
         this.refreshQuota();
@@ -246,10 +271,21 @@ class AuthService {
       const result = await window.electron.auth.getUser();
       if (result.success && result.user) {
         this.isMockLoggedIn = false;
-        store.dispatch(setLoggedIn({ user: result.user, quota: result.quota }));
+        store.dispatch(setLoggedIn({
+          user: result.user,
+          quota: result.quota,
+          workspace: result.workspace ?? null,
+          workspaces: result.workspaces ?? [],
+        }));
         await this.loadServerModels();
         void this.fetchProfileSummary();
-        return { isLoggedIn: true, user: result.user, quota: result.quota ?? null };
+        return {
+          isLoggedIn: true,
+          user: result.user,
+          quota: result.quota ?? null,
+          workspace: result.workspace ?? null,
+          workspaces: result.workspaces ?? [],
+        };
       }
     } catch {
       // handled below
@@ -267,6 +303,33 @@ class AuthService {
       isLoggedIn: current.isLoggedIn,
       user: current.user,
       quota: current.quota,
+      workspace: current.workspace,
+      workspaces: current.workspaces,
+    };
+  }
+
+  async switchWorkspace(enterpriseId: string): Promise<AuthStateRefreshResult> {
+    if (this.isMockLoggedIn) {
+      throw new Error('模拟登录不可切换工作区');
+    }
+    const result = await window.electron.auth.switchWorkspace(enterpriseId);
+    if (!result.success || !result.user || !result.quota) {
+      throw new Error(result.error || '切换工作区失败');
+    }
+    store.dispatch(setLoggedIn({
+      user: result.user,
+      quota: result.quota,
+      workspace: result.workspace ?? null,
+      workspaces: result.workspaces ?? [],
+    }));
+    await this.loadServerModels();
+    void this.fetchProfileSummary();
+    return {
+      isLoggedIn: true,
+      user: result.user,
+      quota: result.quota,
+      workspace: result.workspace ?? null,
+      workspaces: result.workspaces ?? [],
     };
   }
 
@@ -325,6 +388,8 @@ class AuthService {
   destroy() {
     this.unsubCallback?.();
     this.unsubCallback = null;
+    this.unsubSessionInvalidated?.();
+    this.unsubSessionInvalidated = null;
     this.unsubQuotaChanged?.();
     this.unsubQuotaChanged = null;
     this.unsubWindowState?.();

@@ -41,6 +41,21 @@ describe('appendLoginParams', () => {
 
     expect(result).toBe('https://example.com/login?foo=bar&source=electron');
   });
+
+  test('builds workstation SSO start URL with local callback redirect and state', () => {
+    const result = appendLoginParams(
+      'http://127.0.0.1:8081/api/auth/workstation/sso/start',
+      {
+        source: 'electron',
+        redirect_uri: 'http://127.0.0.1:43210/auth/callback',
+        state: 'local-state',
+      },
+    );
+
+    expect(result).toBe(
+      'http://127.0.0.1:8081/api/auth/workstation/sso/start?source=electron&redirect_uri=http%3A%2F%2F127.0.0.1%3A43210%2Fauth%2Fcallback&state=local-state',
+    );
+  });
 });
 
 describe('appendCallbackReturnTo', () => {

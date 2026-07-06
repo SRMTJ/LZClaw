@@ -3,8 +3,11 @@ export const AuthIpcChannel = {
   CancelLogin: 'auth:cancelLogin',
   GetPricingCatalog: 'auth:getPricingCatalog',
   GetPendingCallback: 'auth:getPendingCallback',
+  GetWorkspaces: 'auth:getWorkspaces',
   PasswordLogin: 'auth:passwordLogin',
   PrepareLogin: 'auth:prepareLogin',
+  SessionInvalidated: 'auth:sessionInvalidated',
+  SwitchWorkspace: 'auth:switchWorkspace',
 } as const;
 
 export type AuthIpcChannel = typeof AuthIpcChannel[keyof typeof AuthIpcChannel];

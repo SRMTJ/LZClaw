@@ -3,10 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>LobsterAI</title>
+    <title>LZClaw</title>
     <style>
       /* Pre-React splash: a static replica of EngineStartupOverlay so the whole
-         startup (window shown -> renderer init -> engine starting) is one
+         startup (window shown -> renderer init -> app ready) is one
          continuous screen. Replaced automatically when React mounts into #root.
          Keep layout/metrics in sync with EngineStartupOverlay.tsx. */
       .splash,
@@ -215,10 +215,10 @@
         <div class="splash-content">
           <div class="splash-logo-wrap">
             <div class="splash-logo-glow"></div>
-            <img class="splash-logo" src="logo.png" alt="LobsterAI" width="72" height="72" draggable="false" />
+            <img class="splash-logo" src="logo.png" alt="LZClaw" width="72" height="72" draggable="false" />
           </div>
-          <h1 class="splash-title" id="splash-title">AI 引擎启动中</h1>
-          <p class="splash-subtitle" id="splash-subtitle">加载中...</p>
+          <h1 class="splash-title" id="splash-title">LZClaw 启动中</h1>
+          <p class="splash-subtitle" id="splash-subtitle">正在初始化...</p>
           <div class="splash-bar"><div class="splash-bar-shimmer"></div></div>
           <div class="splash-bar-below"></div>
           <div class="splash-tips">
@@ -246,8 +246,8 @@
           }
           var texts = {
             zh: {
-              title: 'AI 引擎启动中',
-              subtitle: '加载中...',
+              title: 'LZClaw 启动中',
+              subtitle: '正在初始化...',
               label: '小提示',
               tips: [
                 '让 AI 生成 HTML、SVG 或 Mermaid 图表，右侧面板会实时预览效果',
@@ -259,8 +259,8 @@
               ]
             },
             en: {
-              title: 'Starting AI engine',
-              subtitle: 'Loading...',
+              title: 'Starting LZClaw',
+              subtitle: 'Initializing...',
               label: 'Tip',
               tips: [
                 'Ask AI for HTML, SVG, or Mermaid diagrams — the side panel previews them live',
