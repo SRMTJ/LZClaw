@@ -7,7 +7,9 @@ import {
   AppConfig,
   CONFIG_KEYS,
   defaultConfig,
+  FontPreferences,
   isCustomProvider,
+  normalizeFontPreference,
   ShortcutAction,
   type ShortcutConfig,
 } from '../config';
@@ -514,6 +516,18 @@ const hydrateStoredConfig = (storedConfig: AppConfig): AppConfig => {
     shortcuts: normalizeShortcutsConfig(storedConfig.shortcuts),
     providers: mergedProviders as AppConfig['providers'],
     providerModelMigrationVersions,
+    uiFontSize: normalizeFontPreference(
+      storedConfig.uiFontSize,
+      FontPreferences.UiFontSizeDefault,
+      FontPreferences.UiFontSizeMin,
+      FontPreferences.UiFontSizeMax,
+    ),
+    codeFontSize: normalizeFontPreference(
+      storedConfig.codeFontSize,
+      FontPreferences.CodeFontSizeDefault,
+      FontPreferences.CodeFontSizeMin,
+      FontPreferences.CodeFontSizeMax,
+    ),
     browserWebAccess: normalizeBrowserWebAccessConfig(storedConfig.browserWebAccess),
     diagnosticsOtel: normalizeDiagnosticsOtelSettings(storedConfig.diagnosticsOtel),
     notificationSettings: normalizeNotificationSettings(storedConfig.notificationSettings),
@@ -572,6 +586,18 @@ class ConfigService {
       ...(normalizedProviders
         ? { providerModelMigrationVersions: markCurrentProviderModelMigrationsApplied(base.providerModelMigrationVersions) }
         : {}),
+      uiFontSize: normalizeFontPreference(
+        newConfig.uiFontSize ?? base.uiFontSize,
+        FontPreferences.UiFontSizeDefault,
+        FontPreferences.UiFontSizeMin,
+        FontPreferences.UiFontSizeMax,
+      ),
+      codeFontSize: normalizeFontPreference(
+        newConfig.codeFontSize ?? base.codeFontSize,
+        FontPreferences.CodeFontSizeDefault,
+        FontPreferences.CodeFontSizeMin,
+        FontPreferences.CodeFontSizeMax,
+      ),
       browserWebAccess: normalizeBrowserWebAccessConfig(
         newConfig.browserWebAccess ?? base.browserWebAccess,
       ),
