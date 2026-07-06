@@ -147,6 +147,10 @@ const getAccountDisplayName = (account: EmailSkillAccountConfig): string => {
   return account.name || account.email || account.id;
 };
 
+const getAccountSubtitle = (account: EmailSkillAccountConfig): string => (
+  account.email || (account.provider ? (PROVIDER_PRESETS[account.provider]?.label || account.provider) : '')
+);
+
 const getChangedAccountKeys = (patch: Partial<EmailSkillAccountConfig>): string => {
   const fieldMappings: Array<[keyof EmailSkillAccountConfig, string]> = [
     ['provider', 'provider'],
@@ -523,6 +527,7 @@ const EmailSkillConfig: React.FC<EmailSkillConfigProps> = ({ onClose }) => {
             const isDefault = account.id === config.defaultAccountId;
             const result = connectivityResults[account.id];
             const accountDisplayName = getAccountDisplayName(account);
+            const accountSubtitle = getAccountSubtitle(account);
             return (
               <button
                 type="button"
@@ -538,7 +543,9 @@ const EmailSkillConfig: React.FC<EmailSkillConfigProps> = ({ onClose }) => {
                   <span className="truncate text-xs font-medium text-foreground">{accountDisplayName}</span>
                   {isDefault && <StarIcon className="h-3.5 w-3.5 text-yellow-500 flex-shrink-0" />}
                 </div>
-                <div className="mt-1 truncate text-[11px] leading-4 text-secondary">{account.email || account.id}</div>
+                {accountSubtitle && (
+                  <div className="mt-1 truncate text-[11px] leading-4 text-secondary">{accountSubtitle}</div>
+                )}
                 <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-secondary">
                   <span>{account.enabled ? i18nService.t('enabled') : i18nService.t('disabled')}</span>
                   {result && <span>{result.verdict === 'pass' ? i18nService.t('connectionSuccess') : i18nService.t('connectionFailed')}</span>}
@@ -569,9 +576,6 @@ const EmailSkillConfig: React.FC<EmailSkillConfigProps> = ({ onClose }) => {
                   {getAccountDisplayName(activeAccount)}
                 </div>
                 <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
-                  <span className="max-w-full truncate text-[11px] leading-4 text-secondary" title={activeAccount.id}>
-                    {activeAccount.id}
-                  </span>
                   <span className={`inline-flex h-5 items-center rounded-full px-2 text-[11px] leading-none ${
                     activeAccount.enabled
                       ? 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-300'
