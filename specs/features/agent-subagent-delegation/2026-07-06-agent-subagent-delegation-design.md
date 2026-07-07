@@ -195,11 +195,14 @@ Agent 创建页：
 3. 真实子会话 key 应形如 `agent:product-analyst:subagent:<uuid>`，而不是 `agent:main:subagent:<uuid>`。
 4. 子会话 trajectory 应落在对应 Agent 目录，例如 `openclaw/state/agents/product-analyst/sessions/`。
 
-已观察到的后续风险：
+后续实现补充：
 
 1. OpenClaw transcript/trajectory 能正确记录多轮 yield 后的 `ts-engineer`、`qa-reviewer` subagent。
-2. LobsterAI 本地 `subagent_runs` 表可能只记录第一段 spawn，`sessions_yield` 后续回合中的 spawn 追踪存在漏记风险。
-3. 该问题属于后续本地追踪修复，不阻断本功能配置语义。
+2. LobsterAI final sync 会回填后续自动推进产生的 `sessions_spawn`、`sessions_yield` 工具结果，避免只记录第一段 spawn。
+3. 协作 Agent 的 subagent run 会 materialize 为可继续对话的 Cowork child session，并通过 `childCoworkSessionId` 与父会话中的 subagent run 关联。
+4. self subagent 不 materialize 为独立 Cowork child session，避免在 sidebar 中出现不必要的“当前 Agent 调用当前 Agent”会话。
+5. `taskName` 作为展示别名写入 subagent run 的 `label`，但不改变 `agentId` 的身份语义；`agentId` 仍用于 OpenClaw 目标路由、session key 解析和 materialize 判断。
+6. `getSubTaskHistory` 只按明确的 run/session key 读取历史，不再按 `agentId` 做模糊匹配，避免失败的 subagent 调用映射到错误会话。
 
 ## 5. 边界情况
 
@@ -228,6 +231,12 @@ Agent 创建页：
 9. `src/renderer/components/agent/AgentSettingsPanel.tsx`
 10. `src/renderer/components/agent/AgentCreateModal.tsx`
 11. `src/renderer/services/i18n.ts`
+12. `src/main/libs/agentEngine/subagentTracker.ts`
+13. `src/main/libs/agentEngine/openclawRuntimeAdapter.ts`
+14. `src/main/subagentRunStore.ts`
+15. `src/main/subagentMessageStore.ts`
+16. `src/renderer/components/artifacts/SubagentPanelContent.tsx`
+17. `src/renderer/components/cowork/SubagentTurnLinks.tsx`
 
 ## 7. 验收标准
 
@@ -239,5 +248,9 @@ Agent 创建页：
 6. 不生成 `tools.agentToAgent.enabled`。
 7. 不生成 `delegationMode`。
 8. `sessions_spawn` 显式传 `agentId: "product-analyst"` 后，真实 session key 为 `agent:product-analyst:subagent:<uuid>`。
-9. 相关单元测试覆盖配置生成的空选择、self-only、正常协作选择三种情况。
-10. touched TypeScript/TSX 文件通过 ESLint changed-file 检查。
+9. 协作 Agent 的 subagent run 在本地有 `childCoworkSessionId`，可作为对应 Agent 下的普通会话继续对话。
+10. self subagent 不生成独立 child session。
+11. subagent 列表和 chip 展示优先使用 `label`/`taskName`，而不是把 self subagent 展示成 `main`。
+12. 后续自动推进产生的 subagent 工具结果可在父会话中回填展示。
+13. 相关单元测试覆盖配置生成的空选择、self-only、正常协作选择三种情况。
+14. touched TypeScript/TSX 文件通过 ESLint changed-file 检查。

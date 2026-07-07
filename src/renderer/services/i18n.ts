@@ -1253,7 +1253,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     agentTabCollaboration: '协作',
     agentTabIM: 'IM 渠道',
     agentSubagentsTitle: '允许调用的 Agent',
-    agentSubagentsHint: '选中的 Agent 会作为协作目标写入 OpenClaw；保存后会自动包含当前 Agent，并要求启动子 Agent 时显式指定目标。',
+    agentSubagentsHint: '选中后，当前 Agent 可以把任务交给这些 Agent 协助完成。',
     agentSubagentsEmpty: '暂无其他已启用 Agent',
     agentIMConfigured: '已配置',
     agentIMNotConfigured: '未配置',
@@ -4021,7 +4021,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     agentTabIM: 'IM Channels',
     agentSubagentsTitle: 'Allowed Agents',
     agentSubagentsHint:
-      'Selected Agents are written as collaboration targets. The current Agent is included automatically, and subagent spawns must specify an explicit target.',
+      'After selection, this Agent can hand off tasks to these Agents for help.',
     agentSubagentsEmpty: 'No other enabled Agents',
     agentIMConfigured: 'Configured',
     agentIMNotConfigured: 'Not configured',

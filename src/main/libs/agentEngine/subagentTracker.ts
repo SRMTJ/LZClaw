@@ -38,6 +38,16 @@ const resolveToolInput = (block: Record<string, unknown>): Record<string, unknow
   return {};
 };
 
+const resolveSpawnDisplayLabel = (...sources: Array<Record<string, unknown> | null | undefined>): string | null => {
+  for (const source of sources) {
+    const explicitLabel = typeof source?.label === 'string' ? source.label.trim() : '';
+    if (explicitLabel) return explicitLabel;
+    const taskName = typeof source?.taskName === 'string' ? source.taskName.trim() : '';
+    if (taskName) return taskName;
+  }
+  return null;
+};
+
 /** Message format compatible with renderer CoworkMessage interface */
 export interface SubagentCoworkMessage {
   id: string;
@@ -538,13 +548,14 @@ export class SubagentTracker {
     this.subagentStatus.set(toolCallId, status);
     const pending = this.pendingSpawnInfo.get(toolCallId);
     if (pending) {
+      const displayLabel = pending.label ?? resolveSpawnDisplayLabel(parsed);
       const candidate = {
         runId: toolCallId,
         parentSessionId: pending.parentSessionId,
         childSessionKey,
         agentId: pending.agentId,
         task: pending.task,
-        label: pending.label,
+        label: displayLabel,
         status,
         createdAt: pending.createdAt,
       };
@@ -559,7 +570,7 @@ export class SubagentTracker {
         childCoworkSessionId,
         agentId: pending.agentId,
         task: pending.task,
-        label: pending.label,
+        label: displayLabel,
         status,
         createdAt: pending.createdAt,
         endedAt: isError ? Date.now() : null,
@@ -668,11 +679,11 @@ export class SubagentTracker {
     toolCallIds.add(toolCallId);
 
     const task = typeof args?.task === 'string' ? args.task : '';
-    const label = typeof args?.label === 'string' ? args.label : undefined;
+    const label = resolveSpawnDisplayLabel(args);
     this.pendingSpawnInfo.set(toolCallId, {
       agentId,
       task: task || null,
-      label: label ?? null,
+      label,
       parentSessionId,
       createdAt,
     });

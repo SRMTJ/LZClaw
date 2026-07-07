@@ -353,7 +353,7 @@ test('forbidden spawn result is recorded as error', () => {
     childCoworkSessionId: null,
     agentId: 'essay-writer-1',
     task: 'write an essay',
-    label: null,
+    label: 'essay-writer-1',
     status: 'error',
     createdAt: expect.any(Number),
     endedAt: expect.any(Number),
