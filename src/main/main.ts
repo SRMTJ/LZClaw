@@ -3996,6 +3996,55 @@ if (!gotTheLock) {
     return resp;
   };
 
+  const fetchWorkstationData = async (
+    path: string,
+    options?: RequestInit,
+    query?: Record<string, unknown>,
+  ): Promise<{ success: boolean; data?: unknown; error?: string }> => {
+    try {
+      const tokens = getAuthTokens();
+      if (!tokens) return { success: false, error: 'Not logged in' };
+      const serverBaseUrl = getServerApiBaseUrl();
+      const url = new URL(path, `${serverBaseUrl}/`);
+      for (const [key, value] of Object.entries(query ?? {})) {
+        if (value === undefined || value === null || value === '') continue;
+        url.searchParams.set(key, String(value));
+      }
+      const resp = await fetchWithAuth(url.toString(), options);
+      type WorkstationResponseBody = {
+        code?: number;
+        data?: unknown;
+        message?: string;
+        error?: { message?: string };
+      } | null;
+      const body = await resp.json().catch((): null => null) as WorkstationResponseBody;
+      if (!resp.ok || body?.code !== 0) {
+        return {
+          success: false,
+          error: body?.error?.message || body?.message || `Request failed: ${resp.status}`,
+        };
+      }
+      return { success: true, data: body.data };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Request failed',
+      };
+    }
+  };
+
+  const workstationMutationOptions = (body: Record<string, unknown>): RequestInit => ({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(withKeyfromBody(body)),
+  });
+
+  const workstationPatchOptions = (body: Record<string, unknown>): RequestInit => ({
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(withKeyfromBody(body)),
+  });
+
   const extractSessionIdFromKey = (sessionKey: string): string | null =>
     parseManagedSessionKey(sessionKey)?.sessionId ?? null;
 
@@ -5325,6 +5374,82 @@ if (!gotTheLock) {
     } catch {
       return { success: false };
     }
+  });
+
+  ipcMain.handle('businessCenter:getDepartments', async () =>
+    fetchWorkstationData('/api/workstation/org/departments')
+  );
+
+  ipcMain.handle('businessCenter:createDepartment', async (_event, payload: Record<string, unknown> = {}) =>
+    fetchWorkstationData(
+      '/api/workstation/org/departments',
+      workstationMutationOptions(payload),
+    )
+  );
+
+  ipcMain.handle('businessCenter:updateDepartment', async (_event, payload: {
+    id?: string;
+    data?: Record<string, unknown>;
+  } = {}) => {
+    const id = typeof payload.id === 'string' ? payload.id.trim() : '';
+    if (!id) return { success: false, error: 'department id is required' };
+    return fetchWorkstationData(
+      `/api/workstation/org/departments/${encodeURIComponent(id)}`,
+      workstationPatchOptions(payload.data ?? {}),
+    );
+  });
+
+  ipcMain.handle('businessCenter:deleteDepartment', async (_event, payload: { id?: string } = {}) => {
+    const id = typeof payload.id === 'string' ? payload.id.trim() : '';
+    if (!id) return { success: false, error: 'department id is required' };
+    return fetchWorkstationData(
+      `/api/workstation/org/departments/${encodeURIComponent(id)}`,
+      { method: 'DELETE' },
+    );
+  });
+
+  ipcMain.handle('businessCenter:getEmployees', async (_event, query: Record<string, unknown> = {}) =>
+    fetchWorkstationData('/api/workstation/employees', undefined, query)
+  );
+
+  ipcMain.handle('businessCenter:createEmployee', async (_event, payload: Record<string, unknown> = {}) =>
+    fetchWorkstationData(
+      '/api/workstation/employees',
+      workstationMutationOptions(payload),
+    )
+  );
+
+  ipcMain.handle('businessCenter:updateEmployee', async (_event, payload: {
+    id?: string;
+    data?: Record<string, unknown>;
+  } = {}) => {
+    const id = typeof payload.id === 'string' ? payload.id.trim() : '';
+    if (!id) return { success: false, error: 'employee id is required' };
+    return fetchWorkstationData(
+      `/api/workstation/employees/${encodeURIComponent(id)}`,
+      workstationPatchOptions(payload.data ?? {}),
+    );
+  });
+
+  ipcMain.handle('businessCenter:disableEmployee', async (_event, payload: { id?: string } = {}) => {
+    const id = typeof payload.id === 'string' ? payload.id.trim() : '';
+    if (!id) return { success: false, error: 'employee id is required' };
+    return fetchWorkstationData(
+      `/api/workstation/employees/${encodeURIComponent(id)}/disable`,
+      workstationMutationOptions({}),
+    );
+  });
+
+  ipcMain.handle('businessCenter:resetEmployeePassword', async (_event, payload: {
+    id?: string;
+    password?: string;
+  } = {}) => {
+    const id = typeof payload.id === 'string' ? payload.id.trim() : '';
+    if (!id) return { success: false, error: 'employee id is required' };
+    return fetchWorkstationData(
+      `/api/workstation/employees/${encodeURIComponent(id)}/reset-password`,
+      workstationMutationOptions({ password: payload.password ?? '' }),
+    );
   });
 
   ipcMain.handle('auth:getActiveClientBanner', async () => {

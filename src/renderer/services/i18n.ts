@@ -1728,6 +1728,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
 
     // MCP 服务
     mcpServers: 'MCP',
+    businessCenter: '业务中心',
+    businessCenterComingSoon: '该模块即将开放',
     mcpDescription: '配置和管理 MCP（Model Context Protocol）服务器，为您的智能体扩展工具能力',
     searchMcpServers: '搜索 MCP 服务',
     addMcpServer: '自定义',
@@ -4663,6 +4665,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
 
     // MCP Servers
     mcpServers: 'MCP',
+    businessCenter: 'Business Center',
+    businessCenterComingSoon: 'This module is coming soon',
     mcpDescription:
       "Configure and manage MCP (Model Context Protocol) servers to extend your agent's tool capabilities",
     searchMcpServers: 'Search MCP servers',

@@ -442,6 +442,56 @@ interface ClientBannerData {
   updatedAt?: string;
 }
 
+interface BusinessDepartmentData {
+  id: string;
+  enterpriseId: string;
+  parentId?: string;
+  name: string;
+  code: string;
+  managerEnterpriseUserId?: string;
+  managerName?: string;
+  sortOrder: number;
+  status: string;
+  employeeCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface BusinessEmployeeData {
+  id: string;
+  enterpriseId: string;
+  username: string;
+  name: string;
+  phone?: string;
+  email?: string;
+  role: string;
+  status: string;
+  identityProvider: string;
+  casdoorOrgName?: string;
+  casdoorUserId?: string;
+  casdoorUsername?: string;
+  departmentIds: string[];
+  departmentNames: string[];
+  primaryDepartmentId?: string;
+  lastLoginAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface BusinessEmployeeListData {
+  items: BusinessEmployeeData[];
+  total: number;
+  page: number;
+  pageSize: number;
+  pages: number;
+}
+
+interface BusinessCenterIpcResult<T = unknown> {
+  success: boolean;
+  data?: T;
+  error?: string;
+}
+
 interface HtmlShareResult {
   success: boolean;
   shareId?: string;
@@ -1583,6 +1633,17 @@ interface IElectronAPI {
     onCallback: (callback: (data: { code: string }) => void) => () => void;
     onSessionInvalidated: (callback: (data: { reason?: string }) => void) => () => void;
     onQuotaChanged: (callback: () => void) => () => void;
+  };
+  businessCenter: {
+    getDepartments: () => Promise<BusinessCenterIpcResult<BusinessDepartmentData[]>>;
+    createDepartment: (payload: Record<string, unknown>) => Promise<BusinessCenterIpcResult<BusinessDepartmentData>>;
+    updateDepartment: (id: string, payload: Record<string, unknown>) => Promise<BusinessCenterIpcResult<BusinessDepartmentData>>;
+    deleteDepartment: (id: string) => Promise<BusinessCenterIpcResult<BusinessDepartmentData>>;
+    getEmployees: (query?: Record<string, unknown>) => Promise<BusinessCenterIpcResult<BusinessEmployeeListData>>;
+    createEmployee: (payload: Record<string, unknown>) => Promise<BusinessCenterIpcResult<BusinessEmployeeData>>;
+    updateEmployee: (id: string, payload: Record<string, unknown>) => Promise<BusinessCenterIpcResult<BusinessEmployeeData>>;
+    disableEmployee: (id: string) => Promise<BusinessCenterIpcResult<BusinessEmployeeData>>;
+    resetEmployeePassword: (id: string, password: string) => Promise<BusinessCenterIpcResult<{ ok: boolean }>>;
   };
   media: {
     getModels: (type: 'image' | 'video') => Promise<{ success: boolean; models?: Array<{ modelId: string; displayName: string; provider: string; mediaType: string; generationTimeout: number; pricing: Record<string, unknown> }>; error?: string }>;

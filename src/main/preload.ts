@@ -1036,6 +1036,25 @@ contextBridge.exposeInMainWorld('electron', {
       return () => ipcRenderer.removeListener('auth:quotaChanged', handler);
     },
   },
+  businessCenter: {
+    getDepartments: () => ipcRenderer.invoke('businessCenter:getDepartments'),
+    createDepartment: (payload: Record<string, unknown>) =>
+      ipcRenderer.invoke('businessCenter:createDepartment', payload),
+    updateDepartment: (id: string, payload: Record<string, unknown>) =>
+      ipcRenderer.invoke('businessCenter:updateDepartment', { id, data: payload }),
+    deleteDepartment: (id: string) =>
+      ipcRenderer.invoke('businessCenter:deleteDepartment', { id }),
+    getEmployees: (query?: Record<string, unknown>) =>
+      ipcRenderer.invoke('businessCenter:getEmployees', query ?? {}),
+    createEmployee: (payload: Record<string, unknown>) =>
+      ipcRenderer.invoke('businessCenter:createEmployee', payload),
+    updateEmployee: (id: string, payload: Record<string, unknown>) =>
+      ipcRenderer.invoke('businessCenter:updateEmployee', { id, data: payload }),
+    disableEmployee: (id: string) =>
+      ipcRenderer.invoke('businessCenter:disableEmployee', { id }),
+    resetEmployeePassword: (id: string, password: string) =>
+      ipcRenderer.invoke('businessCenter:resetEmployeePassword', { id, password }),
+  },
   media: {
     getModels: (type: 'image' | 'video') =>
       ipcRenderer.invoke('media:getModels', type) as Promise<{ success: boolean; models?: unknown[]; error?: string }>,

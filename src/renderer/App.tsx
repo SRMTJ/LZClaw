@@ -22,6 +22,7 @@ import {
 } from '../shared/appUpdate/constants';
 import { OnboardingState } from '../shared/onboarding/constants';
 import { ProviderAuthType, ProviderName, ProviderRegistry } from '../shared/providers';
+import BusinessCenterView from './components/businessCenter/BusinessCenterView';
 import { CoworkView } from './components/cowork';
 import { CoworkShortcutDirection, CoworkUiEvent } from './components/cowork/constants';
 import CoworkPermissionModal from './components/cowork/CoworkPermissionModal';
@@ -94,6 +95,8 @@ const SETTINGS_TAB_SHORTCUT_ACTIONS: Array<{
   { action: ShortcutAction.OpenSettingsShortcuts, initialTab: 'shortcuts' },
   { action: ShortcutAction.OpenSettingsAbout, initialTab: 'about' },
 ];
+
+type MainView = 'cowork' | 'skills' | 'scheduledTasks' | 'kits' | 'mcp' | 'businessCenter';
 
 /** Used for config + i18n init; longer on Windows where main-process IPC can stall during cold start. */
 const INIT_STEP_TIMEOUT_MS_WINDOWS = 24_000;
@@ -296,7 +299,7 @@ const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [showPersonalCenter, setShowPersonalCenter] = useState(false);
   const [settingsOptions, setSettingsOptions] = useState<SettingsOpenOptions & { requestId: number }>({ requestId: 0 });
-  const [mainView, setMainView] = useState<'cowork' | 'skills' | 'scheduledTasks' | 'kits' | 'mcp'>('cowork');
+  const [mainView, setMainView] = useState<MainView>('cowork');
   const [isInitialized, setIsInitialized] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -330,7 +333,9 @@ const App: React.FC = () => {
   const authIsLoggedIn = useSelector((state: RootState) => state.auth.isLoggedIn);
   const authIsLoading = useSelector((state: RootState) => state.auth.isLoading);
   const authUser = useSelector((state: RootState) => state.auth.user);
+  const authWorkspace = useSelector((state: RootState) => state.auth.workspace);
   const isWindows = window.electron.platform === 'win32';
+  const canAccessBusinessCenter = authWorkspace?.role === 'owner' || authWorkspace?.role === 'admin';
 
   const waitWithTimeout = useCallback(
     async <T,>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
@@ -581,6 +586,16 @@ const App: React.FC = () => {
   const handleShowKits = useCallback(() => {
     setMainView('kits');
   }, []);
+
+  const handleShowBusinessCenter = useCallback(() => {
+    setMainView('businessCenter');
+  }, []);
+
+  useEffect(() => {
+    if (mainView === 'businessCenter' && !canAccessBusinessCenter) {
+      setMainView('cowork');
+    }
+  }, [canAccessBusinessCenter, mainView]);
 
   const openHomeWithKit = useCallback((kitId: string, text?: string) => {
     dispatch(setActiveKitIds([kitId]));
@@ -1330,6 +1345,7 @@ const App: React.FC = () => {
           onShowScheduledTasks={handleShowScheduledTasks}
           onShowKits={handleShowKits}
           onShowMcp={handleShowMcp}
+          onShowBusinessCenter={handleShowBusinessCenter}
           onNewChat={handleNewChat}
           isCollapsed={isSidebarCollapsed}
           onToggleCollapse={handleToggleSidebar}
@@ -1366,6 +1382,13 @@ const App: React.FC = () => {
               />
             ) : mainView === 'mcp' ? (
               <McpView
+                isSidebarCollapsed={isSidebarCollapsed}
+                onToggleSidebar={handleToggleSidebar}
+                onNewChat={handleNewChat}
+                updateBadge={isSidebarCollapsed ? updateBadge : null}
+              />
+            ) : mainView === 'businessCenter' ? (
+              <BusinessCenterView
                 isSidebarCollapsed={isSidebarCollapsed}
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}
