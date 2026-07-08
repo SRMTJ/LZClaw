@@ -2589,6 +2589,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     <div className={`${isCompact ? 'px-3 pt-2' : 'px-4 pt-3'}`}>
       <SelectedTextSnippetBadge
         snippets={selectedTextSnippets}
+        onClear={() => dispatch(clearDraftSelectedTextSnippets(draftKey))}
         onRemove={(snippetId) => dispatch(removeDraftSelectedTextSnippet({ draftKey, snippetId }))}
       />
     </div>
@@ -2960,7 +2961,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         {isLarge ? (
           useHomeContextLayout ? (
             <>
-              <div className="relative z-10 rounded-2xl border border-border bg-surface shadow-card">
+              <div className="relative z-10 rounded-2xl border border-border bg-surface shadow-card transition-[border-color,box-shadow] duration-200 focus-within:border-primary/35 focus-within:shadow-elevated">
                 {largeAttachmentPreview}
                 {selectedTextSnippetPreview}
                 {sessionGoalStatusBar}

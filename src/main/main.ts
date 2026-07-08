@@ -30,7 +30,12 @@ import {
   migrateScheduledTaskRunsToOpenclaw,
   migrateScheduledTasksToOpenclaw,
 } from '../scheduledTask/migrate';
-import { AgentId, AgentIpcChannel } from '../shared/agent/constants';
+import {
+  AgentId,
+  AgentIpcChannel,
+  type AgentLegacyIdentityCleanupResult,
+  AgentLegacyIdentityCleanupStatus,
+} from '../shared/agent/constants';
 import { AppIpcChannel } from '../shared/app/constants';
 import { AppSettingsAutoLaunchErrorCode, AppSettingsIpc } from '../shared/appSettings/constants';
 import { AppUpdateIpc } from '../shared/appUpdate/constants';
@@ -244,6 +249,7 @@ import { getKeyfromAttribution, initializeKeyfromAttribution } from './libs/keyf
 import { exportLogsZip } from './libs/logExport';
 import { inferImageMimeTypeFromDataUrl, type PersistedGeneratedImageAsset, persistGeneratedImageAssets, type PersistGeneratedImageAssetsResult, persistGeneratedVideoAssets, type RemoteGeneratedMediaAsset } from './libs/mediaAssetPersistence';
 import { migrateAgentModelRefs, parsePrimaryModelRef, resolveQualifiedAgentModelRef } from './libs/openclawAgentModels';
+import { cleanupLegacyAgentsMdIdentityBlockInWorkspace } from './libs/openclawAgentsMdIdentityMigration';
 import {
   buildManagedSessionKey,
   DEFAULT_MANAGED_AGENT_ID,
@@ -273,10 +279,12 @@ import {
   migrateSqliteToMemoryMd,
   readBootstrapFile,
   readMemoryEntries,
+  readMemoryFileRaw,
   resolveMemoryFilePath,
   searchMemoryEntries,
   updateMemoryEntry,
   writeBootstrapFile,
+  writeMemoryFileRaw,
 } from './libs/openclawMemoryFile';
 import { collectReferencedEnvVarNames, pickReferencedSecretEnvVars } from './libs/openclawSecretEnv';
 import { startOpenClawTokenProxy, stopOpenClawTokenProxy } from './libs/openclawTokenProxy';
@@ -2582,6 +2590,7 @@ const getCoworkEngineRouter = () => {
             getDefaultCwd: (agentId?: string) =>
               resolveAgentDefaultWorkingDirectory(agentId) || os.homedir(),
             resolveJobName: jobId => getCronJobService().getJobNameSync(jobId),
+            resolveJobDelivery: jobId => getCronJobService().getJobDeliverySync(jobId),
           });
           openClawRuntimeAdapter.setChannelSessionSync(channelSessionSync);
         }
@@ -7204,6 +7213,44 @@ if (!gotTheLock) {
     }
   });
 
+  const buildLegacyIdentityCleanupFailure = (
+    error: unknown,
+  ): Extract<AgentLegacyIdentityCleanupResult, { status: typeof AgentLegacyIdentityCleanupStatus.Failed }> => ({
+    status: AgentLegacyIdentityCleanupStatus.Failed,
+    error: error instanceof Error ? error.message : String(error),
+  });
+
+  const resolveAgentWorkspacePath = (agentId: string): string => {
+    const stateDir = getOpenClawEngineManager().getStateDir();
+    return agentId === AgentId.Main
+      ? getMainAgentWorkspacePath(stateDir)
+      : path.join(stateDir, `workspace-${agentId}`);
+  };
+
+  const cleanupLegacyIdentityBlockForAgent = async (agentId: string): Promise<AgentLegacyIdentityCleanupResult> => {
+    if (agentId !== AgentId.Main && getAgentManager().getAgent(agentId) === null) {
+      return buildLegacyIdentityCleanupFailure(`Agent ${agentId} not found`);
+    }
+
+    const syncResult = await syncOpenClawConfig({ reason: 'agent-identity-cleanup-prereq' });
+    if (!syncResult.success) {
+      return buildLegacyIdentityCleanupFailure(syncResult.error || 'OpenClaw config sync failed before cleanup.');
+    }
+
+    const workspacePath = resolveAgentWorkspacePath(agentId);
+    const result = cleanupLegacyAgentsMdIdentityBlockInWorkspace(workspacePath);
+    if (result.status === AgentLegacyIdentityCleanupStatus.Cleaned) {
+      console.log(
+        `[OpenClaw] Cleaned legacy AGENTS.md identity block for agent ${agentId}; backup=${result.backupPath}`,
+      );
+    } else if (result.status === AgentLegacyIdentityCleanupStatus.Failed) {
+      console.warn(
+        `[OpenClaw] Failed to clean legacy AGENTS.md identity block for agent ${agentId}: ${result.error}`,
+      );
+    }
+    return result;
+  };
+
   // ========== Agent IPC Handlers ==========
 
   ipcMain.handle(AgentIpcChannel.List, async () => {
@@ -7283,6 +7330,17 @@ if (!gotTheLock) {
       }
     },
   );
+
+  ipcMain.handle(AgentIpcChannel.CleanupLegacyIdentityBlock, async (_event, id: string) => {
+    try {
+      const result = await cleanupLegacyIdentityBlockForAgent(id);
+      return { success: true, result };
+    } catch (error) {
+      const result = buildLegacyIdentityCleanupFailure(error);
+      console.warn(`[OpenClaw] Failed to clean legacy AGENTS.md identity block for agent ${id}: ${result.error}`);
+      return { success: false, result, error: result.error };
+    }
+  });
 
   ipcMain.handle(AgentIpcChannel.Delete, async (_event, id: string) => {
     try {
@@ -7814,6 +7872,36 @@ if (!gotTheLock) {
       }
     },
   );
+  ipcMain.handle(CoworkIpcChannel.MemoryReadRaw, async () => {
+    try {
+      const filePath = resolveMemoryFilePath(
+        getMainAgentWorkspacePath(getOpenClawEngineManager().getStateDir()),
+      );
+      return { success: true, content: readMemoryFileRaw(filePath) };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to read memory file',
+      };
+    }
+  });
+  ipcMain.handle(CoworkIpcChannel.MemoryWriteRaw, async (_event, input: { content: string }) => {
+    try {
+      if (typeof input?.content !== 'string') {
+        return { success: false, error: 'Memory content is required' };
+      }
+      const filePath = resolveMemoryFilePath(
+        getMainAgentWorkspacePath(getOpenClawEngineManager().getStateDir()),
+      );
+      writeMemoryFileRaw(filePath, input.content);
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to write memory file',
+      };
+    }
+  });
   ipcMain.handle('cowork:memory:getStats', async () => {
     try {
       const filePath = resolveMemoryFilePath(
@@ -7969,6 +8057,7 @@ if (!gotTheLock) {
     memoryGuardLevel?: 'strict' | 'standard' | 'relaxed';
     memoryUserMemoriesMaxItems?: number;
     skipMissedJobs?: boolean;
+    openClawHeartbeatEnabled?: boolean;
     embeddingEnabled?: boolean;
     embeddingProvider?: string;
     embeddingModel?: string;
@@ -8009,6 +8098,9 @@ if (!gotTheLock) {
       const normalizedSkipMissedJobs = typeof config.skipMissedJobs === 'boolean'
         ? config.skipMissedJobs
         : undefined;
+      const normalizedOpenClawHeartbeatEnabled = typeof config.openClawHeartbeatEnabled === 'boolean'
+        ? config.openClawHeartbeatEnabled
+        : undefined;
       const normalizedEmbedding = normalizeEmbeddingConfig(config);
       const normalizedConfig: Parameters<CoworkStore['setConfig']>[0] = {
         ...config,
@@ -8020,6 +8112,7 @@ if (!gotTheLock) {
         memoryGuardLevel: normalizedMemoryGuardLevel,
         memoryUserMemoriesMaxItems: normalizedMemoryUserMemoriesMaxItems,
         skipMissedJobs: normalizedSkipMissedJobs,
+        openClawHeartbeatEnabled: normalizedOpenClawHeartbeatEnabled,
         ...normalizedEmbedding,
       };
       const previousConfig = getCoworkStore().getConfig();
@@ -8101,6 +8194,8 @@ if (!gotTheLock) {
         ),
     }),
     getOpenClawRuntimeAdapter: () => openClawRuntimeAdapter,
+    getCoworkSessionTitle: (sessionId: string) =>
+      getCoworkStore().getSession(sessionId, 0)?.title ?? null,
   });
 
   registerNimQrLoginHandlers({
@@ -9275,6 +9370,59 @@ if (!gotTheLock) {
       accountId: tokens.accountId ?? null,
       expiresAt: tokens.expiresAt,
     };
+  });
+
+  // xAI (Grok) OAuth handlers — see src/main/libs/xaiAuth.ts.
+  // Browser PKCE against https://auth.x.ai with a loopback callback on
+  // http://127.0.0.1:56121/callback; when that fixed port is taken (e.g. an
+  // OpenClaw CLI login), falls back to the device-code flow and streams the
+  // user code to the renderer via 'xai-oauth:device-code'. The credential is
+  // written into the OpenClaw auth-profiles store, where the runtime's xai
+  // plugin injects and auto-refreshes the Bearer token.
+  ipcMain.handle('xai-oauth:start', async (event) => {
+    const xaiAuth = await import('./libs/xaiAuth');
+    try {
+      let result;
+      try {
+        result = await xaiAuth.startXaiOAuthLogin();
+      } catch (err) {
+        if (!(err instanceof xaiAuth.XaiCallbackPortBusyError)) throw err;
+        result = await xaiAuth.startXaiDeviceCodeLogin((info) => {
+          if (!event.sender.isDestroyed()) {
+            event.sender.send('xai-oauth:device-code', info);
+          }
+        });
+      }
+      // The xai provider entry is only emitted into openclaw.json once a
+      // credential exists — sync now so the change takes effect immediately.
+      void syncOpenClawConfig({ reason: 'xai-oauth-login' });
+      return {
+        success: true as const,
+        email: result.email ?? null,
+        flow: result.flow,
+      };
+    } catch (error) {
+      return {
+        success: false as const,
+        error: error instanceof Error ? error.message : 'xAI login failed',
+      };
+    }
+  });
+
+  ipcMain.handle('xai-oauth:cancel', async () => {
+    const { cancelXaiLogin } = await import('./libs/xaiAuth');
+    cancelXaiLogin();
+  });
+
+  ipcMain.handle('xai-oauth:logout', async () => {
+    const { logoutXai } = await import('./libs/xaiAuth');
+    await logoutXai();
+    void syncOpenClawConfig({ reason: 'xai-oauth-logout' });
+  });
+
+  ipcMain.handle('xai-oauth:status', async () => {
+    const { getXaiOAuthStatus } = await import('./libs/xaiAuth');
+    return getXaiOAuthStatus();
   });
 
   ipcMain.handle('generate-session-title', async (_event, userInput: string | null) => {

@@ -94,6 +94,34 @@ function normalizePathKey(env: Record<string, string | undefined>): void {
   env.PATH = merged.join(';');
 }
 
+const EMAIL_ADDRESS_LOG_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
+
+function redactEmailValueForLog(value: string): string {
+  return value.replace(EMAIL_ADDRESS_LOG_PATTERN, email => {
+    const [local, domain] = email.split('@');
+    if (!domain) return '[redacted-email]';
+    const prefix = local.slice(0, Math.min(2, local.length));
+    return `${prefix}${local.length > 2 ? '***' : '*'}@${domain}`;
+  });
+}
+
+function buildSafeEmailConnectivityConfigForLog(
+  config: Record<string, string>
+): Record<string, string> {
+  const safeConfig = { ...config };
+  const secretKeys = ['IMAP_PASS', 'SMTP_PASS'];
+  const emailKeys = ['IMAP_USER', 'SMTP_USER', 'SMTP_FROM'];
+
+  secretKeys.forEach(key => {
+    if (safeConfig[key]) safeConfig[key] = '***';
+  });
+  emailKeys.forEach(key => {
+    if (safeConfig[key]) safeConfig[key] = redactEmailValueForLog(safeConfig[key]);
+  });
+
+  return safeConfig;
+}
+
 /**
  * Resolve the latest Windows system PATH from the registry.
  * When an Electron app is launched from Start Menu or Explorer,
@@ -321,6 +349,32 @@ type EmailConnectivityTestResult = {
   verdict: EmailConnectivityVerdict;
   checks: EmailConnectivityCheck[];
 };
+
+export interface EmailSkillAccountConfig {
+  id: string;
+  name: string;
+  enabled: boolean;
+  provider?: string;
+  email: string;
+  password?: string;
+  imapHost?: string;
+  imapPort?: number;
+  imapTls?: boolean;
+  imapRejectUnauthorized?: boolean;
+  smtpHost?: string;
+  smtpPort?: number;
+  smtpSecure?: boolean;
+  smtpRejectUnauthorized?: boolean;
+  smtpFrom?: string;
+  mailbox?: string;
+  requireSendConfirmation?: boolean;
+}
+
+export interface EmailSkillAccountsConfig {
+  version: 1;
+  defaultAccountId: string;
+  accounts: EmailSkillAccountConfig[];
+}
 
 type SkillDefaultConfig = {
   order?: number;
@@ -1420,11 +1474,7 @@ export class SkillManager {
   }
 
   syncBundledSkillsToUserData(): void {
-    if (!app.isPackaged) {
-      return;
-    }
-
-    console.log('[skills] syncBundledSkillsToUserData: start');
+    console.log('[skills] syncBundledSkillsToUserData: start', { packaged: app.isPackaged });
     const userRoot = this.ensureSkillsRoot();
     console.log('[skills] syncBundledSkillsToUserData: userRoot =', userRoot);
     const bundledRoot = this.getBundledSkillsRoot();
@@ -1488,11 +1538,16 @@ export class SkillManager {
         try {
           console.log(`[skills] syncBundledSkillsToUserData: copying "${id}" from ${dir} to ${targetDir}`);
 
-          // Preserve .env file before clean copy
+          // Preserve user-managed email credentials before clean copy
           let envBackup: Buffer | null = null;
+          let accountsBackup: Buffer | null = null;
           const envPath = path.join(targetDir, '.env');
+          const accountsPath = path.join(targetDir, 'accounts.json');
           if (needsCleanCopy && fs.existsSync(envPath)) {
             envBackup = fs.readFileSync(envPath);
+          }
+          if (needsCleanCopy && fs.existsSync(accountsPath)) {
+            accountsBackup = fs.readFileSync(accountsPath);
           }
 
           // Version-based update: delete target dir first to remove stale files
@@ -1506,9 +1561,12 @@ export class SkillManager {
             force: shouldRepair,
           });
 
-          // Restore .env file after clean copy
+          // Restore user-managed email credentials after clean copy
           if (envBackup !== null) {
             fs.writeFileSync(envPath, envBackup);
+          }
+          if (accountsBackup !== null) {
+            fs.writeFileSync(accountsPath, accountsBackup);
           }
 
           console.log(`[skills] syncBundledSkillsToUserData: copied "${id}" successfully`);
@@ -2225,13 +2283,18 @@ export class SkillManager {
   private performSkillUpgrade(newSkillDir: string, existingSkillDir: string): void {
     const upgradingDir = existingSkillDir + '.upgrading';
 
-    // Back up .env and _meta.json
+    // Back up user-managed config files and _meta.json
     let envBackup: Buffer | null = null;
+    let accountsBackup: Buffer | null = null;
     let metaBackup: Buffer | null = null;
     const envPath = path.join(existingSkillDir, '.env');
+    const accountsPath = path.join(existingSkillDir, 'accounts.json');
     const metaPath = path.join(existingSkillDir, '_meta.json');
     if (fs.existsSync(envPath)) {
       envBackup = fs.readFileSync(envPath);
+    }
+    if (fs.existsSync(accountsPath)) {
+      accountsBackup = fs.readFileSync(accountsPath);
     }
     if (fs.existsSync(metaPath)) {
       metaBackup = fs.readFileSync(metaPath);
@@ -2244,9 +2307,12 @@ export class SkillManager {
       // Copy new version to original path
       cpRecursiveSync(newSkillDir, existingSkillDir);
 
-      // Restore .env and _meta.json
+      // Restore user-managed config files and _meta.json
       if (envBackup !== null) {
         fs.writeFileSync(path.join(existingSkillDir, '.env'), envBackup);
+      }
+      if (accountsBackup !== null) {
+        fs.writeFileSync(path.join(existingSkillDir, 'accounts.json'), accountsBackup);
       }
       if (metaBackup !== null) {
         fs.writeFileSync(path.join(existingSkillDir, '_meta.json'), metaBackup);
@@ -2600,6 +2666,199 @@ export class SkillManager {
     }
   }
 
+  getEmailAccountsConfig(skillId: string): { success: boolean; config?: EmailSkillAccountsConfig; error?: string } {
+    try {
+      const skillDir = this.resolveSkillDir(skillId);
+      const accountsPath = path.join(skillDir, 'accounts.json');
+      if (fs.existsSync(accountsPath)) {
+        const parsed = JSON.parse(fs.readFileSync(accountsPath, 'utf8')) as Partial<EmailSkillAccountsConfig>;
+        const config = this.normalizeEmailAccountsConfig(parsed);
+        console.debug('[skills] Loaded email accounts config', {
+          skillId,
+          source: 'accounts.json',
+          accountCount: config.accounts.length,
+          enabledAccountCount: config.accounts.filter(account => account.enabled).length,
+          defaultAccountId: config.defaultAccountId,
+        });
+        return { success: true, config };
+      }
+
+      const legacy = this.getSkillConfig(skillId);
+      if (!legacy.success) {
+        return { success: false, error: legacy.error };
+      }
+      const config = this.migrateLegacyEmailConfig(legacy.config ?? {});
+      console.debug('[skills] Loaded email accounts config', {
+        skillId,
+        source: '.env',
+        accountCount: config.accounts.length,
+        enabledAccountCount: config.accounts.filter(account => account.enabled).length,
+        defaultAccountId: config.defaultAccountId,
+      });
+      return { success: true, config };
+    } catch (error) {
+      console.warn('[skills] Failed to read email accounts config', {
+        skillId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to read email accounts config',
+      };
+    }
+  }
+
+  setEmailAccountsConfig(skillId: string, config: EmailSkillAccountsConfig): { success: boolean; error?: string } {
+    try {
+      const skillDir = this.resolveSkillDir(skillId);
+      const normalized = this.normalizeEmailAccountsConfig(config);
+      const accountsPath = path.join(skillDir, 'accounts.json');
+      fs.writeFileSync(accountsPath, JSON.stringify(normalized, null, 2) + '\n', 'utf8');
+      console.log('[skills] Saved email accounts config', {
+        skillId,
+        accountCount: normalized.accounts.length,
+        enabledAccountCount: normalized.accounts.filter(account => account.enabled).length,
+        defaultAccountId: normalized.defaultAccountId,
+      });
+      return { success: true };
+    } catch (error) {
+      console.warn('[skills] Failed to write email accounts config', {
+        skillId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to write email accounts config',
+      };
+    }
+  }
+
+  async testEmailAccountConnectivity(
+    skillId: string,
+    account: EmailSkillAccountConfig
+  ): Promise<{ success: boolean; result?: EmailConnectivityTestResult; error?: string }> {
+    return this.testEmailConnectivity(skillId, {
+      ...this.buildLegacyEnvFromEmailAccount(account),
+      EMAIL_CONFIG_MODE: 'env',
+    });
+  }
+
+  private normalizeEmailAccountsConfig(config: Partial<EmailSkillAccountsConfig>): EmailSkillAccountsConfig {
+    const usedIds = new Set<string>();
+    const accounts = Array.isArray(config.accounts)
+      ? config.accounts.map((account, index) => {
+          const normalized = this.normalizeEmailAccount(account, index);
+          const baseId = normalized.id;
+          let id = baseId;
+          let suffix = 2;
+          while (usedIds.has(id)) {
+            id = `${baseId}-${suffix}`;
+            suffix += 1;
+          }
+          usedIds.add(id);
+          return { ...normalized, id };
+        })
+      : [];
+    const enabledDefault = accounts.find(account => account.id === config.defaultAccountId && account.enabled);
+    const fallbackDefault = accounts.find(account => account.enabled) ?? accounts[0];
+    return {
+      version: 1,
+      defaultAccountId: enabledDefault?.id ?? fallbackDefault?.id ?? '',
+      accounts,
+    };
+  }
+
+  private normalizeEmailAccount(
+    account: Partial<EmailSkillAccountConfig>,
+    index: number
+  ): EmailSkillAccountConfig {
+    const email = (account.email ?? '').trim();
+    const id = this.slugifyEmailAccountId(account.id || email, `account-${index + 1}`);
+    return {
+      id,
+      name: (account.name ?? (email ? email.split('@')[0] : id)).trim() || id,
+      enabled: account.enabled !== false,
+      provider: account.provider ?? '',
+      email,
+      password: account.password ?? '',
+      imapHost: account.imapHost ?? '',
+      imapPort: this.normalizePort(account.imapPort, 993),
+      imapTls: account.imapTls ?? true,
+      imapRejectUnauthorized: account.imapRejectUnauthorized ?? true,
+      smtpHost: account.smtpHost ?? '',
+      smtpPort: this.normalizePort(account.smtpPort, 587),
+      smtpSecure: account.smtpSecure ?? false,
+      smtpRejectUnauthorized: account.smtpRejectUnauthorized ?? true,
+      smtpFrom: account.smtpFrom ?? email,
+      mailbox: account.mailbox ?? 'INBOX',
+      requireSendConfirmation: account.requireSendConfirmation ?? true,
+    };
+  }
+
+  private migrateLegacyEmailConfig(config: Record<string, string>): EmailSkillAccountsConfig {
+    const email = (config.IMAP_USER || config.SMTP_USER || config.SMTP_FROM || '').trim();
+    if (!email && !config.IMAP_HOST && !config.SMTP_HOST) {
+      return { version: 1, defaultAccountId: '', accounts: [] };
+    }
+
+    const account = this.normalizeEmailAccount({
+      id: 'default',
+      name: email ? email.split('@')[0] : 'Default',
+      enabled: Boolean(email && (config.IMAP_PASS || config.SMTP_PASS)),
+      provider: '',
+      email,
+      password: config.IMAP_PASS || config.SMTP_PASS || '',
+      imapHost: config.IMAP_HOST || '',
+      imapPort: this.normalizePort(config.IMAP_PORT, 993),
+      imapTls: config.IMAP_TLS !== 'false',
+      imapRejectUnauthorized: config.IMAP_REJECT_UNAUTHORIZED !== 'false',
+      smtpHost: config.SMTP_HOST || '',
+      smtpPort: this.normalizePort(config.SMTP_PORT, 587),
+      smtpSecure: config.SMTP_SECURE === 'true',
+      smtpRejectUnauthorized: config.SMTP_REJECT_UNAUTHORIZED !== 'false',
+      smtpFrom: config.SMTP_FROM || config.SMTP_USER || email,
+      mailbox: config.IMAP_MAILBOX || 'INBOX',
+      requireSendConfirmation: config.EMAIL_REQUIRE_SEND_CONFIRMATION !== 'false',
+    }, 0);
+
+    return { version: 1, defaultAccountId: account.enabled ? account.id : '', accounts: [account] };
+  }
+
+  private buildLegacyEnvFromEmailAccount(account: EmailSkillAccountConfig): Record<string, string> {
+    return {
+      IMAP_HOST: account.imapHost ?? '',
+      IMAP_PORT: String(account.imapPort ?? 993),
+      IMAP_USER: account.email,
+      IMAP_PASS: account.password ?? '',
+      IMAP_TLS: String(account.imapTls ?? true),
+      IMAP_REJECT_UNAUTHORIZED: String(account.imapRejectUnauthorized ?? true),
+      IMAP_MAILBOX: account.mailbox || 'INBOX',
+      SMTP_HOST: account.smtpHost ?? '',
+      SMTP_PORT: String(account.smtpPort ?? 587),
+      SMTP_SECURE: String(account.smtpSecure ?? false),
+      SMTP_USER: account.email,
+      SMTP_PASS: account.password ?? '',
+      SMTP_FROM: account.smtpFrom || account.email,
+      SMTP_REJECT_UNAUTHORIZED: String(account.smtpRejectUnauthorized ?? true),
+      EMAIL_REQUIRE_SEND_CONFIRMATION: String(account.requireSendConfirmation ?? true),
+    };
+  }
+
+  private normalizePort(value: unknown, fallback: number): number {
+    const parsed = typeof value === 'number' ? value : parseInt(String(value ?? ''), 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  }
+
+  private slugifyEmailAccountId(value: string | undefined, fallback: string): string {
+    const normalized = (value ?? '')
+      .trim()
+      .toLowerCase()
+      .replace(/@.+$/, '')
+      .replace(/[^a-z0-9_-]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+    return normalized || fallback;
+  }
+
   setSkillConfig(skillId: string, config: Record<string, string>): { success: boolean; error?: string } {
     try {
       const skillDir = this.resolveSkillDir(skillId);
@@ -2772,10 +3031,7 @@ export class SkillManager {
         return { success: false, error: 'Email connectivity scripts not found' };
       }
 
-      // Mask password for logging
-      const safeConfig = { ...config };
-      if (safeConfig.IMAP_PASS) safeConfig.IMAP_PASS = '***';
-      if (safeConfig.SMTP_PASS) safeConfig.SMTP_PASS = '***';
+      const safeConfig = buildSafeEmailConnectivityConfigForLog(config);
       console.log('[email-connectivity] Testing with config:', JSON.stringify(safeConfig, null, 2));
 
       const envOverrides = Object.fromEntries(

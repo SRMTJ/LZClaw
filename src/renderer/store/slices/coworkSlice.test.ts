@@ -43,6 +43,7 @@ test('defaults hidden OpenClaw session policy to thirty days', () => {
     keepAlive: '30d',
   });
   expect(state.config.skipMissedJobs).toBe(true);
+  expect(state.config.openClawHeartbeatEnabled).toBe(true);
 });
 
 test('setConfig preserves loaded OpenClaw session policy', () => {
@@ -57,6 +58,7 @@ test('setConfig preserves loaded OpenClaw session policy', () => {
     memoryGuardLevel: 'strict',
     memoryUserMemoriesMaxItems: 12,
     skipMissedJobs: false,
+    openClawHeartbeatEnabled: false,
     embeddingEnabled: false,
     embeddingProvider: 'openai',
     embeddingModel: '',
@@ -74,6 +76,7 @@ test('setConfig preserves loaded OpenClaw session policy', () => {
   }));
 
   expect(state.config.openClawSessionPolicy.keepAlive).toBe('365d');
+  expect(state.config.openClawHeartbeatEnabled).toBe(false);
 });
 
 test('updateCurrentSessionModelOverride only patches the active session', () => {
@@ -115,6 +118,81 @@ test('updateSessionTitle preserves the session updated time', () => {
   expect(state.sessions[0].updatedAt).toBe(1000);
   expect(state.currentSession?.title).toBe('Renamed task');
   expect(state.currentSession?.updatedAt).toBe(1000);
+});
+
+test('updateSessionStatus only refreshes the session updated time on a real transition', () => {
+  const initialState = coworkReducer(undefined, setSessions([{
+    id: 'session-1',
+    title: 'Running task',
+    status: CoworkSessionStatusValue.Running,
+    pinned: false,
+    agentId: 'main',
+    createdAt: 1,
+    updatedAt: 1000,
+  }]));
+
+  const reassertedState = coworkReducer(
+    initialState,
+    updateSessionStatus({
+      sessionId: 'session-1',
+      status: CoworkSessionStatusValue.Running,
+    }),
+  );
+  expect(reassertedState.sessions[0].updatedAt).toBe(1000);
+
+  const beforeTransition = Date.now();
+  const completedState = coworkReducer(
+    reassertedState,
+    updateSessionStatus({
+      sessionId: 'session-1',
+      status: CoworkSessionStatusValue.Completed,
+    }),
+  );
+  expect(completedState.sessions[0].updatedAt).toBeGreaterThanOrEqual(beforeTransition);
+});
+
+test('addMessage refreshes the session updated time only for user messages', () => {
+  const initialState = coworkReducer(undefined, addSession(makeSession({ updatedAt: 1000 })));
+
+  const streamedState = coworkReducer(
+    initialState,
+    addMessage({
+      sessionId: 'session-1',
+      message: { id: 'assistant-1', type: 'assistant', content: 'streamed reply', timestamp: 2000 },
+    }),
+  );
+  expect(streamedState.sessions[0].updatedAt).toBe(1000);
+  expect(streamedState.currentSession?.updatedAt).toBe(1000);
+
+  const userState = coworkReducer(
+    streamedState,
+    addMessage({
+      sessionId: 'session-1',
+      message: { id: 'user-1', type: 'user', content: 'follow up', timestamp: 3000 },
+    }),
+  );
+  expect(userState.sessions[0].updatedAt).toBe(3000);
+  expect(userState.currentSession?.updatedAt).toBe(3000);
+});
+
+test('updateMessageContent preserves the session updated time', () => {
+  const session = makeSession({
+    updatedAt: 1000,
+    messages: [{ id: 'assistant-1', type: 'assistant' as const, content: '', timestamp: 900 }],
+    totalMessages: 1,
+  });
+  const state = coworkReducer(
+    coworkReducer(undefined, addSession(session)),
+    updateMessageContent({
+      sessionId: 'session-1',
+      messageId: 'assistant-1',
+      content: 'streamed delta',
+    }),
+  );
+
+  expect(state.sessions[0].updatedAt).toBe(1000);
+  expect(state.currentSession?.updatedAt).toBe(1000);
+  expect(state.currentSession?.messages[0]?.content).toBe('streamed delta');
 });
 
 test('addSession preserves the agent id in session summaries', () => {

@@ -271,6 +271,46 @@ describe('CronJobService run history filtering', () => {
   });
 });
 
+describe('CronJobService delivery cache', () => {
+  test('caches delivery routing on add and update for synchronous lookups', async () => {
+    const added = makeGatewayJob({
+      id: 'wx-job',
+      delivery: {
+        mode: DeliveryMode.Announce,
+        channel: 'openclaw-weixin',
+        to: 'o9cq809ZEC25-4jLkdw3AHTKPE9c@im.wechat',
+      },
+    });
+    const updated = makeGatewayJob({ id: 'wx-job', delivery: { mode: DeliveryMode.None } });
+    const service = new CronJobService({
+      getGatewayClient: () => ({
+        request: async <T>(method: string) => (method === 'cron.add' ? added : updated) as T,
+      }),
+      ensureGatewayReady: async () => {},
+    });
+
+    await service.addJob({
+      name: 'WeChat brief',
+      description: '',
+      enabled: true,
+      schedule: { kind: 'cron', expr: '0 13 * * *' },
+      sessionTarget: SessionTarget.Isolated,
+      wakeMode: WakeMode.Now,
+      payload: { kind: PayloadKind.AgentTurn, message: 'brief' },
+      delivery: { mode: DeliveryMode.Announce, channel: 'openclaw-weixin', to: 'x@im.wechat' },
+    });
+    expect(service.getJobDeliverySync('wx-job')).toEqual({
+      mode: DeliveryMode.Announce,
+      channel: 'openclaw-weixin',
+    });
+
+    await service.updateJob('wx-job', { delivery: { mode: DeliveryMode.None } });
+    expect(service.getJobDeliverySync('wx-job')).toEqual({ mode: DeliveryMode.None });
+
+    expect(service.getJobDeliverySync('missing-job')).toBeNull();
+  });
+});
+
 describe('mapGatewayRun', () => {
   const baseEntry = {
     ts: 1700000000000,
@@ -379,6 +419,36 @@ describe('mapGatewayJob', () => {
     expect(job.agentId).toBe('agent-42');
     expect(job.sessionKey).toBe('session-1');
     expect(job.state.lastStatus).toBe('skipped');
+  });
+
+  test('strips stale channel/to when delivery mode is none', () => {
+    // The gateway patch-merges delivery on cron.update and cannot clear a
+    // previously-set channel/to, so a job switched to "不通知" still returns
+    // the old target. mapGatewayJob must drop it so the edit form shows none.
+    const job = mapGatewayJob(
+      makeGatewayJob({
+        delivery: {
+          mode: DeliveryMode.None,
+          channel: 'moltbot-popo',
+          to: 'liucong03@corp.netease.com',
+          accountId: 'acc-1',
+          bestEffort: true,
+        },
+      }),
+    );
+
+    expect(job.delivery).toEqual({ mode: DeliveryMode.None });
+  });
+
+  test('does not infer channel from sessionKey when delivery mode is none', () => {
+    const job = mapGatewayJob(
+      makeGatewayJob({
+        delivery: { mode: DeliveryMode.None },
+        sessionKey: 'popo:ou_someuser',
+      }),
+    );
+
+    expect(job.delivery).toEqual({ mode: DeliveryMode.None });
   });
 });
 

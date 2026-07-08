@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 import { IpcChannel as ScheduledTaskIpc } from '../scheduledTask/constants';
-import { AgentIpcChannel } from '../shared/agent/constants';
+import { AgentIpcChannel, AgentLegacyIdentityCleanupStatus } from '../shared/agent/constants';
 import { AppIpcChannel } from '../shared/app/constants';
 import { AppSettingsIpc } from '../shared/appSettings/constants';
 import { AppUpdateIpc } from '../shared/appUpdate/constants';
@@ -73,6 +73,12 @@ contextBridge.exposeInMainWorld('electron', {
     getConfig: (skillId: string) => ipcRenderer.invoke('skills:getConfig', skillId),
     setConfig: (skillId: string, config: Record<string, string>) =>
       ipcRenderer.invoke('skills:setConfig', skillId, config),
+    getEmailAccountsConfig: (skillId: string) =>
+      ipcRenderer.invoke('skills:getEmailAccountsConfig', skillId),
+    setEmailAccountsConfig: (skillId: string, config: unknown) =>
+      ipcRenderer.invoke('skills:setEmailAccountsConfig', skillId, config),
+    testEmailAccountConnectivity: (skillId: string, account: unknown) =>
+      ipcRenderer.invoke('skills:testEmailAccountConnectivity', skillId, account),
     testEmailConnectivity: (skillId: string, config: Record<string, string>) =>
       ipcRenderer.invoke('skills:testEmailConnectivity', skillId, config),
     fetchMarketplace: () => ipcRenderer.invoke('skills:fetchMarketplace'),
@@ -306,6 +312,13 @@ contextBridge.exposeInMainWorld('electron', {
       const result = await ipcRenderer.invoke(AgentIpcChannel.Update, id, updates);
       return result?.success ? result.agent : null;
     },
+    cleanupLegacyIdentityBlock: async (id: string) => {
+      const result = await ipcRenderer.invoke(AgentIpcChannel.CleanupLegacyIdentityBlock, id);
+      return result?.result ?? {
+        status: AgentLegacyIdentityCleanupStatus.Failed,
+        error: result?.error || 'Failed to clean legacy identity block',
+      };
+    },
     delete: async (id: string) => {
       const result = await ipcRenderer.invoke(AgentIpcChannel.Delete, id);
       return result?.success ? result.deleted : false;
@@ -445,6 +458,7 @@ contextBridge.exposeInMainWorld('electron', {
       memoryGuardLevel?: 'strict' | 'standard' | 'relaxed';
       memoryUserMemoriesMaxItems?: number;
       skipMissedJobs?: boolean;
+      openClawHeartbeatEnabled?: boolean;
       embeddingEnabled?: boolean;
       embeddingProvider?: string;
       embeddingModel?: string;
@@ -472,6 +486,9 @@ contextBridge.exposeInMainWorld('electron', {
     deleteMemoryEntry: (input: { id: string }) =>
       ipcRenderer.invoke('cowork:memory:deleteEntry', input),
     getMemoryStats: () => ipcRenderer.invoke('cowork:memory:getStats'),
+    readMemoryFileRaw: () => ipcRenderer.invoke(CoworkIpcChannel.MemoryReadRaw),
+    writeMemoryFileRaw: (input: { content: string }) =>
+      ipcRenderer.invoke(CoworkIpcChannel.MemoryWriteRaw, input),
     getDreamingStatus: () => ipcRenderer.invoke('cowork:dreaming:status'),
     getDreamDiary: () => ipcRenderer.invoke('cowork:dreaming:diary'),
     readBootstrapFile: (filename: string) => ipcRenderer.invoke('cowork:bootstrap:read', filename),
@@ -1121,5 +1138,41 @@ contextBridge.exposeInMainWorld('electron', {
         | { loggedIn: true; email: string | null; accountId: string | null; expiresAt: number }
         | { loggedIn: false }
       >,
+  },
+  xaiOAuth: {
+    start: () =>
+      ipcRenderer.invoke('xai-oauth:start') as Promise<
+        | { success: true; email: string | null; flow: 'browser' | 'device-code' }
+        | { success: false; error: string }
+      >,
+    cancel: () => ipcRenderer.invoke('xai-oauth:cancel') as Promise<void>,
+    logout: () => ipcRenderer.invoke('xai-oauth:logout') as Promise<void>,
+    status: () =>
+      ipcRenderer.invoke('xai-oauth:status') as Promise<{
+        loggedIn: boolean;
+        email?: string;
+        displayName?: string;
+        expiresAt?: number;
+      }>,
+    onDeviceCode: (
+      callback: (info: {
+        userCode: string;
+        verificationUri: string;
+        verificationUriComplete?: string;
+        expiresInMs: number;
+      }) => void,
+    ) => {
+      const handler = (
+        _event: unknown,
+        info: {
+          userCode: string;
+          verificationUri: string;
+          verificationUriComplete?: string;
+          expiresInMs: number;
+        },
+      ) => callback(info);
+      ipcRenderer.on('xai-oauth:device-code', handler);
+      return () => ipcRenderer.removeListener('xai-oauth:device-code', handler);
+    },
   },
 });

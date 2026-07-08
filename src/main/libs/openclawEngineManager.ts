@@ -31,7 +31,7 @@ const gwDiagTs = (): string => {
   const abs = Math.abs(tz);
   return `[GW-RESTART-DIAG] ${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}${sign}${p(Math.floor(abs / 60))}:${p(abs % 60)}`;
 };
-import { isSystemProxyEnabled, resolveSystemProxyUrlForTargets } from './systemProxy';
+import { isSystemProxyEnabled, resolveSystemProxyUrlForTargets, setActiveSystemProxyUrl } from './systemProxy';
 
 type GatewayProcess = UtilityProcess | ChildProcess;
 
@@ -589,6 +589,7 @@ export class OpenClawEngineManager extends EventEmitter {
 
     if (isSystemProxyEnabled()) {
       const { proxyUrl, targetUrl } = await resolveSystemProxyUrlForTargets();
+      setActiveSystemProxyUrl(proxyUrl);
       if (proxyUrl) {
         env.http_proxy = proxyUrl;
         env.https_proxy = proxyUrl;

@@ -99,7 +99,6 @@ const WelcomeDialog: React.FC<WelcomeDialogProps> = ({ onStart, onClose, require
     setMotionDirection(-1);
     setStepIndex((current) => Math.max(current - 1, 0));
   };
-
   return (
     <div className="fixed inset-0 z-[10060] overflow-hidden bg-[#020714] text-white">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_42%,rgba(8,145,178,0.22),transparent_34%),radial-gradient(circle_at_78%_48%,rgba(2,6,23,0.76),transparent_42%),linear-gradient(180deg,#010612_0%,#031326_50%,#01040c_100%)]" />

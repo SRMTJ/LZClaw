@@ -1,4 +1,4 @@
-import { ArchiveBoxIcon, ArrowPathIcon, ArrowPathRoundedSquareIcon, ChartBarIcon, ChatBubbleLeftIcon, CheckCircleIcon, CpuChipIcon, CubeIcon, EnvelopeIcon, ExclamationTriangleIcon, GlobeAltIcon, InformationCircleIcon, MagnifyingGlassIcon, SunIcon, TrashIcon, WrenchScrewdriverIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { ArchiveBoxIcon, ArrowPathIcon, ArrowPathRoundedSquareIcon, ChartBarIcon, ChatBubbleLeftIcon, CheckCircleIcon, CpuChipIcon, CubeIcon, EnvelopeIcon, ExclamationTriangleIcon, GlobeAltIcon, InformationCircleIcon, MagnifyingGlassIcon, SignalIcon, SunIcon, TrashIcon, WrenchScrewdriverIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import React, { useCallback,useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
@@ -78,7 +78,7 @@ import {
   shouldUseMaxCompletionTokensForOpenAI,
   shouldUseOpenAIResponsesForProvider,
 } from './settings/modelProviderUtils';
-import ModelSettingsSection, { ModelEditorDialog } from './settings/ModelSettingsSection';
+import ModelSettingsSection, { DeleteProviderConfirmDialog, ModelEditorDialog } from './settings/ModelSettingsSection';
 import EmailSkillConfig from './skills/EmailSkillConfig';
 import ThemedSelect from './ui/ThemedSelect';
 
@@ -1404,6 +1404,20 @@ const Settings: React.FC<SettingsProps> = ({
     { loggedIn: false } | { loggedIn: true; email?: string } | null
   >(null);
 
+  // xAI (Grok) OAuth state
+  type XaiOAuthPhase =
+    | { kind: 'idle' }
+    | { kind: 'pending' }
+    | { kind: 'device_code'; userCode: string; verificationUri: string }
+    | { kind: 'success'; email?: string }
+    | { kind: 'error'; message: string };
+  const [xaiOAuthPhase, setXaiOAuthPhase] = useState<XaiOAuthPhase>({ kind: 'idle' });
+  // Mirrors the OpenClaw auth-profiles store on disk; refreshed whenever the
+  // xAI provider tab becomes active and after login/logout. `null` = not yet checked.
+  const [xaiOAuthStatus, setXaiOAuthStatus] = useState<
+    { loggedIn: false } | { loggedIn: true; email?: string } | null
+  >(null);
+
   // Add state for providers configuration
   const [providers, setProviders] = useState<ProvidersConfig>(() => getDefaultProviders());
 
@@ -1425,7 +1439,9 @@ const Settings: React.FC<SettingsProps> = ({
   const minimaxIsOAuthMode = providers.minimax.authType !== 'apikey';
   // OpenAI defaults to API key mode unless the user explicitly opts in to OAuth
   const openaiIsOAuthMode = providers.openai.authType === 'oauth';
-  const isBaseUrlLocked = (activeProvider === 'zhipu' && providers.zhipu.codingPlanEnabled) || (activeProvider === 'qwen' && providers.qwen.codingPlanEnabled) || (activeProvider === 'volcengine' && providers.volcengine.codingPlanEnabled) || (activeProvider === 'moonshot' && providers.moonshot.codingPlanEnabled) || (activeProvider === 'qianfan' && providers.qianfan.codingPlanEnabled) || (activeProvider === 'xiaomi' && providers.xiaomi.codingPlanEnabled) || (activeProvider === 'minimax' && minimaxIsOAuthMode) || (activeProvider === 'openai' && openaiIsOAuthMode);
+  // xAI likewise defaults to API key mode; OAuth is an explicit opt-in
+  const xaiIsOAuthMode = providers.xai.authType === 'oauth';
+  const isBaseUrlLocked = (activeProvider === 'zhipu' && providers.zhipu.codingPlanEnabled) || (activeProvider === 'qwen' && providers.qwen.codingPlanEnabled) || (activeProvider === 'volcengine' && providers.volcengine.codingPlanEnabled) || (activeProvider === 'moonshot' && providers.moonshot.codingPlanEnabled) || (activeProvider === 'qianfan' && providers.qianfan.codingPlanEnabled) || (activeProvider === 'xiaomi' && providers.xiaomi.codingPlanEnabled) || (activeProvider === 'minimax' && minimaxIsOAuthMode) || (activeProvider === 'openai' && openaiIsOAuthMode) || (activeProvider === 'xai' && xaiIsOAuthMode);
 
   // 创建引用来确保内容区域的滚动
   const contentRef = useRef<HTMLDivElement>(null);
@@ -1658,6 +1674,7 @@ const Settings: React.FC<SettingsProps> = ({
   const [coworkMemoryEnabled, setCoworkMemoryEnabled] = useState<boolean>(coworkConfig.memoryEnabled ?? true);
   const [coworkMemoryLlmJudgeEnabled, setCoworkMemoryLlmJudgeEnabled] = useState<boolean>(coworkConfig.memoryLlmJudgeEnabled ?? false);
   const [skipMissedJobs, setSkipMissedJobs] = useState<boolean>(coworkConfig.skipMissedJobs ?? true);
+  const [openClawHeartbeatEnabled, setOpenClawHeartbeatEnabled] = useState<boolean>(coworkConfig.openClawHeartbeatEnabled ?? true);
   const [embeddingEnabled, setEmbeddingEnabled] = useState<boolean>(coworkConfig.embeddingEnabled ?? false);
   const [embeddingProvider, setEmbeddingProvider] = useState<string>(coworkConfig.embeddingProvider ?? 'openai');
   const [embeddingModel, setEmbeddingModel] = useState<string>(coworkConfig.embeddingModel ?? '');
@@ -1680,6 +1697,10 @@ const Settings: React.FC<SettingsProps> = ({
   const [coworkMemoryEditingId, setCoworkMemoryEditingId] = useState<string | null>(null);
   const [coworkMemoryDraftText, setCoworkMemoryDraftText] = useState<string>('');
   const [showMemoryModal, setShowMemoryModal] = useState<boolean>(false);
+  const [coworkMemoryRawMode, setCoworkMemoryRawMode] = useState<boolean>(false);
+  const [coworkMemoryRawText, setCoworkMemoryRawText] = useState<string>('');
+  const [coworkMemoryRawSaving, setCoworkMemoryRawSaving] = useState<boolean>(false);
+  const [coworkMemoryExpandedIds, setCoworkMemoryExpandedIds] = useState<Set<string>>(new Set());
   const [openClawEngineStatus, setOpenClawEngineStatus] = useState<OpenClawEngineStatus | null>(null);
   const [showOpenClawRepairConfirm, setShowOpenClawRepairConfirm] = useState<boolean>(false);
   const [isRepairingOpenClaw, setIsRepairingOpenClaw] = useState<boolean>(false);
@@ -1695,6 +1716,7 @@ const Settings: React.FC<SettingsProps> = ({
     setCoworkMemoryEnabled(coworkConfig.memoryEnabled ?? true);
     setCoworkMemoryLlmJudgeEnabled(coworkConfig.memoryLlmJudgeEnabled ?? false);
     setSkipMissedJobs(coworkConfig.skipMissedJobs ?? true);
+    setOpenClawHeartbeatEnabled(coworkConfig.openClawHeartbeatEnabled ?? true);
     setEmbeddingEnabled(coworkConfig.embeddingEnabled ?? false);
     setEmbeddingProvider(coworkConfig.embeddingProvider ?? 'openai');
     setEmbeddingModel(coworkConfig.embeddingModel ?? '');
@@ -1713,6 +1735,7 @@ const Settings: React.FC<SettingsProps> = ({
     coworkConfig.memoryLlmJudgeEnabled,
     coworkConfig.openClawSessionPolicy?.keepAlive,
     coworkConfig.skipMissedJobs,
+    coworkConfig.openClawHeartbeatEnabled,
     coworkConfig.embeddingEnabled,
     coworkConfig.embeddingProvider,
     coworkConfig.embeddingModel,
@@ -2188,6 +2211,16 @@ const Settings: React.FC<SettingsProps> = ({
       delete next[key];
       return next;
     });
+    // If the deleted provider was active, switch to first visible BEFORE the
+    // await below. Otherwise the intermediate render triggered while awaiting
+    // would still have activeProvider pointing at the just-deleted key, and the
+    // model settings render accesses providers[activeProvider].* without guards,
+    // crashing the whole view (white screen).
+    if (activeProvider === key) {
+      const visibleKeys = Object.keys(visibleProviders).filter(k => k !== key) as ProviderType[];
+      const firstEnabled = visibleKeys.find(k => visibleProviders[k]?.enabled);
+      setActiveProvider(firstEnabled ?? visibleKeys[0] ?? providerKeys[0]);
+    }
     // Persist the deletion immediately so it survives window close
     const updatedProviders = { ...currentConfig.providers };
     delete updatedProviders[key];
@@ -2204,12 +2237,6 @@ const Settings: React.FC<SettingsProps> = ({
       }
     } catch (deleteError) {
       console.warn('[Settings] failed to persist custom provider deletion:', deleteError);
-    }
-    // If the deleted provider was active, switch to first visible
-    if (activeProvider === key) {
-      const visibleKeys = Object.keys(visibleProviders).filter(k => k !== key) as ProviderType[];
-      const firstEnabled = visibleKeys.find(k => visibleProviders[k]?.enabled);
-      setActiveProvider(firstEnabled ?? visibleKeys[0] ?? providerKeys[0]);
     }
   };
 
@@ -2476,9 +2503,9 @@ const Settings: React.FC<SettingsProps> = ({
     return () => { cancelled = true; };
   }, [activeProvider]);
 
-  const persistOpenAIProvidersConfigInBackground = useCallback((nextProviders: ProvidersConfig) => {
+  const persistProviderAuthConfigInBackground = useCallback((nextProviders: ProvidersConfig) => {
     void configService.updateConfig({ providers: nextProviders }).catch((saveError) => {
-      console.error('[Settings] failed to save OpenAI OAuth provider state:', saveError);
+      console.error('[Settings] failed to save provider auth state:', saveError);
       setError(i18nService.t('failedToSaveSettings'));
     });
   }, []);
@@ -2502,7 +2529,7 @@ const Settings: React.FC<SettingsProps> = ({
       setProviders(nextProviders);
       setOpenaiOAuthStatus({ loggedIn: true, email: result.email ?? undefined });
       setOpenaiOAuthPhase({ kind: 'success', email: result.email ?? undefined });
-      persistOpenAIProvidersConfigInBackground(nextProviders);
+      persistProviderAuthConfigInBackground(nextProviders);
       setTimeout(() => setOpenaiOAuthPhase({ kind: 'idle' }), 1500);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -2534,7 +2561,7 @@ const Settings: React.FC<SettingsProps> = ({
     setProviders(nextProviders);
     setOpenaiOAuthStatus({ loggedIn: false });
     setOpenaiOAuthPhase({ kind: 'idle' });
-    persistOpenAIProvidersConfigInBackground(nextProviders);
+    persistProviderAuthConfigInBackground(nextProviders);
     try {
       await window.electron.openaiCodexOAuth.logout();
     } catch {
@@ -2542,10 +2569,105 @@ const Settings: React.FC<SettingsProps> = ({
     }
   };
 
+  // Sync the persisted xAI login state (OpenClaw auth-profiles store) into
+  // local UI state whenever the xAI provider tab becomes active. Also
+  // reconciles stale providers config (e.g. credential removed externally).
+  useEffect(() => {
+    let cancelled = false;
+    if (activeProvider !== 'xai') return;
+    void window.electron.xaiOAuth.status().then((status) => {
+      if (cancelled) return;
+      if (status.loggedIn) {
+        setXaiOAuthStatus({ loggedIn: true, email: status.email });
+      } else {
+        setXaiOAuthStatus({ loggedIn: false });
+        setProviders(prev => {
+          if (prev.xai.authType !== 'oauth') return prev;
+          return { ...prev, xai: { ...prev.xai, authType: 'apikey' } };
+        });
+      }
+    }).catch(() => {
+      if (!cancelled) setXaiOAuthStatus({ loggedIn: false });
+    });
+    return () => { cancelled = true; };
+  }, [activeProvider]);
+
+  const handleXaiOAuthLogin = async () => {
+    setXaiOAuthPhase({ kind: 'pending' });
+    // The main process falls back to the device-code flow when the loopback
+    // callback port is taken — surface the user code as soon as it arrives.
+    const unsubscribeDeviceCode = window.electron.xaiOAuth.onDeviceCode((info) => {
+      setXaiOAuthPhase({
+        kind: 'device_code',
+        userCode: info.userCode,
+        verificationUri: info.verificationUriComplete ?? info.verificationUri,
+      });
+    });
+    try {
+      const result = await window.electron.xaiOAuth.start();
+      if (!result.success) {
+        if (/cancelled/i.test(result.error)) {
+          setXaiOAuthPhase({ kind: 'idle' });
+        } else {
+          setXaiOAuthPhase({ kind: 'error', message: result.error });
+        }
+        return;
+      }
+      const nextProviders: ProvidersConfig = {
+        ...providers,
+        xai: {
+          ...providers.xai,
+          enabled: true,
+          authType: 'oauth',
+        },
+      };
+      setProviders(nextProviders);
+      setXaiOAuthStatus({ loggedIn: true, email: result.email ?? undefined });
+      setXaiOAuthPhase({ kind: 'success', email: result.email ?? undefined });
+      persistProviderAuthConfigInBackground(nextProviders);
+      setTimeout(() => setXaiOAuthPhase({ kind: 'idle' }), 1500);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setXaiOAuthPhase({ kind: 'error', message });
+    } finally {
+      unsubscribeDeviceCode();
+    }
+  };
+
+  const handleCancelXaiOAuthLogin = async () => {
+    try {
+      await window.electron.xaiOAuth.cancel();
+    } catch {
+      /* ignore — we still want to reset the UI */
+    }
+    setXaiOAuthPhase({ kind: 'idle' });
+  };
+
+  const handleXaiOAuthLogout = async () => {
+    const nextProviders: ProvidersConfig = {
+      ...providers,
+      xai: {
+        ...providers.xai,
+        enabled: providers.xai.apiKey.trim().length > 0,
+        authType: 'apikey' as const,
+      },
+    };
+    setProviders(nextProviders);
+    setXaiOAuthStatus({ loggedIn: false });
+    setXaiOAuthPhase({ kind: 'idle' });
+    persistProviderAuthConfigInBackground(nextProviders);
+    try {
+      await window.electron.xaiOAuth.logout();
+    } catch {
+      /* ignore — credential may already be gone */
+    }
+  };
+
   const hasCoworkConfigChanges = coworkAgentEngine !== coworkConfig.agentEngine
     || coworkMemoryEnabled !== coworkConfig.memoryEnabled
     || coworkMemoryLlmJudgeEnabled !== coworkConfig.memoryLlmJudgeEnabled
     || skipMissedJobs !== (coworkConfig.skipMissedJobs ?? true)
+    || openClawHeartbeatEnabled !== (coworkConfig.openClawHeartbeatEnabled ?? true)
     || openClawSessionKeepAlive !== (coworkConfig.openClawSessionPolicy?.keepAlive || OpenClawSessionKeepAliveValues.ThirtyDays)
     || embeddingEnabled !== (coworkConfig.embeddingEnabled ?? false)
     || embeddingProvider !== (coworkConfig.embeddingProvider ?? 'openai')
@@ -2910,6 +3032,46 @@ const Settings: React.FC<SettingsProps> = ({
     setShowMemoryModal(true);
   };
 
+  const handleEnterCoworkMemoryRawMode = async () => {
+    setError(null);
+    const content = await coworkService.readMemoryFileRaw();
+    if (content === null) {
+      setError(i18nService.t('coworkMemoryRawLoadFailed'));
+      return;
+    }
+    setCoworkMemoryRawText(content);
+    setCoworkMemoryRawMode(true);
+  };
+
+  const handleSaveCoworkMemoryRaw = async () => {
+    if (coworkMemoryRawSaving) return;
+    setError(null);
+    setCoworkMemoryRawSaving(true);
+    try {
+      const result = await coworkService.writeMemoryFileRaw(coworkMemoryRawText);
+      if (!result.success) {
+        setError(result.error || i18nService.t('coworkMemoryRawSaveFailed'));
+        return;
+      }
+      setCoworkMemoryRawMode(false);
+      await loadCoworkMemoryData();
+    } finally {
+      setCoworkMemoryRawSaving(false);
+    }
+  };
+
+  const toggleCoworkMemoryExpandedId = (id: string) => {
+    setCoworkMemoryExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
   // Toggle provider enabled status
   const toggleProviderEnabled = (provider: ProviderType) => {
     const providerConfig = providers[provider];
@@ -3065,6 +3227,7 @@ const Settings: React.FC<SettingsProps> = ({
         ? normalizeProvidersForSettingsSave(previousConfig.providers as ProvidersConfig)
         : normalizedProviders;
       const previousSkipMissedJobs = coworkConfig.skipMissedJobs ?? true;
+      const previousOpenClawHeartbeatEnabled = coworkConfig.openClawHeartbeatEnabled ?? true;
       const previousAgentEngine = coworkConfig.agentEngine || 'openclaw';
       const previousOpenClawSessionKeepAlive = coworkConfig.openClawSessionPolicy?.keepAlive
         || OpenClawSessionKeepAliveValues.ThirtyDays;
@@ -3181,6 +3344,7 @@ const Settings: React.FC<SettingsProps> = ({
           memoryEnabled: coworkMemoryEnabled,
           memoryLlmJudgeEnabled: coworkMemoryLlmJudgeEnabled,
           skipMissedJobs,
+          openClawHeartbeatEnabled,
           embeddingEnabled,
           embeddingProvider,
           embeddingModel,
@@ -3267,6 +3431,13 @@ const Settings: React.FC<SettingsProps> = ({
         }
         if (previousAgentEngine !== coworkAgentEngine) {
           reportAgentEngineSettingChanged('agentEngine', coworkAgentEngine, previousAgentEngine);
+        }
+        if (previousOpenClawHeartbeatEnabled !== openClawHeartbeatEnabled) {
+          reportAgentEngineSettingChanged(
+            'openClawHeartbeatEnabled',
+            openClawHeartbeatEnabled,
+            previousOpenClawHeartbeatEnabled,
+          );
         }
         if (previousOpenClawSessionKeepAlive !== openClawSessionKeepAlive) {
           reportAgentEngineSettingChanged(
@@ -4770,6 +4941,43 @@ const Settings: React.FC<SettingsProps> = ({
 
                 <section className="space-y-3">
                   <h4 className="text-sm font-medium text-foreground">
+                    {i18nService.t('openClawBackgroundRuntimeTitle')}
+                  </h4>
+
+                  <div className="rounded-xl border border-border bg-surface p-4">
+                    <div className="flex items-start gap-3.5">
+                      <span
+                        className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors ${
+                          openClawHeartbeatEnabled
+                            ? 'bg-primary-muted text-primary'
+                            : 'bg-surface-raised text-secondary'
+                        }`}
+                      >
+                        <SignalIcon className="h-5 w-5" />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-3">
+                          <h4 className="min-w-0 text-sm font-medium leading-5 text-foreground">
+                            {i18nService.t('openClawHeartbeatEnabled')}
+                          </h4>
+                          <SettingsSwitch
+                            checked={openClawHeartbeatEnabled}
+                            label={i18nService.t('openClawHeartbeatEnabled')}
+                            onClick={() => {
+                              setOpenClawHeartbeatEnabled((prev) => !prev);
+                            }}
+                          />
+                        </div>
+                        <p className="mt-1.5 text-[13px] leading-5 text-secondary">
+                          {i18nService.t('openClawHeartbeatEnabledDescription')}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="space-y-3">
+                  <h4 className="text-sm font-medium text-foreground">
                     {i18nService.t('openClawMaintenanceTitle')}
                   </h4>
 
@@ -4934,10 +5142,19 @@ const Settings: React.FC<SettingsProps> = ({
           { key: 'entries' as const, titleKey: 'coworkMemoryTabEntries' },
           { key: 'embedding' as const, titleKey: 'coworkMemoryTabEmbedding' },
         ];
+        const coworkMemoryGroups: Array<{ section?: string; entries: CoworkUserMemoryEntry[] }> = [];
+        for (const entry of coworkMemoryEntries) {
+          const lastGroup = coworkMemoryGroups[coworkMemoryGroups.length - 1];
+          if (lastGroup && (lastGroup.section ?? '') === (entry.section ?? '')) {
+            lastGroup.entries.push(entry);
+          } else {
+            coworkMemoryGroups.push({ section: entry.section, entries: [entry] });
+          }
+        }
         return (
           <div className="flex flex-col h-full space-y-4">
             <div
-              className="flex flex-wrap gap-2 border-b border-border pb-3 shrink-0"
+              className="flex gap-6 border-b border-border shrink-0"
               role="tablist"
               aria-label={i18nService.t('coworkMemoryTitle')}
             >
@@ -4948,10 +5165,10 @@ const Settings: React.FC<SettingsProps> = ({
                   role="tab"
                   aria-selected={memoryTab === tab.key}
                   onClick={() => setMemoryTab(tab.key)}
-                  className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                  className={`-mb-px border-b-2 px-0.5 pb-2.5 text-sm font-medium transition-colors ${
                     memoryTab === tab.key
-                      ? 'bg-primary-muted text-primary'
-                      : 'text-secondary hover:text-foreground hover:bg-surface-raised'
+                      ? 'border-primary text-primary'
+                      : 'border-transparent text-secondary hover:text-foreground'
                   }`}
                 >
                   {i18nService.t(tab.titleKey)}
@@ -4961,7 +5178,7 @@ const Settings: React.FC<SettingsProps> = ({
             <div className="flex-1 min-h-0 overflow-y-auto">
               {memoryTab === 'entries' && (
                 <div className="space-y-4 rounded-xl border px-4 py-4 border-border">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-3">
                     <div className="space-y-1">
                       <div className="text-sm font-medium text-foreground">
                         {i18nService.t('coworkMemoryCrudTitle')}
@@ -4970,72 +5187,169 @@ const Settings: React.FC<SettingsProps> = ({
                         {i18nService.t('coworkMemoryManageHint')}
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={handleOpenCoworkMemoryModal}
-                      className="inline-flex items-center justify-center px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm transition-colors active:scale-[0.98]"
-                    >
-                      <PlusCircleIcon className="h-4 w-4 mr-1.5" />
-                      {i18nService.t('coworkMemoryCrudCreate')}
-                    </button>
-                  </div>
-
-                  {coworkMemoryStats && (
-                    <div className="text-xs text-secondary">
-                      {`${i18nService.t('coworkMemoryTotalLabel')}: ${coworkMemoryStats.total}`}
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => { void handleEnterCoworkMemoryRawMode(); }}
+                          disabled={coworkMemoryListLoading}
+                          className="inline-flex items-center justify-center px-3 py-1.5 rounded-lg border border-border text-sm text-foreground hover:bg-surface-raised disabled:opacity-60 transition-colors"
+                        >
+                          {i18nService.t('coworkMemoryRawButton')}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleOpenCoworkMemoryModal}
+                          className="inline-flex items-center justify-center px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm transition-colors active:scale-[0.98]"
+                        >
+                          <PlusCircleIcon className="h-4 w-4 mr-1.5" />
+                          {i18nService.t('coworkMemoryCrudCreate')}
+                        </button>
                     </div>
-                  )}
-
-                  <input
-                    type="text"
-                    value={coworkMemoryQuery}
-                    onChange={(event) => setCoworkMemoryQuery(event.target.value)}
-                    placeholder={i18nService.t('coworkMemorySearchPlaceholder')}
-                    className="w-full rounded-lg border px-3 py-2 text-sm border-border bg-surface"
-                  />
-
-                  <div className="rounded-lg border border-border">
-                    {coworkMemoryListLoading ? (
-                      <div className="px-3 py-3 text-xs text-secondary">
-                        {i18nService.t('loading')}
-                      </div>
-                    ) : coworkMemoryEntries.length === 0 ? (
-                      <div className="px-3 py-3 text-xs text-secondary">
-                        {i18nService.t('coworkMemoryEmpty')}
-                      </div>
-                    ) : (
-                      <div className="divide-y divide-border">
-                        {coworkMemoryEntries.map((entry) => (
-                          <div key={entry.id} className="px-3 py-3 text-xs hover:bg-surface-raised transition-colors">
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="flex-1 min-w-0">
-                                <div className="font-medium text-foreground break-words">
-                                  {entry.text}
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-1 flex-shrink-0">
-                                <button
-                                  type="button"
-                                  onClick={() => handleEditCoworkMemoryEntry(entry)}
-                                  className="rounded border px-2 py-1 border-border text-foreground hover:bg-surface-raised transition-colors"
-                                >
-                                  {i18nService.t('edit')}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => { void handleDeleteCoworkMemoryEntry(entry); }}
-                                  className="rounded border px-2 py-1 text-red-500 border-border hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-60 transition-colors"
-                                  disabled={coworkMemoryListLoading}
-                                >
-                                  {i18nService.t('delete')}
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
                   </div>
+
+                    <>
+                      {coworkMemoryStats && (
+                        <div className="text-xs text-secondary">
+                          {`${i18nService.t('coworkMemoryTotalLabel')}: ${coworkMemoryStats.total}`}
+                        </div>
+                      )}
+
+                      <input
+                        type="text"
+                        value={coworkMemoryQuery}
+                        onChange={(event) => setCoworkMemoryQuery(event.target.value)}
+                        placeholder={i18nService.t('coworkMemorySearchPlaceholder')}
+                        className="w-full rounded-lg border px-3 py-2 text-sm border-border bg-surface"
+                      />
+
+                      <div className="rounded-lg border border-border">
+                        {coworkMemoryListLoading ? (
+                          <div className="px-3 py-3 text-xs text-secondary">
+                            {i18nService.t('loading')}
+                          </div>
+                        ) : coworkMemoryEntries.length === 0 ? (
+                          <div className="px-3 py-3 text-xs text-secondary">
+                            {i18nService.t('coworkMemoryEmpty')}
+                          </div>
+                        ) : (
+                          <div className="divide-y divide-border">
+                            {coworkMemoryGroups.map((group, groupIndex) => (
+                              <React.Fragment key={group.section ?? `ungrouped-${groupIndex}`}>
+                                {group.section && (
+                                  <div className="flex items-baseline gap-1.5 px-3 pb-1.5 pt-3 text-[11px] font-medium text-secondary">
+                                    <span className="truncate">{group.section}</span>
+                                    <span className="font-normal opacity-70">{group.entries.length}</span>
+                                  </div>
+                                )}
+                                {group.entries.map((entry) => {
+                                  const isLongMemoryText =
+                                    entry.text.split('\n').length > 3 || entry.text.length > 240;
+                                  const isMemoryTextExpanded = coworkMemoryExpandedIds.has(entry.id);
+                                  return (
+                                    <div key={entry.id} className="group px-3 py-3 text-xs transition-colors hover:bg-surface-raised/60">
+                                      <div className="flex items-start justify-between gap-3">
+                                        <div className="flex-1 min-w-0">
+                                          <div
+                                            className={`text-foreground break-words whitespace-pre-wrap leading-relaxed ${
+                                              isLongMemoryText && !isMemoryTextExpanded ? 'line-clamp-3' : ''
+                                            }`}
+                                          >
+                                            {entry.text}
+                                          </div>
+                                          {isLongMemoryText && (
+                                            <button
+                                              type="button"
+                                              onClick={() => toggleCoworkMemoryExpandedId(entry.id)}
+                                              className="mt-1.5 text-[11px] text-primary hover:underline"
+                                            >
+                                              {i18nService.t(isMemoryTextExpanded ? 'coworkMemoryCollapse' : 'coworkMemoryExpand')}
+                                            </button>
+                                          )}
+                                        </div>
+                                        <div className="flex items-center gap-0.5 flex-shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                                          <button
+                                            type="button"
+                                            onClick={() => handleEditCoworkMemoryEntry(entry)}
+                                            title={i18nService.t('edit')}
+                                            aria-label={i18nService.t('edit')}
+                                            className="rounded-md p-1.5 text-secondary hover:text-foreground hover:bg-surface-raised transition-colors"
+                                          >
+                                            <EditIcon className="h-4 w-4" />
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => { void handleDeleteCoworkMemoryEntry(entry); }}
+                                            title={i18nService.t('delete')}
+                                            aria-label={i18nService.t('delete')}
+                                            className="rounded-md p-1.5 text-secondary hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-60 transition-colors"
+                                            disabled={coworkMemoryListLoading}
+                                          >
+                                            <TrashIcon className="h-4 w-4" />
+                                          </button>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </React.Fragment>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </>
+
+                  {coworkMemoryRawMode && (
+                    <Modal
+                      isOpen
+                      onClose={() => setCoworkMemoryRawMode(false)}
+                      overlayClassName="fixed inset-0 z-[60] flex items-center justify-center bg-black/10 dark:bg-black/50 p-6"
+                      className="flex h-[min(720px,calc(100vh-48px))] w-[min(960px,calc(100vw-48px))] flex-col overflow-hidden rounded-xl border border-surface bg-surface shadow-[0_12px_40px_rgba(0,0,0,0.16)]"
+                    >
+                      <div className="flex shrink-0 items-start justify-between gap-3 px-5 py-4">
+                        <div className="min-w-0">
+                          <h2 className="text-lg font-semibold text-foreground">
+                            {i18nService.t('coworkMemoryRawButton')}
+                          </h2>
+                          <p className="mt-0.5 text-sm text-secondary">
+                            {i18nService.t('coworkMemoryRawHint')}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setCoworkMemoryRawMode(false)}
+                          title={i18nService.t('close')}
+                          aria-label={i18nService.t('close')}
+                          className="p-2 rounded-lg hover:bg-surface-raised transition-colors"
+                        >
+                          <XMarkIcon className="h-5 w-5 text-secondary" />
+                        </button>
+                      </div>
+                      <textarea
+                        value={coworkMemoryRawText}
+                        onChange={(event) => setCoworkMemoryRawText(event.target.value)}
+                        spellCheck={false}
+                        autoFocus
+                        className="min-h-0 w-full flex-1 resize-none bg-transparent px-5 pt-1 pb-4 text-xs font-mono leading-relaxed text-foreground focus:outline-none"
+                      />
+                      <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border/60 px-5 py-3">
+                        <button
+                          type="button"
+                          onClick={() => setCoworkMemoryRawMode(false)}
+                          className="px-3.5 py-1.5 text-sm text-foreground hover:bg-surface-raised rounded-lg border border-border transition-colors"
+                        >
+                          {i18nService.t('cancel')}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { void handleSaveCoworkMemoryRaw(); }}
+                          disabled={coworkMemoryRawSaving}
+                          className="px-3.5 py-1.5 text-sm text-white bg-primary hover:bg-primary-hover rounded-lg disabled:opacity-60 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
+                        >
+                          {i18nService.t('save')}
+                        </button>
+                      </div>
+                    </Modal>
+                  )}
                 </div>
               )}
 
@@ -5104,6 +5418,10 @@ const Settings: React.FC<SettingsProps> = ({
             openaiOAuthPhase={openaiOAuthPhase}
             setOpenaiOAuthPhase={setOpenaiOAuthPhase}
             openaiOAuthStatus={openaiOAuthStatus}
+            xaiIsOAuthMode={xaiIsOAuthMode}
+            xaiOAuthPhase={xaiOAuthPhase}
+            setXaiOAuthPhase={setXaiOAuthPhase}
+            xaiOAuthStatus={xaiOAuthStatus}
             copilotAuthStatus={copilotAuthStatus}
             copilotUserCode={copilotUserCode}
             copilotVerificationUri={copilotVerificationUri}
@@ -5113,8 +5431,6 @@ const Settings: React.FC<SettingsProps> = ({
             testResult={testResult}
             isTestResultModalOpen={isTestResultModalOpen}
             setIsTestResultModalOpen={setIsTestResultModalOpen}
-            pendingDeleteProvider={pendingDeleteProvider}
-            setPendingDeleteProvider={setPendingDeleteProvider}
             importInputRef={importInputRef}
             handleImportProvidersClick={handleImportProvidersClick}
             handleExportProviders={handleExportProviders}
@@ -5123,7 +5439,6 @@ const Settings: React.FC<SettingsProps> = ({
             toggleProviderEnabled={toggleProviderEnabled}
             handleAddCustomProvider={handleAddCustomProvider}
             handleDeleteCustomProvider={handleDeleteCustomProvider}
-            confirmDeleteCustomProvider={confirmDeleteCustomProvider}
             handleProviderConfigChange={handleProviderConfigChange}
             setProviders={setProviders}
             handleMiniMaxDeviceLogin={handleMiniMaxDeviceLogin}
@@ -5132,6 +5447,9 @@ const Settings: React.FC<SettingsProps> = ({
             handleOpenAIOAuthLogin={handleOpenAIOAuthLogin}
             handleCancelOpenAIOAuthLogin={handleCancelOpenAIOAuthLogin}
             handleOpenAIOAuthLogout={handleOpenAIOAuthLogout}
+            handleXaiOAuthLogin={handleXaiOAuthLogin}
+            handleCancelXaiOAuthLogin={handleCancelXaiOAuthLogin}
+            handleXaiOAuthLogout={handleXaiOAuthLogout}
             handleCopilotSignIn={handleCopilotSignIn}
             handleCopilotSignOut={handleCopilotSignOut}
             handleCopilotCancelAuth={handleCopilotCancelAuth}
@@ -5526,6 +5844,13 @@ const Settings: React.FC<SettingsProps> = ({
           handleModelDialogKeyDown={handleModelDialogKeyDown}
         />
 
+        <DeleteProviderConfirmDialog
+          pendingDeleteProvider={pendingDeleteProvider}
+          providers={providers}
+          onCancel={() => setPendingDeleteProvider(null)}
+          onConfirm={confirmDeleteCustomProvider}
+        />
+
           {showOpenClawRepairConfirm && (
             <div
               className="absolute inset-0 z-30 flex items-center justify-center bg-black/35 px-4 rounded-2xl"
@@ -5667,22 +5992,22 @@ const Settings: React.FC<SettingsProps> = ({
               onClick={resetCoworkMemoryEditor}
             >
               <div
-                className="bg-surface border-border border rounded-2xl shadow-xl w-full max-w-md"
+                className="bg-surface border-border border rounded-2xl shadow-xl w-full max-w-lg"
                 onClick={(e) => e.stopPropagation()}
               >
-                <div className="px-5 pt-5 pb-4 border-b border-border">
+                <div className="flex items-center gap-2.5 px-5 pt-5 pb-3">
                   <h3 className="text-base font-semibold text-foreground">
                     {coworkMemoryEditingId ? i18nService.t('coworkMemoryCrudUpdate') : i18nService.t('coworkMemoryCrudCreate')}
                   </h3>
+                  {coworkMemoryEditingId && (
+                    <span className="inline-flex items-center rounded-md bg-primary-muted px-2 py-0.5 text-[11px] text-primary">
+                      {i18nService.t('coworkMemoryEditingTag')}
+                    </span>
+                  )}
                 </div>
 
-                <div className="px-5 py-4 space-y-4">
-                  {coworkMemoryEditingId && (
-                    <div className="rounded-lg border px-2 py-1 text-xs border-border text-secondary">
-                      {i18nService.t('coworkMemoryEditingTag')}
-                    </div>
-                  )}
-                  <label className="block text-xs font-medium text-secondary mb-1">
+                <div className="px-5 pb-1">
+                  <label className="block text-xs font-medium text-secondary mb-1.5">
                     {i18nService.t('coworkMemoryCrudContentLabel')}<span className="text-red-500 dark:text-red-400 ml-0.5">*</span>
                   </label>
                   <textarea
@@ -5690,15 +6015,18 @@ const Settings: React.FC<SettingsProps> = ({
                     onChange={(event) => setCoworkMemoryDraftText(event.target.value)}
                     placeholder={i18nService.t('coworkMemoryCrudTextPlaceholder')}
                     autoFocus
-                    className="min-h-[200px] w-full rounded-lg border px-3 py-2 text-sm border-border bg-surface text-foreground focus:border-primary focus:ring-1 focus:ring-primary/30"
+                    className="min-h-[220px] w-full resize-y rounded-lg border px-3.5 py-3 text-sm leading-relaxed border-border bg-surface text-foreground focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/30"
                   />
+                  <div className="mt-1.5 text-[11px] leading-relaxed text-secondary">
+                    {i18nService.t('coworkMemoryCrudMultilineHint')}
+                  </div>
                 </div>
 
-                <div className="flex justify-end space-x-2 px-5 pb-5">
+                <div className="flex justify-end space-x-2 px-5 py-4">
                   <button
                     type="button"
                     onClick={resetCoworkMemoryEditor}
-                    className="px-3 py-1.5 text-sm text-foreground hover:bg-surface-raised rounded-xl border border-border transition-colors"
+                    className="px-3.5 py-1.5 text-sm text-foreground hover:bg-surface-raised rounded-lg border border-border transition-colors"
                   >
                     {i18nService.t('cancel')}
                   </button>
@@ -5706,7 +6034,7 @@ const Settings: React.FC<SettingsProps> = ({
                     type="button"
                     onClick={() => { void handleSaveCoworkMemoryEntry(); }}
                     disabled={!coworkMemoryDraftText.trim() || coworkMemoryListLoading}
-                    className="px-3 py-1.5 text-sm text-white bg-primary hover:bg-primary-hover rounded-xl disabled:opacity-60 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
+                    className="px-3.5 py-1.5 text-sm text-white bg-primary hover:bg-primary-hover rounded-lg disabled:opacity-60 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
                   >
                     {coworkMemoryEditingId ? i18nService.t('save') : i18nService.t('coworkMemoryCrudCreate')}
                   </button>

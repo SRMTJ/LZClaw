@@ -39,6 +39,7 @@ import {
   getCoworkOpenAICompatProxyBaseURL,
   getCoworkOpenAICompatProxyToken,
 } from './coworkOpenAICompatProxy';
+import { getServerApiBaseUrl } from './endpoints';
 import {
   buildAgentEntry,
   buildManagedAgentEntries,
@@ -49,7 +50,7 @@ import {
 import { parseChannelSessionKey } from './openclawChannelSessionSync';
 import { OpenClawConfigImpact } from './openclawConfigImpact';
 import type { OpenClawEngineManager } from './openclawEngineManager';
-import { getServerApiBaseUrl } from './endpoints';
+import { repairHeartbeatFile, stripProactiveHeartbeatSection } from './openclawHeartbeatRepair';
 import { getMainAgentWorkspacePath, readBootstrapFile } from './openclawMemoryFile';
 import { resolveOpenClawCatalogModelMaxTokens } from './openclawModelCatalog';
 
@@ -61,9 +62,9 @@ const gwDiagTs = (): string => {
   const abs = Math.abs(tz);
   return `[GW-RESTART-DIAG] ${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}${sign}${p(Math.floor(abs / 60))}:${p(abs % 60)}`;
 };
-import { findBundledExtensionsDir, findThirdPartyExtensionsDir, hasBundledOpenClawExtension, resolveOpenClawExtensionPluginId } from './openclawLocalExtensions';
+import { findBundledExtensionsDir, findThirdPartyExtensionsDir, hasBundledOpenClawExtension, hasRuntimeBundledOpenClawExtension, resolveOpenClawExtensionPluginId } from './openclawLocalExtensions';
 import { getOpenClawTokenProxyPort } from './openclawTokenProxy';
-import { isSystemProxyEnabled } from './systemProxy';
+import { getActiveSystemProxyUrl, isSystemProxyEnabled } from './systemProxy';
 
 export type AskUserCallbackConfig = {
   callbackUrl: string;
@@ -92,9 +93,12 @@ const mapExecutionModeToSandboxMode = (
  * Also used by the runtime adapter's client-side timeout watchdog.
  */
 export const OPENCLAW_AGENT_TIMEOUT_SECONDS = 3600;
+export const OPENCLAW_HEARTBEAT_EVERY_ENABLED = '1h';
+export const OPENCLAW_HEARTBEAT_EVERY_DISABLED = '0m';
 const DINGTALK_OPENCLAW_CHANNEL = 'dingtalk-connector';
 export const OPENCLAW_BINDING_ANY_ACCOUNT_ID = '*';
 const OPENCLAW_DEFAULT_MODEL_MAX_TOKENS = 8192;
+const CHROME_PROXY_SERVER_ARG_PREFIX = '--proxy-server=';
 
 const OpenClawContextCacheProvider = {
   DashScope: 'dashscope',
@@ -436,6 +440,25 @@ const MANAGED_MEMORY_POLICY_PROMPT = [
   '- Only say "记住了" / "I\'ll remember that" AFTER the write tool call succeeds.',
   '- Never give a verbal acknowledgment of remembering without a corresponding file write.',
   '- "Mental notes" do not survive session restarts. Files do.',
+  '',
+  '**MEMORY.md format.** Keep each memory readable as one self-contained block:',
+  '',
+  '- One memory = one top-level bullet. Put related details on indented child',
+  '  bullets inside the same block, never as separate top-level bullets.',
+  '- Group related memories under `## <topic>` headings.',
+  '- Do not split a single fact across multiple top-level bullets.',
+].join('\n');
+
+const MANAGED_HEARTBEAT_POLICY_PROMPT = [
+  '## Heartbeat Policy',
+  '',
+  'This policy supersedes any earlier heartbeat guidance in this file (including "Be Proactive!" style advice).',
+  '',
+  '- Anything in `HEARTBEAT.md` triggers periodic model calls that cost the user money. Keep the file empty or comments-only unless the user explicitly asked for ongoing monitoring.',
+  '- Add a watch item only when the user explicitly asks you to keep watching something. Never invent routine checks (inbox/calendar/weather rotations) on your own.',
+  '- Remove each item as soon as it is done or cancelled.',
+  '- Prefer cron/scheduled tasks for anything with an exact time or schedule.',
+  '- On a heartbeat poll with nothing that needs attention, reply `HEARTBEAT_OK`; do not go looking for work.',
 ].join('\n');
 
 const FALLBACK_OPENCLAW_AGENTS_TEMPLATE = [
@@ -482,8 +505,9 @@ const FALLBACK_OPENCLAW_AGENTS_TEMPLATE = [
   '',
   '## Heartbeats',
   '',
-  '- Use `HEARTBEAT.md` for proactive background checks and reminders.',
-  '- Prefer cron for exact schedules and heartbeat for periodic checks.',
+  '- Add an item to `HEARTBEAT.md` only when the user explicitly asks for ongoing monitoring; anything in that file triggers periodic model calls that cost the user money.',
+  '- Prefer cron/scheduled tasks for anything with an exact time or schedule.',
+  '- Remove each item as soon as it is done or cancelled. With no items, keep the file empty or comments-only so heartbeats skip without model calls.',
 ].join('\n');
 
 const stripTemplateFrontMatter = (content: string): string => {
@@ -519,7 +543,10 @@ const readBundledOpenClawAgentsTemplate = (): string => {
       const content = fs.readFileSync(templatePath, 'utf8');
       const trimmed = stripTemplateFrontMatter(content);
       if (trimmed) {
-        return trimmed;
+        // The bundled template tells the model to invent periodic checks and
+        // write them into HEARTBEAT.md; strip that section so new workspaces
+        // are not seeded with guidance that contradicts the heartbeat policy.
+        return stripProactiveHeartbeatSection(trimmed);
       }
     } catch {
       // Ignore missing/unreadable bundled templates and fall back below.
@@ -623,6 +650,7 @@ const ANTHROPIC_EXPLICIT_CONTEXT_CACHE_PARAMS: OpenClawAgentModelDefault = {
 };
 
 const OPENAI_CODEX_BASE_URL = 'https://chatgpt.com/backend-api/codex';
+const XAI_BASE_URL = 'https://api.x.ai/v1';
 
 const normalizeBaseUrlPath = (rawBaseUrl: string, pathName: string): string => {
   const trimmed = rawBaseUrl.trim();
@@ -824,6 +852,25 @@ const PROVIDER_REGISTRY: Record<string, ProviderDescriptor> = {
     },
   },
 
+  [ProviderName.Xai]: {
+    providerId: OpenClawProviderId.Xai,
+    // The bundled xai extension expects the Responses API; it also unlocks
+    // Grok server-side tools (x-search etc.) that openai-completions lacks.
+    resolveApi: () => OpenClawApiConst.OpenAIResponses as OpenClawProviderApi,
+    normalizeBaseUrl: stripChatCompletionsSuffix,
+  },
+
+  // xAI OAuth (SuperGrok / X Premium entitlement): the credential lives in the
+  // OpenClaw auth-profiles store (written by xaiAuth.ts); the bundled xai
+  // plugin injects the Bearer token and auto-refreshes it, so no API key is
+  // emitted into the provider config.
+  [`${ProviderName.Xai}:oauth`]: {
+    providerId: OpenClawProviderId.Xai,
+    resolveApi: () => OpenClawApiConst.OpenAIResponses as OpenClawProviderApi,
+    normalizeBaseUrl: () => XAI_BASE_URL,
+    resolveApiKey: () => undefined,
+  },
+
   [ProviderName.Anthropic]: {
     providerId: OpenClawProviderId.Anthropic,
     resolveApi: () => OpenClawApiConst.AnthropicMessages as OpenClawProviderApi,
@@ -948,6 +995,9 @@ const resolveDescriptor = (
   if (providerName === ProviderName.Minimax && authType === 'oauth') {
     return PROVIDER_REGISTRY[`${ProviderName.Minimax}:oauth`];
   }
+  if (providerName === ProviderName.Xai && authType === 'oauth') {
+    return PROVIDER_REGISTRY[`${ProviderName.Xai}:oauth`];
+  }
   if (codingPlanEnabled) {
     const compositeKey = `${providerName}:codingPlan`;
     if (compositeKey in PROVIDER_REGISTRY) {
@@ -1011,7 +1061,11 @@ export const buildProviderSelection = (options: {
   );
   const modelInput: string[] = supportsImage ? ['text', 'image'] : ['text'];
   const auth = (
-    (options.providerName === ProviderName.Minimax || options.providerName === ProviderName.OpenAI)
+    (
+      options.providerName === ProviderName.Minimax
+      || options.providerName === ProviderName.OpenAI
+      || options.providerName === ProviderName.Xai
+    )
     && options.authType === 'oauth'
   )
     ? AuthType.OAuth
@@ -1371,6 +1425,19 @@ const buildStreamingModeConfig = (
   mode,
 });
 
+const buildManagedBrowserProxyExtraArgs = (browserWebAccess: BrowserWebAccessConfig): string[] => {
+  if (
+    !isSystemProxyEnabled()
+    || !browserWebAccess.followGlobalProxy
+    || browserWebAccess.networkMode !== BrowserNetworkMode.ProxyCompatible
+  ) {
+    return [];
+  }
+
+  const proxyUrl = getActiveSystemProxyUrl()?.trim();
+  return proxyUrl ? [`${CHROME_PROXY_SERVER_ARG_PREFIX}${proxyUrl}`] : [];
+};
+
 type OpenClawConfigSyncDeps = {
   engineManager: OpenClawEngineManager;
   getCoworkConfig: () => CoworkConfig;
@@ -1498,6 +1565,7 @@ export class OpenClawConfigSync {
   private buildBrowserConfig(browserWebAccess: BrowserWebAccessConfig): Record<string, unknown> {
     const allowedHostnames = normalizeBrowserHostnamePolicyList(browserWebAccess.allowedHostnames);
     const blockedHostnames = normalizeBrowserHostnamePolicyList(browserWebAccess.blockedHostnames);
+    const extraArgs = buildManagedBrowserProxyExtraArgs(browserWebAccess);
     const ssrfPolicy = browserWebAccess.networkMode === BrowserNetworkMode.Strict
       ? {
           dangerouslyAllowPrivateNetwork: false,
@@ -1516,6 +1584,7 @@ export class OpenClawConfigSync {
       defaultProfile: BrowserRuntimeProfile.Managed,
       evaluateEnabled: browserWebAccess.evaluateEnabled,
       ...(browserWebAccess.headless === true ? { headless: true } : {}),
+      ...(extraArgs.length > 0 ? { extraArgs } : {}),
       ssrfPolicy,
     };
   }
@@ -1749,6 +1818,11 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
     );
     const hasAskUserPlugin = isBundledPluginAvailable('ask-user-question');
     const hasMediaGenPlugin = isBundledPluginAvailable('lobster-media-generation');
+    // Runtime-bundled xai extension (dist/extensions/xai): provides the Grok
+    // model compat hooks (e.g. only grok-4.3 accepts reasoningEffort) plus the
+    // OAuth refresh hook for credentials in the auth-profiles store. Declare
+    // it only when the runtime actually bundles it (older runtimes pruned it).
+    const hasXaiPlugin = hasRuntimeBundledOpenClawExtension('xai');
     const qwenPortalAuthPluginId = resolveOpenClawExtensionPluginId('qwen-portal-auth');
 
     // Detect if any provider uses Qwen/Aliyun DashScope URLs — OpenClaw auto-injects
@@ -1908,10 +1982,13 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
             },
           } : {}),
           heartbeat: {
-            every: '1h',
+            every: coworkConfig.openClawHeartbeatEnabled === false
+              ? OPENCLAW_HEARTBEAT_EVERY_DISABLED
+              : OPENCLAW_HEARTBEAT_EVERY_ENABLED,
             target: 'none',
             lightContext: true,
             isolatedSession: true,
+            skipWhenBusy: true,
           },
           ...(Object.keys(agentModelDefaults).length > 0
             ? { models: agentModelDefaults }
@@ -2013,6 +2090,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
           // Qwen/DashScope URLs. Declare it only when the plugin actually
           // exists, otherwise it becomes a stale entry on every startup.
           ...(hasQwenProvider && qwenPortalAuthPluginId ? { [qwenPortalAuthPluginId]: { enabled: true } } : {}),
+          ...(hasXaiPlugin ? { xai: { enabled: true } } : {}),
           // User-installed plugins: merge enabled state and config from user_plugins table
           ...Object.fromEntries(
             userPlugins.map(p => [p.pluginId, {
@@ -2033,6 +2111,11 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
           ...existingAllow,
           BUNDLED_BROWSER_PLUGIN_ID,
           ...(diagnosticsOtelEnabled ? [DIAGNOSTICS_OTEL_PLUGIN_ID] : []),
+          // A non-empty plugins.allow is a strict allowlist in OpenClaw
+          // (manifest-owner-policy "not-in-allowlist"), so runtime-bundled
+          // plugins we rely on must be listed here explicitly or they never
+          // load — entries.enabled alone is not enough.
+          ...(hasXaiPlugin ? ['xai'] : []),
           ...preinstalledPlugins
             .filter(plugin => !pluginMatches(plugin, DIAGNOSTICS_OTEL_PLUGIN_ID) || diagnosticsOtelEnabled)
             .map(plugin => plugin.pluginId),
@@ -3144,6 +3227,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
       sections.push(MANAGED_BROWSER_POLICY_PROMPT);
       sections.push(MANAGED_EXEC_SAFETY_PROMPT);
       sections.push(MANAGED_MEMORY_POLICY_PROMPT);
+      sections.push(MANAGED_HEARTBEAT_POLICY_PROMPT);
       sections.push(buildManagedSkillCreationPrompt(resolveSkillCreationPath()));
 
       // Keep scheduled-task policy after skills so native channel sessions
@@ -3354,12 +3438,27 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
     const stateDir = this.engineManager.getStateDir();
     const userContent = readBootstrapFile(mainWorkspaceDir, 'USER.md');
 
+    try {
+      if (repairHeartbeatFile(mainWorkspaceDir)) {
+        console.log('[OpenClawConfigSync] Repaired legacy HEARTBEAT.md in main workspace');
+      }
+    } catch (error) {
+      console.warn(
+        '[OpenClawConfigSync] Failed to repair HEARTBEAT.md in main workspace:',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+
     for (const agent of agents) {
       if (agent.id === 'main' || !agent.enabled) continue;
 
       const agentWorkspace = path.join(stateDir, `workspace-${agent.id}`);
       try {
         ensureDir(agentWorkspace);
+
+        if (repairHeartbeatFile(agentWorkspace)) {
+          console.log(`[OpenClawConfigSync] Repaired legacy HEARTBEAT.md for agent ${agent.id}`);
+        }
 
         // Sync SOUL.md — agent's system prompt
         const soulPath = path.join(agentWorkspace, 'SOUL.md');

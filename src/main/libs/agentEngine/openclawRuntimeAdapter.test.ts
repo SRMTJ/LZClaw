@@ -4161,6 +4161,51 @@ test('compaction stream shows context maintenance state while keeping the sessio
   expect(adapter.activeTurns.has(session.id)).toBe(true);
 });
 
+test('compaction retry wait clears context maintenance when no follow-up arrives', async () => {
+  vi.useFakeTimers();
+  try {
+    const { session, store } = createReconcileStore([
+      { id: 'msg-1', type: 'user', content: 'continue the task', timestamp: 1, metadata: {} },
+    ]);
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const sessionKey = `agent:main:lobsterai:${session.id}`;
+    const maintenanceSpy = vi.fn();
+    const completeSpy = vi.fn();
+
+    session.status = 'running';
+    adapter.on('contextMaintenance', maintenanceSpy);
+    adapter.on('complete', completeSpy);
+    adapter.activeTurns.set(session.id, createActiveTurn(session.id, sessionKey, 'run-compaction-timeout'));
+
+    adapter.handleAgentEvent({
+      runId: 'run-compaction-timeout',
+      sessionKey,
+      stream: 'compaction',
+      data: { phase: 'start' },
+    }, 1);
+
+    adapter.handleAgentEvent({
+      runId: 'run-compaction-timeout',
+      sessionKey,
+      stream: 'compaction',
+      data: { phase: 'end', completed: true, willRetry: true },
+    }, 2);
+
+    expect(maintenanceSpy).toHaveBeenLastCalledWith(session.id, true);
+    expect(adapter.activeTurns.has(session.id)).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(120_000);
+    await Promise.resolve();
+
+    expect(maintenanceSpy).toHaveBeenLastCalledWith(session.id, false);
+    expect(completeSpy).toHaveBeenCalledWith(session.id, 'run-compaction-timeout');
+    expect(session.status).toBe('completed');
+    expect(adapter.activeTurns.has(session.id)).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test('chat error clears context maintenance after compaction starts', () => {
   const { session, store } = createReconcileStore([
     { id: 'msg-1', type: 'user', content: 'continue the task', timestamp: 1, metadata: {} },
@@ -4200,6 +4245,82 @@ test('chat error clears context maintenance after compaction starts', () => {
     message.type === 'system'
     && message.content.includes('网络连接失败')
   ))).toBe(true);
+});
+
+test('chat error prevents stale empty final history sync from restarting context maintenance', async () => {
+  let markHistoryRequested: (() => void) | undefined;
+  const historyRequested = new Promise<void>((resolve) => {
+    markHistoryRequested = resolve;
+  });
+  let resolveHistory: (() => void) | undefined;
+  const historyCanReturn = new Promise<void>((resolve) => {
+    resolveHistory = resolve;
+  });
+  const { session, store } = createReconcileStore([
+    { id: 'msg-1', type: 'user', content: '整理一下未读邮件', timestamp: 1, metadata: {} },
+    { id: 'msg-2', type: 'tool_use', content: 'Using imap.js', timestamp: 2, metadata: { toolUseId: 'call-1' } },
+    { id: 'msg-3', type: 'tool_result', content: 'mailbox list', timestamp: 3, metadata: { toolUseId: 'call-1' } },
+  ]);
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const sessionKey = `agent:main:lobsterai:${session.id}`;
+  const maintenanceSpy = vi.fn();
+  const errorSpy = vi.fn();
+
+  adapter.gatewayClient = {
+    start: () => {},
+    stop: () => {},
+    request: async (method: string) => {
+      if (method !== 'chat.history') return {};
+      markHistoryRequested?.();
+      await historyCanReturn;
+      return {
+        messages: [
+          { role: 'user', content: '整理一下未读邮件' },
+          {
+            role: 'assistant',
+            content: [
+              { type: 'toolCall', id: 'call-1', name: 'exec', arguments: { command: 'node scripts/imap.js list-mailboxes' } },
+            ],
+          },
+          { role: 'toolResult', toolCallId: 'call-1', content: 'mailbox list' },
+        ],
+      };
+    },
+  };
+
+  session.status = 'running';
+  adapter.on('contextMaintenance', maintenanceSpy);
+  adapter.on('error', errorSpy);
+  const turn = createActiveTurn(session.id, sessionKey, 'run-email-timeout');
+  turn.toolUseMessageIdByToolCallId.set('call-1', 'msg-2');
+  turn.toolResultMessageIdByToolCallId.set('call-1', 'msg-3');
+  adapter.activeTurns.set(session.id, turn);
+  adapter.sessionIdByRunId.set('run-email-timeout', session.id);
+
+  const finalPromise = adapter.handleChatFinal(session.id, turn, {
+    state: 'final',
+    runId: 'run-email-timeout',
+    sessionKey,
+    message: { role: 'assistant', content: '' },
+  });
+  await historyRequested;
+
+  adapter.handleChatEvent({
+    state: 'error',
+    runId: 'run-email-timeout',
+    sessionKey,
+    errorMessage: 'LLM request failed.',
+    providerRuntimeFailureKind: 'timeout',
+    rawErrorPreview: 'LLM idle timeout (120s): no response from model',
+  }, 2);
+
+  resolveHistory?.();
+  await finalPromise;
+
+  expect(session.status).toBe('error');
+  expect(adapter.activeTurns.has(session.id)).toBe(false);
+  expect(errorSpy).toHaveBeenCalledWith(session.id, expect.stringContaining('网络连接失败'));
+  expect(maintenanceSpy).not.toHaveBeenCalledWith(session.id, true);
 });
 
 test('compaction stream reuses active structured message for duplicate start events', () => {

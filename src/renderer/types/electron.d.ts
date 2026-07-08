@@ -153,6 +153,7 @@ interface CoworkConfig {
   memoryGuardLevel: 'strict' | 'standard' | 'relaxed';
   memoryUserMemoriesMaxItems: number;
   skipMissedJobs: boolean;
+  openClawHeartbeatEnabled: boolean;
   embeddingEnabled: boolean;
   embeddingProvider: string;
   embeddingModel: string;
@@ -175,6 +176,7 @@ type CoworkConfigUpdate = Partial<
     | 'memoryGuardLevel'
     | 'memoryUserMemoriesMaxItems'
     | 'skipMissedJobs'
+    | 'openClawHeartbeatEnabled'
     | 'embeddingEnabled'
     | 'embeddingProvider'
     | 'embeddingModel'
@@ -188,6 +190,7 @@ type CoworkConfigUpdate = Partial<
 interface CoworkUserMemoryEntry {
   id: string;
   text: string;
+  section?: string;
 }
 
 interface CoworkMemoryStats {
@@ -275,6 +278,32 @@ interface EmailConnectivityTestResult {
   checks: EmailConnectivityCheck[];
 }
 
+interface EmailSkillAccountConfig {
+  id: string;
+  name: string;
+  enabled: boolean;
+  provider?: string;
+  email: string;
+  password?: string;
+  imapHost?: string;
+  imapPort?: number;
+  imapTls?: boolean;
+  imapRejectUnauthorized?: boolean;
+  smtpHost?: string;
+  smtpPort?: number;
+  smtpSecure?: boolean;
+  smtpRejectUnauthorized?: boolean;
+  smtpFrom?: string;
+  mailbox?: string;
+  requireSendConfirmation?: boolean;
+}
+
+interface EmailSkillAccountsConfig {
+  version: 1;
+  defaultAccountId: string;
+  accounts: EmailSkillAccountConfig[];
+}
+
 type CoworkPermissionResult =
   | {
       behavior: 'allow';
@@ -350,6 +379,7 @@ interface McpMarketplaceData {
   servers: McpMarketplaceServer[];
 }
 
+import type { AgentLegacyIdentityCleanupResult } from '@shared/agent';
 import type { Platform } from '@shared/platform';
 
 import type { Agent, PresetAgent } from './agent';
@@ -477,6 +507,17 @@ interface IElectronAPI {
       skillId: string,
       config: Record<string, string>,
     ) => Promise<{ success: boolean; error?: string }>;
+    getEmailAccountsConfig: (
+      skillId: string,
+    ) => Promise<{ success: boolean; config?: EmailSkillAccountsConfig; error?: string }>;
+    setEmailAccountsConfig: (
+      skillId: string,
+      config: EmailSkillAccountsConfig,
+    ) => Promise<{ success: boolean; error?: string }>;
+    testEmailAccountConnectivity: (
+      skillId: string,
+      account: EmailSkillAccountConfig,
+    ) => Promise<{ success: boolean; result?: EmailConnectivityTestResult; error?: string }>;
     testEmailConnectivity: (
       skillId: string,
       config: Record<string, string>,
@@ -577,6 +618,7 @@ interface IElectronAPI {
         pinned?: boolean;
       },
     ) => Promise<Agent>;
+    cleanupLegacyIdentityBlock: (id: string) => Promise<AgentLegacyIdentityCleanupResult>;
     delete: (id: string) => Promise<boolean>;
     presets: () => Promise<PresetAgent[]>;
     presetTemplates: () => Promise<PresetAgent[]>;
@@ -873,6 +915,10 @@ interface IElectronAPI {
     }) => Promise<{ success: boolean; entry?: CoworkUserMemoryEntry; error?: string }>;
     deleteMemoryEntry: (input: { id: string }) => Promise<{ success: boolean; error?: string }>;
     getMemoryStats: () => Promise<{ success: boolean; stats?: CoworkMemoryStats; error?: string }>;
+    readMemoryFileRaw: () => Promise<{ success: boolean; content?: string; error?: string }>;
+    writeMemoryFileRaw: (input: {
+      content: string;
+    }) => Promise<{ success: boolean; error?: string }>;
     readBootstrapFile: (
       filename: string,
     ) => Promise<{ success: boolean; content: string; error?: string }>;
@@ -1641,6 +1687,28 @@ interface IElectronAPI {
       | { loggedIn: true; email: string | null; accountId: string | null; expiresAt: number }
       | { loggedIn: false }
     >;
+  };
+  xaiOAuth: {
+    start: () => Promise<
+      | { success: true; email: string | null; flow: 'browser' | 'device-code' }
+      | { success: false; error: string }
+    >;
+    cancel: () => Promise<void>;
+    logout: () => Promise<void>;
+    status: () => Promise<{
+      loggedIn: boolean;
+      email?: string;
+      displayName?: string;
+      expiresAt?: number;
+    }>;
+    onDeviceCode: (
+      callback: (info: {
+        userCode: string;
+        verificationUri: string;
+        verificationUriComplete?: string;
+        expiresInMs: number;
+      }) => void,
+    ) => () => void;
   };
 }
 

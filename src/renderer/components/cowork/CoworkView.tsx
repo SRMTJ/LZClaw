@@ -41,6 +41,16 @@ import CoworkSessionDetail from './CoworkSessionDetail';
 import { reportPromptTemplateAction } from './promptAnalytics';
 import { buildCoworkContinuationSystemPrompt, buildCoworkSystemPrompt } from './skillSystemPrompt';
 
+// Time-aware hero greeting: the brand mark stays as the logo, so the heading
+// can greet the user instead of repeating the product name on every visit.
+const resolveHomeGreetingKey = (date: Date = new Date()): string => {
+  const hour = date.getHours();
+  if (hour >= 5 && hour < 12) return 'coworkGreetingMorning';
+  if (hour >= 12 && hour < 18) return 'coworkGreetingAfternoon';
+  if (hour >= 18 && hour < 23) return 'coworkGreetingEvening';
+  return 'coworkGreetingLateNight';
+};
+
 const logCoworkViewModel = (message: string): void => {
   console.debug(`[CoworkView] ${message}`);
   window.electron?.log?.fromRenderer?.('debug', 'CoworkView', message);
@@ -779,7 +789,11 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
 
       {/* Main Content */}
       <div className="flex-1 overflow-y-auto min-h-0 relative">
-        <div className="relative flex min-h-full w-full min-w-[320px] flex-col items-center px-4 pt-[clamp(88px,19vh,140px)] pb-8">
+        <div className="relative flex min-h-full w-full min-w-[320px] flex-col items-center px-4 py-8">
+          {/* Flexible spacers (2:3) keep the welcome block at the optical
+              center on tall windows; min-h preserves breathing room before
+              the page starts scrolling on short windows. */}
+          <div aria-hidden="true" className="w-full min-h-[56px] flex-[2_0_0px]" />
           {/* Welcome Section - staggered entrance animation */}
           <div className="w-full max-w-3xl text-center">
             <img
@@ -791,13 +805,13 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
               className="mt-4 text-2xl font-semibold leading-[var(--lobster-leading-2xl)] tracking-normal text-foreground animate-fade-in-up"
               style={{ animationDelay: '70ms', animationFillMode: 'both' }}
             >
-              {i18nService.t('coworkWelcome')}
+              {i18nService.t(resolveHomeGreetingKey())}
             </h2>
             <p
               className="mt-2 text-[length:var(--lobster-text-promptLarge)] font-normal leading-[var(--lobster-leading-promptLarge)] text-secondary animate-fade-in-up"
               style={{ animationDelay: '120ms', animationFillMode: 'both' }}
             >
-              {i18nService.t('coworkDescription')}
+              {i18nService.t('coworkHomeTagline')}
             </p>
           </div>
 
@@ -842,6 +856,8 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
             )}
             <CreditsResetCampaignFloat />
           </div>
+
+          <div aria-hidden="true" className="w-full min-h-[24px] flex-[3_0_0px]" />
         </div>
       </div>
     </div>

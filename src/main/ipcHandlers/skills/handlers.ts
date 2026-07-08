@@ -133,6 +133,22 @@ export function registerSkillHandlers(deps: SkillHandlerDeps): void {
     return getSkillManager().setSkillConfig(skillId, config);
   });
 
+  ipcMain.handle('skills:getEmailAccountsConfig', (_event, skillId: string) => {
+    return getSkillManager().getEmailAccountsConfig(skillId);
+  });
+
+  ipcMain.handle('skills:setEmailAccountsConfig', (_event, skillId: string, config: Parameters<SkillManager['setEmailAccountsConfig']>[1]) => {
+    return getSkillManager().setEmailAccountsConfig(skillId, config);
+  });
+
+  ipcMain.handle('skills:testEmailAccountConnectivity', async (
+    _event,
+    skillId: string,
+    account: Parameters<SkillManager['testEmailAccountConnectivity']>[1]
+  ) => {
+    return getSkillManager().testEmailAccountConnectivity(skillId, account);
+  });
+
   ipcMain.handle('skills:testEmailConnectivity', async (
     _event,
     skillId: string,
