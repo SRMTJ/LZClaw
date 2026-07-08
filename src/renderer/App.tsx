@@ -101,6 +101,7 @@ type MainView = 'cowork' | 'skills' | 'scheduledTasks' | 'kits' | 'mcp' | 'busin
 /** Used for config + i18n init; longer on Windows where main-process IPC can stall during cold start. */
 const INIT_STEP_TIMEOUT_MS_WINDOWS = 24_000;
 const INIT_STEP_TIMEOUT_MS_DEFAULT = 16_000;
+const SCHEDULED_TASK_INIT_TIMEOUT_MS = 15_000;
 const shouldAlwaysShowOnboardingOnStartup = import.meta.env.DEV;
 
 const loginFeatureItems = [
@@ -123,7 +124,8 @@ const loginFeatureItems = [
 
 const LoginRequiredScreen: React.FC<{
   onPasswordLogin: (account: string, password: string) => Promise<void>;
-}> = ({ onPasswordLogin }) => {
+  hasImmersiveTitleBar?: boolean;
+}> = ({ onPasswordLogin, hasImmersiveTitleBar = false }) => {
   const [account, setAccount] = useState('');
   const [password, setPassword] = useState('');
   const [submittingMode, setSubmittingMode] = useState<'password' | null>(null);
@@ -159,7 +161,11 @@ const LoginRequiredScreen: React.FC<{
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(90deg,rgba(1,7,19,0.24)_0%,transparent_38%,rgba(1,7,19,0.68)_74%,rgba(1,7,19,0.9)_100%)]" />
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-56 bg-[linear-gradient(180deg,transparent,rgba(1,5,13,0.9))]" />
 
-      <div className="relative z-10 flex min-h-0 w-full flex-1 overflow-y-auto px-4 py-5 sm:px-8 sm:py-8">
+      <div
+        className={`relative z-10 flex min-h-0 w-full flex-1 overflow-y-auto px-4 pb-5 sm:px-8 sm:pb-8 ${
+          hasImmersiveTitleBar ? 'pt-12 sm:pt-14' : 'pt-5 sm:pt-8'
+        }`}
+      >
         <div className="mx-auto grid w-full max-w-6xl grid-cols-1 items-center gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(360px,430px)]">
           <section className="hidden max-w-[430px] self-end pb-14 lg:block">
             <div className="inline-flex items-center gap-2 rounded-full border border-[#4bdcff]/18 bg-[#02172b]/42 px-4 py-2 text-xs font-bold uppercase text-[#8cecff] shadow-[0_0_32px_rgba(34,211,238,0.12)] backdrop-blur-md">
@@ -466,7 +472,11 @@ const App: React.FC = () => {
           });
         }
 
-        void waitWithTimeout(scheduledTaskService.init(), 5000, 'scheduledTaskService.init').catch((error) => {
+        void waitWithTimeout(
+          scheduledTaskService.init(),
+          SCHEDULED_TASK_INIT_TIMEOUT_MS,
+          'scheduledTaskService.init',
+        ).catch((error) => {
           console.error('[App] initializeApp: scheduledTaskService.init failed:', error);
         });
 
@@ -1220,6 +1230,15 @@ const App: React.FC = () => {
       <WindowTitleBar isOverlayActive={isOverlayActive} />
     </div>
   ) : null;
+  const windowsImmersiveTitleBar = isWindows ? (
+    <div className="draggable absolute inset-x-0 top-0 z-[100] h-11 bg-transparent">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-[#010714]/78 via-[#010714]/28 to-transparent" />
+      <WindowTitleBar
+        isOverlayActive
+        className="[&_button]:text-[#d7ecff]/78 [&_button:hover]:text-white [&_button:not(:last-child):hover]:bg-white/10 [&_button:not(:last-child):hover]:shadow-[0_8px_26px_rgba(92,231,255,0.16)] [&_button:last-child:hover]:bg-red-500 [&_button:last-child:hover]:shadow-[0_8px_26px_rgba(239,68,68,0.42)]"
+      />
+    </div>
+  ) : null;
 
   if (!isInitialized) {
     // index.html's static splash shows the same startup page until React
@@ -1309,11 +1328,11 @@ const App: React.FC = () => {
 
   if (!authIsLoggedIn) {
     return (
-      <div className="h-screen overflow-hidden flex flex-col bg-surface-raised">
+      <div className="relative h-screen overflow-hidden flex flex-col bg-[#020714]">
         {toastMessage && (
           <Toast message={toastMessage} onClose={() => setToastMessage(null)} />
         )}
-        {windowsStandaloneTitleBar}
+        {showWelcome ? windowsStandaloneTitleBar : windowsImmersiveTitleBar}
         {showWelcome ? (
           <WelcomeDialog
             onStart={handleWelcomeStart}
@@ -1323,6 +1342,7 @@ const App: React.FC = () => {
         ) : (
           <LoginRequiredScreen
             onPasswordLogin={handlePasswordLogin}
+            hasImmersiveTitleBar={isWindows}
           />
         )}
       </div>
