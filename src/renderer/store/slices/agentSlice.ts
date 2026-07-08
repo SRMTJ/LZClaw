@@ -13,6 +13,7 @@ interface AgentSummary {
   isDefault: boolean;
   source: 'custom' | 'preset';
   skillIds: string[];
+  subagentAllowAgentIds: string[];
 }
 
 interface AgentState {

@@ -243,6 +243,7 @@ describe('OpenClawConfigSync runtime config output', () => {
       target: 'none',
       lightContext: true,
       isolatedSession: true,
+      skipWhenBusy: true,
     });
   });
 
@@ -272,6 +273,7 @@ describe('OpenClawConfigSync runtime config output', () => {
       target: 'none',
       lightContext: true,
       isolatedSession: true,
+      skipWhenBusy: true,
     });
   });
 

@@ -2695,6 +2695,40 @@ test('reconcileWithHistory: content mismatch — triggers replace', async () => 
   expect((args.authoritative[1] as Record<string, unknown>).text).toBe('Full complete response from the model.');
 });
 
+test('subagent history sync preserves visible local user text instead of raw outbound prompt', async () => {
+  const rawOutboundPrompt = `[LobsterAI system instructions]
+hidden setup
+
+[Context bridge from previous LobsterAI conversation]
+previous context
+
+[Current user request]
+换一颗树再来一次`;
+  const { session, store, getLastReplaceArgs } = createReconcileStore([
+    { id: 'msg-1', type: 'user', content: rawOutboundPrompt, timestamp: 1, metadata: {} },
+    { id: 'msg-2', type: 'assistant', content: '新的作文内容', timestamp: 2, metadata: {} },
+  ]);
+
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  adapter.gatewayClient = {
+    start: () => {},
+    stop: () => {},
+    request: async () => ({
+      messages: [
+        { role: 'user', content: rawOutboundPrompt, timestamp: 10 },
+        { role: 'assistant', content: '新的作文内容', timestamp: 20 },
+      ],
+    }),
+  };
+
+  await adapter.syncSessionHistoryFromGateway(session.id, 'agent:writer:subagent:abc');
+
+  expect(getLastReplaceArgs()?.authoritative).toEqual([
+    { role: 'user', text: '换一颗树再来一次', timestamp: 1, metadata: {} },
+    { role: 'assistant', text: '新的作文内容', timestamp: 20 },
+  ]);
+});
+
 test('lifecycle fallback repairs managed session assistant text from history', async () => {
   const brokenTable = [
     'OpenClaw 优缺点总结',
@@ -3375,6 +3409,202 @@ test('chat final reuses committed assistant segment after sessions_yield history
     expect(visibleStartupMessages.map((message) => message.id)).toEqual(['msg-2']);
     expect(turn.assistantMessageId).toBe('msg-2');
     expect(session.messages.filter((message) => message.metadata?.isThinking === true)).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(800);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test('chat history sync reconstructs missed sessions_spawn tools after yield', async () => {
+  vi.useFakeTimers();
+  try {
+    const startupText = 'product-analyst completed. Now starting ts-engineer and qa-reviewer.';
+    const { session, store } = createReconcileStore([
+      { id: 'msg-1', type: 'user', content: 'coordinate a small change', timestamp: 1, metadata: {} },
+      { id: 'msg-2', type: 'assistant', content: startupText, timestamp: 2, metadata: { isStreaming: false, isFinal: true } },
+      { id: 'msg-3', type: 'tool_use', content: 'Using tool: sessions_spawn', timestamp: 3, metadata: { toolUseId: 'call-product', toolName: 'sessions_spawn' } },
+      { id: 'msg-4', type: 'tool_result', content: '{"status":"accepted","childSessionKey":"agent:product-analyst:subagent:one"}', timestamp: 4, metadata: { toolUseId: 'call-product' } },
+    ]);
+
+    const insertedRuns: Array<Record<string, unknown>> = [];
+    const subagentRunStore = {
+      insertSubagentRun: vi.fn((run: Record<string, unknown>) => insertedRuns.push(run)),
+      updateSubagentRunSessionKey: vi.fn(),
+      getSubagentRun: vi.fn(() => null),
+    };
+
+    const adapter = new OpenClawRuntimeAdapter(store, {}, {}, subagentRunStore as never);
+    const sessionKey = `agent:main:lobsterai:${session.id}`;
+    adapter.gatewayClient = {
+      start: () => {},
+      stop: () => {},
+      request: async () => ({
+        messages: [
+          { role: 'user', content: 'coordinate a small change' },
+          {
+            role: 'assistant',
+            content: [
+              { type: 'text', text: startupText },
+              {
+                type: 'toolCall',
+                id: 'call-ts',
+                name: 'sessions_spawn',
+                arguments: {
+                  agentId: 'ts-engineer',
+                  task: 'implement the change',
+                },
+              },
+              {
+                type: 'toolCall',
+                id: 'call-qa',
+                name: 'sessions_spawn',
+                arguments: {
+                  agentId: 'qa-reviewer',
+                  task: 'review the diff',
+                },
+              },
+            ],
+          },
+          {
+            role: 'toolResult',
+            toolCallId: 'call-ts',
+            content: '{"status":"accepted","childSessionKey":"agent:ts-engineer:subagent:two"}',
+          },
+          {
+            role: 'toolResult',
+            toolCallId: 'call-qa',
+            content: '{"status":"accepted","childSessionKey":"agent:qa-reviewer:subagent:three"}',
+          },
+        ],
+      }),
+    };
+
+    const turn = createActiveTurn(session.id, sessionKey, 'run-yield-final');
+    turn.assistantMessageId = 'msg-2';
+    adapter.activeTurns.set(session.id, turn);
+    adapter.latestTurnTokenBySession.set(session.id, turn.turnToken);
+
+    adapter.handleChatEvent({
+      state: 'final',
+      runId: 'run-yield-final',
+      sessionKey,
+      message: { role: 'assistant', content: startupText },
+    }, 1);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(session.messages.some((message) => (
+      message.type === 'tool_use'
+      && message.metadata?.toolUseId === 'call-ts'
+      && message.metadata?.toolInput?.agentId === 'ts-engineer'
+    ))).toBe(true);
+    expect(session.messages.some((message) => (
+      message.type === 'tool_result'
+      && message.metadata?.toolUseId === 'call-qa'
+      && String(message.content).includes('agent:qa-reviewer:subagent:three')
+    ))).toBe(true);
+    expect(insertedRuns).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'call-ts',
+        parentSessionId: session.id,
+        sessionKey: 'agent:ts-engineer:subagent:two',
+        agentId: 'ts-engineer',
+        task: 'implement the change',
+      }),
+      expect.objectContaining({
+        id: 'call-qa',
+        parentSessionId: session.id,
+        sessionKey: 'agent:qa-reviewer:subagent:three',
+        agentId: 'qa-reviewer',
+        task: 'review the diff',
+      }),
+    ]));
+
+    await vi.advanceTimersByTimeAsync(800);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test('chat history sync materializes missed backfillable tool results by result toolName', async () => {
+  vi.useFakeTimers();
+  try {
+    const finalText = 'ts-engineer is running, waiting for completion.';
+    const { session, store } = createReconcileStore([
+      { id: 'msg-1', type: 'user', content: 'coordinate implementation', timestamp: 1, metadata: {} },
+      { id: 'msg-2', type: 'assistant', content: finalText, timestamp: 2, metadata: { isStreaming: false, isFinal: true } },
+    ]);
+
+    const insertedRuns: Array<Record<string, unknown>> = [];
+    const subagentRunStore = {
+      insertSubagentRun: vi.fn((run: Record<string, unknown>) => insertedRuns.push(run)),
+      updateSubagentRunSessionKey: vi.fn(),
+      getSubagentRun: vi.fn(() => null),
+    };
+
+    const adapter = new OpenClawRuntimeAdapter(store, {}, {}, subagentRunStore as never);
+    const sessionKey = `agent:main:lobsterai:${session.id}`;
+    adapter.gatewayClient = {
+      start: () => {},
+      stop: () => {},
+      request: async () => ({
+        messages: [
+          { role: 'user', content: 'coordinate implementation' },
+          { role: 'assistant', content: finalText },
+          {
+            role: 'toolResult',
+            toolCallId: 'call-ts',
+            toolName: 'sessions_spawn',
+            content: '{"status":"accepted","childSessionKey":"agent:ts-engineer:subagent:two"}',
+          },
+          {
+            role: 'toolResult',
+            toolCallId: 'call-yield',
+            toolName: 'sessions_yield',
+            content: '{"status":"yielded","message":"wait for ts-engineer"}',
+          },
+        ],
+      }),
+    };
+
+    const turn = createActiveTurn(session.id, sessionKey, 'run-yield-final');
+    turn.assistantMessageId = 'msg-2';
+    adapter.activeTurns.set(session.id, turn);
+    adapter.latestTurnTokenBySession.set(session.id, turn.turnToken);
+
+    adapter.handleChatEvent({
+      state: 'final',
+      runId: 'run-yield-final',
+      sessionKey,
+      message: { role: 'assistant', content: finalText },
+    }, 1);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(session.messages.some((message) => (
+      message.type === 'tool_use'
+      && message.metadata?.toolUseId === 'call-ts'
+      && message.metadata?.toolName === 'sessions_spawn'
+    ))).toBe(true);
+    expect(session.messages.some((message) => (
+      message.type === 'tool_use'
+      && message.metadata?.toolUseId === 'call-yield'
+      && message.metadata?.toolName === 'sessions_yield'
+    ))).toBe(true);
+    expect(session.messages.some((message) => (
+      message.type === 'tool_result'
+      && message.metadata?.toolUseId === 'call-yield'
+      && String(message.content).includes('wait for ts-engineer')
+    ))).toBe(true);
+    expect(insertedRuns).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'call-ts',
+        parentSessionId: session.id,
+        sessionKey: 'agent:ts-engineer:subagent:two',
+        agentId: 'ts-engineer',
+      }),
+    ]));
 
     await vi.advanceTimersByTimeAsync(800);
   } finally {

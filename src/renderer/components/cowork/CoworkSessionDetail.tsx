@@ -1694,6 +1694,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
         task: run.task,
         label: run.label,
         sessionKey: run.sessionKey,
+        childCoworkSessionId: run.childCoworkSessionId,
         parentSessionId: targetSessionId,
         status: run.status,
         createdAt: run.createdAt,
@@ -2123,6 +2124,34 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     setSessionActiveSpecialPreviewTab(ArtifactSpecialTab.Subagents);
     dispatch(activateArtifactSubagentTab({ sessionId }));
     void fetchSubagents(sessionId, { showLoading: subagents.length === 0 });
+  }, [
+    dispatch,
+    fetchSubagents,
+    sessionId,
+    setSessionActiveSpecialPreviewTab,
+    setSessionSubagentPreviewTabOpen,
+    subagents.length,
+  ]);
+
+  useEffect(() => {
+    const handleSelectSubagentEvent = (event: Event) => {
+      const detail = (event as CustomEvent<SubagentSessionSummary | null>).detail;
+      if (!detail) {
+        setSelectedSubagent(null);
+        return;
+      }
+      if (!sessionId || detail.parentSessionId !== sessionId) return;
+      setSelectedSubagent(detail);
+      setSessionSubagentPreviewTabOpen(true);
+      setSessionActiveSpecialPreviewTab(ArtifactSpecialTab.Subagents);
+      dispatch(activateArtifactSubagentTab({ sessionId }));
+      void fetchSubagents(sessionId, { showLoading: subagents.length === 0 });
+    };
+
+    window.addEventListener(CoworkUiEvent.SelectSubagent, handleSelectSubagentEvent);
+    return () => {
+      window.removeEventListener(CoworkUiEvent.SelectSubagent, handleSelectSubagentEvent);
+    };
   }, [
     dispatch,
     fetchSubagents,

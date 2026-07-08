@@ -17,7 +17,6 @@ import { getAgentDisplayNameById } from '../utils/agentDisplay';
 import {
   type AgentSidebarBatchItem,
   AgentSidebarBatchItemKind,
-  type AgentSidebarSubagentBatchItem,
   createSessionBatchKey,
 } from './agentSidebar/batchSelection';
 import MyAgentSidebarTree from './agentSidebar/MyAgentSidebarTree';
@@ -182,13 +181,10 @@ const Sidebar: React.FC<SidebarProps> = ({
     const selectedSessionCount = selectedItems.filter(
       (item) => item.kind === AgentSidebarBatchItemKind.Session,
     ).length;
-    const selectedSubagentCount = selectedItems.filter(
-      (item) => item.kind === AgentSidebarBatchItemKind.Subagent,
-    ).length;
     return {
       selectedCount: selectedItems.length,
       selectedSessionCount,
-      selectedSubagentCount,
+      selectedSubagentCount: 0,
       selectableCount: batchSelectableItems.length,
     };
   }, [batchSelectableItemByKey, batchSelectableItems.length, batchSelectableKeySet, selectedKeys]);
@@ -384,45 +380,33 @@ const Sidebar: React.FC<SidebarProps> = ({
       .filter((item): item is AgentSidebarBatchItem => Boolean(item));
     if (items.length === 0) return;
 
-    const subagentItems = items.filter(
-      (item): item is AgentSidebarSubagentBatchItem => item.kind === AgentSidebarBatchItemKind.Subagent,
-    );
     const sessionIds = items
       .filter((item) => item.kind === AgentSidebarBatchItemKind.Session)
       .map((item) => item.sessionId);
     const selectedSessionCount = sessionIds.length;
-    const selectedSubagentCount = subagentItems.length;
 
     reportSidebarAction('batch_delete_submit', {
       source: 'home_agent_sidebar',
       agentType: batchAgentId === AgentId.Main ? 'main' : 'custom',
       selectedCount: items.length,
       selectedSessionCount,
-      selectedSubagentCount,
+      selectedSubagentCount: 0,
       selectableCount: batchSelectableItems.length,
     });
-
-    const deletedSubagents: AgentSidebarSubagentBatchItem[] = [];
-    for (const item of subagentItems) {
-      const deleted = await coworkService.deleteSubagentSession(item.parentSessionId, item.runId);
-      if (deleted) {
-        deletedSubagents.push(item);
-      }
-    }
 
     let deletedSessions = false;
     if (sessionIds.length > 0) {
       deletedSessions = await coworkService.deleteSessions(sessionIds);
     }
 
-    if (!deletedSessions && deletedSubagents.length === 0) {
+    if (!deletedSessions) {
       reportSidebarAction('batch_delete_failed', {
         source: 'home_agent_sidebar',
         agentType: batchAgentId === AgentId.Main ? 'main' : 'custom',
         result: 'failed',
         selectedCount: items.length,
         selectedSessionCount,
-        selectedSubagentCount,
+        selectedSubagentCount: 0,
         selectableCount: batchSelectableItems.length,
       });
       return;
@@ -433,7 +417,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       result: 'success',
       selectedCount: items.length,
       selectedSessionCount,
-      selectedSubagentCount,
+      selectedSubagentCount: 0,
       selectableCount: batchSelectableItems.length,
     });
     if (deletedSessions) {

@@ -1,5 +1,4 @@
 import type { CoworkSessionStatus } from '../../types/cowork';
-import type { SubagentSessionSummary } from '../../types/cowork';
 import type { AgentSidebarIndicator } from './constants';
 
 export interface AgentSidebarAgentSummary {
@@ -22,7 +21,6 @@ export interface AgentSidebarTaskNode {
   createdAt: number;
   indicator: AgentSidebarIndicator;
   isSelected: boolean;
-  subagents?: SubagentSessionSummary[];
 }
 
 export interface AgentSidebarAgentNode extends AgentSidebarAgentSummary {

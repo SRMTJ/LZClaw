@@ -9,6 +9,7 @@ export const CoworkIpcChannel = {
   ForkSession: 'cowork:session:fork',
   SubTaskHistory: 'cowork:subTask:history',
   SubagentList: 'cowork:subagent:list',
+  SubagentListByAgent: 'cowork:subagent:listByAgent',
   SubagentDelete: 'cowork:subagent:delete',
   MarkSessionViewed: 'cowork:session:markViewed',
   ExportSessionDiagnostics: 'cowork:session:exportDiagnostics',
