@@ -1,6 +1,13 @@
 import {
   ArrowPathIcon,
+  BuildingOffice2Icon,
   ChatBubbleLeftRightIcon,
+  CheckCircleIcon,
+  ExclamationCircleIcon,
+  LockClosedIcon,
+  ServerStackIcon,
+  ShieldCheckIcon,
+  UserCircleIcon,
 } from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useMemo,useRef, useState } from 'react';
 import { useDispatch,useSelector } from 'react-redux';
@@ -23,6 +30,7 @@ import EngineFailureOverlay from './components/cowork/EngineFailureOverlay';
 import EngineStartupOverlay from './components/cowork/EngineStartupOverlay';
 import KitsView from './components/kits/KitsView';
 import { McpView } from './components/mcp';
+import OnboardingOrbitScene from './components/onboarding/OnboardingOrbitScene';
 import PersonalCenter from './components/PersonalCenter';
 import PrivacyDialog from './components/PrivacyDialog';
 import { ScheduledTasksView } from './components/scheduledTasks';
@@ -92,6 +100,24 @@ const INIT_STEP_TIMEOUT_MS_WINDOWS = 24_000;
 const INIT_STEP_TIMEOUT_MS_DEFAULT = 16_000;
 const shouldAlwaysShowOnboardingOnStartup = import.meta.env.DEV;
 
+const loginFeatureItems = [
+  {
+    icon: ShieldCheckIcon,
+    title: '企业身份',
+    body: '账号验证通过后换取工作站会话。',
+  },
+  {
+    icon: ServerStackIcon,
+    title: '默认工作区',
+    body: '登录后自动进入当前企业工作区。',
+  },
+  {
+    icon: CheckCircleIcon,
+    title: '模型额度',
+    body: '可用模型和 Token 余额随账号同步。',
+  },
+];
+
 const LoginRequiredScreen: React.FC<{
   onPasswordLogin: (account: string, password: string) => Promise<void>;
 }> = ({ onPasswordLogin }) => {
@@ -124,60 +150,143 @@ const LoginRequiredScreen: React.FC<{
   }, [account, onPasswordLogin, password]);
 
   return (
-    <div className="flex min-h-0 flex-1 items-center justify-center bg-background px-6">
-      <div
-        className="flex w-full max-w-[440px] flex-col rounded-lg border border-border bg-surface-raised p-8 shadow-xl"
-      >
-        <div className="flex flex-col items-center text-center">
-          <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-lg bg-primary text-white shadow-glow-accent">
-            <ChatBubbleLeftRightIcon className="h-7 w-7" />
-          </div>
-          <h1 className="text-xl font-semibold text-foreground">登录 LZClaw</h1>
-          <p className="mt-3 text-sm leading-6 text-muted">
-            使用企业账号密码登录，登录成功后进入工作台。
-          </p>
+    <div className="relative flex min-h-0 flex-1 overflow-hidden bg-[#020714] text-white">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_24%_42%,rgba(8,145,178,0.24),transparent_34%),radial-gradient(circle_at_76%_54%,rgba(239,68,56,0.12),transparent_30%),linear-gradient(180deg,#010612_0%,#031326_50%,#01040c_100%)]" />
+      <OnboardingOrbitScene activeStep={1} />
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(90deg,rgba(1,7,19,0.24)_0%,transparent_38%,rgba(1,7,19,0.68)_74%,rgba(1,7,19,0.9)_100%)]" />
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-56 bg-[linear-gradient(180deg,transparent,rgba(1,5,13,0.9))]" />
+
+      <div className="relative z-10 flex min-h-0 w-full flex-1 overflow-y-auto px-4 py-5 sm:px-8 sm:py-8">
+        <div className="mx-auto grid w-full max-w-6xl grid-cols-1 items-center gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(360px,430px)]">
+          <section className="hidden max-w-[430px] self-end pb-14 lg:block">
+            <div className="inline-flex items-center gap-2 rounded-full border border-[#4bdcff]/18 bg-[#02172b]/42 px-4 py-2 text-xs font-bold uppercase text-[#8cecff] shadow-[0_0_32px_rgba(34,211,238,0.12)] backdrop-blur-md">
+              <span className="h-1.5 w-1.5 rounded-full bg-[#5ce7ff] shadow-[0_0_16px_rgba(92,231,255,0.9)]" />
+              Cyber-Ocean AI Workspace
+            </div>
+            <img
+              src="logo.png"
+              alt="LZClaw"
+              width={64}
+              height={64}
+              className="mt-8 h-14 w-14 rounded-lg shadow-[0_18px_52px_rgba(239,68,56,0.36)]"
+              draggable={false}
+            />
+            <h1 className="mt-7 text-[42px] font-bold leading-tight text-white">
+              登录工作台
+            </h1>
+            <p className="mt-4 text-sm font-medium leading-6 text-[#b9cce2]">
+              使用企业账号进入默认工作区，模型、额度和本地 Agent 能力随账号同步。
+            </p>
+
+            <div className="mt-8 grid gap-3">
+              {loginFeatureItems.map((item) => {
+                const ItemIcon = item.icon;
+                return (
+                  <div key={item.title} className="flex items-center gap-3 text-[#dcefff]">
+                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-[#5ce7ff]/18 bg-[#062c46]/72 text-[#baf6ff] shadow-[0_0_24px_rgba(34,211,238,0.14)]">
+                      <ItemIcon className="h-5 w-5" />
+                    </span>
+                    <span>
+                      <span className="block text-sm font-bold text-white">{item.title}</span>
+                      <span className="mt-0.5 block text-xs font-medium leading-5 text-[#8ba4bb]">{item.body}</span>
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+
+          <section className="remove-app-drag relative mx-auto w-full max-w-[430px] rounded-lg border border-[#45dbff]/28 bg-[#04172a]/64 p-5 shadow-[0_28px_90px_rgba(0,0,0,0.48),0_0_0_1px_rgba(122,236,255,0.06)] backdrop-blur-xl sm:p-6">
+            <div className="absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-[#5ce7ff]/70 to-transparent" />
+
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="grid h-12 w-12 shrink-0 place-items-center rounded-lg border border-[#5ce7ff]/18 bg-[#062c46]/82 text-[#baf6ff] shadow-[0_0_26px_rgba(34,211,238,0.18)]">
+                  <UserCircleIcon className="h-6 w-6" />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-xs font-bold uppercase text-[#5ce7ff]">Enterprise Account</div>
+                  <div className="mt-1 text-sm font-semibold text-[#8ba4bb]">LZClaw 企业工作站</div>
+                </div>
+              </div>
+              <BuildingOffice2Icon className="h-7 w-7 text-[#5ce7ff]/42" />
+            </div>
+
+            <h1 className="mt-6 text-[28px] font-bold leading-tight text-white sm:text-[32px]">使用企业账号登录</h1>
+            <p className="mt-3 text-sm font-medium leading-6 text-[#c6d8ea]">
+              登录后自动进入默认工作区，无需提前选择企业。
+            </p>
+
+            <div className="mt-5 grid grid-cols-3 gap-2 rounded-lg border border-[#69e6ff]/14 bg-[#03111f]/48 p-1.5">
+              {loginFeatureItems.map((item) => {
+                const ItemIcon = item.icon;
+                return (
+                  <div key={item.title} className="flex min-w-0 flex-col items-center gap-1 rounded-lg px-2 py-2 text-center text-[#9fb6cc]">
+                    <ItemIcon className="h-5 w-5 text-[#9ef1ff]" />
+                    <span className="w-full truncate text-xs font-semibold">{item.title}</span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {errorMessage && (
+              <div className="mt-5 flex items-start gap-2 rounded-lg border border-red-400/30 bg-red-500/12 px-3 py-2 text-sm leading-5 text-red-100">
+                <ExclamationCircleIcon className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{errorMessage}</span>
+              </div>
+            )}
+
+            <form className="mt-5 flex flex-col gap-4" onSubmit={handlePasswordLogin}>
+              <label className="flex flex-col gap-1.5 text-sm text-[#eaf7ff]">
+                <span className="font-semibold">账号</span>
+                <div className="relative">
+                  <UserCircleIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8ba4bb]" />
+                  <input
+                    type="text"
+                    autoComplete="username"
+                    value={account}
+                    onChange={(event) => setAccount(event.target.value)}
+                    disabled={isSubmitting}
+                    placeholder="手机号 / 用户名 / 邮箱"
+                    className="h-11 w-full rounded-lg border border-[#69e6ff]/18 bg-[#020b16]/70 pl-9 pr-3 text-sm text-white outline-none transition-colors placeholder:text-[#6d8197] focus:border-[#5ce7ff]/72 focus:bg-[#03111f] disabled:cursor-not-allowed disabled:opacity-70"
+                  />
+                </div>
+              </label>
+              <label className="flex flex-col gap-1.5 text-sm text-[#eaf7ff]">
+                <span className="font-semibold">密码</span>
+                <div className="relative">
+                  <LockClosedIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8ba4bb]" />
+                  <input
+                    type="password"
+                    autoComplete="current-password"
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    disabled={isSubmitting}
+                    placeholder="请输入企业账号密码"
+                    className="h-11 w-full rounded-lg border border-[#69e6ff]/18 bg-[#020b16]/70 pl-9 pr-3 text-sm text-white outline-none transition-colors placeholder:text-[#6d8197] focus:border-[#5ce7ff]/72 focus:bg-[#03111f] disabled:cursor-not-allowed disabled:opacity-70"
+                  />
+                </div>
+              </label>
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="mt-2 inline-flex h-[52px] items-center justify-center gap-3 rounded-full bg-[#ef4438] px-5 text-sm font-semibold text-white shadow-[0_18px_48px_rgba(239,68,56,0.36)] transition-all duration-300 hover:-translate-y-0.5 hover:bg-[#ff513f] disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:translate-y-0"
+              >
+                {submittingMode === 'password' && <ArrowPathIcon className="h-4 w-4 animate-spin" />}
+                {submittingMode === 'password' ? '正在登录' : '登录并进入工作区'}
+              </button>
+            </form>
+
+            <div className="mt-5 flex items-start gap-3 rounded-lg border border-[#69e6ff]/18 bg-[#03111f]/58 px-4 py-3 text-[#f2f8ff] shadow-[inset_0_1px_0_rgba(125,233,255,0.08)]">
+              <div className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-[#083550] text-[#a8f1ff]">
+                <CheckCircleIcon className="h-[18px] w-[18px]" />
+              </div>
+              <p className="text-xs font-semibold leading-5 text-[#cde8f5]">
+                仅保存 AIZhongtai 工作站业务会话，不保存 Casdoor 身份 Token。
+              </p>
+            </div>
+          </section>
         </div>
-
-        {errorMessage && (
-          <div className="mt-6 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm leading-5 text-red-500">
-            {errorMessage}
-          </div>
-        )}
-
-        <form className="mt-6 flex flex-col gap-3" onSubmit={handlePasswordLogin}>
-          <label className="flex flex-col gap-1.5 text-sm text-foreground">
-            <span>账号</span>
-            <input
-              type="text"
-              autoComplete="username"
-              value={account}
-              onChange={(event) => setAccount(event.target.value)}
-              disabled={isSubmitting}
-              placeholder="手机号 / 用户名 / 邮箱"
-              className="h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted focus:border-primary disabled:cursor-not-allowed disabled:opacity-70"
-            />
-          </label>
-          <label className="flex flex-col gap-1.5 text-sm text-foreground">
-            <span>密码</span>
-            <input
-              type="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              disabled={isSubmitting}
-              className="h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none transition-colors focus:border-primary disabled:cursor-not-allowed disabled:opacity-70"
-            />
-          </label>
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="mt-1 inline-flex h-10 items-center justify-center rounded-md bg-primary px-5 text-sm font-medium text-white transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-70"
-          >
-            {submittingMode === 'password' && <ArrowPathIcon className="mr-2 h-4 w-4 animate-spin" />}
-            {submittingMode === 'password' ? '正在登录' : '登录'}
-          </button>
-        </form>
-
       </div>
     </div>
   );

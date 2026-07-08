@@ -1,7 +1,6 @@
 export const AuthIpcChannel = {
   Callback: 'auth:callback',
   CancelLogin: 'auth:cancelLogin',
-  GetPricingCatalog: 'auth:getPricingCatalog',
   GetPendingCallback: 'auth:getPendingCallback',
   GetWorkspaces: 'auth:getWorkspaces',
   PasswordLogin: 'auth:passwordLogin',

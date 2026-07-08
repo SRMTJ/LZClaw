@@ -161,14 +161,14 @@ import {
 import { AppUpdateCoordinator, INSTALLATION_UUID_KEY } from './libs/appUpdateCoordinator';
 import { AuthCallbackRouter } from './libs/authCallbackRouter';
 import {
-  closeActiveAuthLoginWindow,
-  openAuthLoginWindow,
-} from './libs/authLoginWindow';
-import {
   appendLoginParams,
   closeActiveAuthLocalCallback,
   startAuthLocalCallback,
 } from './libs/authLocalCallbackServer';
+import {
+  closeActiveAuthLoginWindow,
+  openAuthLoginWindow,
+} from './libs/authLoginWindow';
 import {
   clearServerModelMetadata,
   getAllServerModelMetadata,
@@ -298,7 +298,6 @@ import {
 } from './libs/shareDeployment/shareDeploymentClient';
 import { SqliteBackupTrigger } from './libs/sqliteBackup/constants';
 import { SqliteBackupManager } from './libs/sqliteBackup/sqliteBackupManager';
-import { runStartupCacheWarmup } from './libs/startupCacheWarmup';
 import {
   applySystemProxyEnv,
   resolveSystemProxyUrlForTargets,
@@ -5070,6 +5069,7 @@ if (!gotTheLock) {
       try {
         const serverBaseUrl = getServerApiBaseUrl();
         const loginUrl = `${serverBaseUrl}/api/auth/workstation/password/login`;
+        console.log(`[Auth] password login requesting ${sanitizeUrlForLog(loginUrl)} account=${trimmedAccount}`);
         const resp = await net.fetch(loginUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -5079,7 +5079,11 @@ if (!gotTheLock) {
           })),
         });
         if (!resp.ok) {
-          return { success: false, error: await readWorkstationError(resp, `登录失败: ${resp.status}`) };
+          const error = await readWorkstationError(resp, `登录失败: ${resp.status}`);
+          console.warn(
+            `[Auth] password login failed status=${resp.status} url=${sanitizeUrlForLog(loginUrl)} error=${error}`,
+          );
+          return { success: false, error };
         }
         const body = (await resp.json()) as {
           code: number;
@@ -5087,8 +5091,10 @@ if (!gotTheLock) {
           data?: WorkstationSessionData;
         };
         if (body.code !== 0 || !body.data) {
+          console.warn(`[Auth] password login rejected by server: ${body.message || 'empty session data'}`);
           return { success: false, error: body.message || '登录失败' };
         }
+        console.log('[Auth] password login succeeded');
         return saveWorkstationSession(body.data);
       } catch (error) {
         console.error('[Auth] password login failed:', error);
@@ -5408,47 +5414,6 @@ if (!gotTheLock) {
   ipcMain.handle('auth:getAccessToken', async () => {
     const tokens = getAuthTokens();
     return tokens?.accessToken || null;
-  });
-
-  ipcMain.handle(AuthIpcChannel.GetPricingCatalog, async () => {
-    try {
-      const serverBaseUrl = getServerApiBaseUrl();
-      const url = `${serverBaseUrl}/api/workstation/models/pricing-catalog`;
-      console.log(`[Auth:getPricingCatalog] requesting public pricing catalog at ${url}`);
-      const resp = await net.fetch(url, {
-        method: 'GET',
-        headers: { Accept: 'application/json' },
-      });
-      console.log(`[Auth:getPricingCatalog] server returned HTTP ${resp.status}.`);
-      if (!resp.ok) {
-        return { success: false, error: `HTTP ${resp.status}` };
-      }
-      const body = await resp.json() as {
-        code: number;
-        message?: string;
-        data?: {
-          textModels?: unknown[];
-          imageModels?: unknown[];
-          videoModels?: unknown[];
-        };
-      };
-      if (body.code !== 0) {
-        console.warn('[Auth:getPricingCatalog] server rejected pricing catalog request:', serializeForLog({
-          code: body.code,
-          message: body.message,
-        }));
-        return { success: false, error: body.message || 'Failed to load pricing catalog.' };
-      }
-      const textModels = Array.isArray(body.data?.textModels) ? body.data.textModels : [];
-      console.log(`[Auth:getPricingCatalog] loaded ${textModels.length} public text models.`);
-      return { success: true, textModels };
-    } catch (error) {
-      console.error('[Auth:getPricingCatalog] pricing catalog request failed:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      };
-    }
   });
 
   ipcMain.handle('auth:getModels', async () => {
@@ -11146,24 +11111,7 @@ if (!gotTheLock) {
     });
     profiler.measure('coworkOpenAICompatProxy');
 
-    // ── Pre-warm quota & model caches so provider resolution and config sync
-    // see real server data instead of empty defaults ──
-    if (getAuthTokens()) {
-      profiler.mark('startupCacheWarmup');
-      const warmupResult = await runStartupCacheWarmup({
-        serverBaseUrl: getServerApiBaseUrl(),
-        fetchWithAuth,
-        appendKeyfromQuery,
-        cachedSubscriptionStatus,
-        t,
-      });
-      cachedSubscriptionStatus = warmupResult.subscriptionStatus;
-      cachedMediaGenerationEntitled = warmupResult.mediaGenerationEntitled;
-      profiler.measure('startupCacheWarmup');
-    }
-
-    // Agent model migration — runs after cache warmup so resolveMatchedProvider
-    // can match lobsterai-server models without falling back.
+    // Agent model migration.
     const defaultAgentModelRef = resolveDefaultAgentModelRef();
     const backfilledAgentModels = getCoworkStore().backfillEmptyAgentModels(defaultAgentModelRef);
     const qualifiedAgentModels = migrateAgentModelRefs({

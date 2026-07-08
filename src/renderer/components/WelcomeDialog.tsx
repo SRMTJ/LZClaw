@@ -2,15 +2,18 @@ import {
   ArrowLeftIcon,
   ArrowRightIcon,
   CheckCircleIcon,
-  Cog6ToothIcon,
   CommandLineIcon,
+  CpuChipIcon,
   RocketLaunchIcon,
   SparklesIcon,
+  UserCircleIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import React, { useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
+
+import OnboardingOrbitScene from './onboarding/OnboardingOrbitScene';
 
 interface WelcomeDialogProps {
   onStart: () => void;
@@ -22,8 +25,10 @@ type WelcomeStep = {
   icon: React.ComponentType<{ className?: string }>;
   titleKey: string;
   subtitleKey: string;
-  detailKeys: [string, string, string];
-  kind?: 'details' | 'finish';
+  highlightKey: string;
+  label: string;
+  shortTitle: string;
+  eyebrow: string;
 };
 
 const welcomeSteps: WelcomeStep[] = [
@@ -31,234 +36,233 @@ const welcomeSteps: WelcomeStep[] = [
     icon: SparklesIcon,
     titleKey: 'onboardingStepWelcomeTitle',
     subtitleKey: 'onboardingStepWelcomeSubtitle',
-    detailKeys: ['onboardingStepWelcomeDetail1', 'onboardingStepWelcomeDetail2', 'onboardingStepWelcomeDetail3'],
+    highlightKey: 'onboardingStepWelcomeDetail1',
+    label: '欢迎',
+    shortTitle: '认识 LZClaw',
+    eyebrow: '01',
   },
   {
-    icon: Cog6ToothIcon,
-    titleKey: 'onboardingStepModelTitle',
-    subtitleKey: 'onboardingStepModelSubtitle',
-    detailKeys: ['onboardingStepModelDetail1', 'onboardingStepModelDetail2', 'onboardingStepModelDetail3'],
+    icon: UserCircleIcon,
+    titleKey: 'onboardingStepLoginTitle',
+    subtitleKey: 'onboardingStepLoginSubtitle',
+    highlightKey: 'onboardingStepLoginDetail1',
+    label: '登录',
+    shortTitle: '身份认证',
+    eyebrow: '02',
   },
   {
     icon: CommandLineIcon,
     titleKey: 'onboardingStepWorkspaceTitle',
     subtitleKey: 'onboardingStepWorkspaceSubtitle',
-    detailKeys: ['onboardingStepWorkspaceDetail1', 'onboardingStepWorkspaceDetail2', 'onboardingStepWorkspaceDetail3'],
+    highlightKey: 'onboardingStepWorkspaceDetail1',
+    label: '项目',
+    shortTitle: '项目工作',
+    eyebrow: '03',
   },
   {
-    icon: RocketLaunchIcon,
+    icon: CpuChipIcon,
     titleKey: 'onboardingStepStartTitle',
     subtitleKey: 'onboardingStepStartSubtitle',
-    detailKeys: ['onboardingStepStartDetail1', 'onboardingStepStartDetail2', 'onboardingStepStartDetail3'],
-    kind: 'finish',
+    highlightKey: 'onboardingStepStartDetail1',
+    label: '工作台',
+    shortTitle: '进入工作台',
+    eyebrow: '04',
   },
 ];
 
 const WelcomeDialog: React.FC<WelcomeDialogProps> = ({ onStart, onClose, requireLogin = false }) => {
   const [stepIndex, setStepIndex] = useState(0);
+  const [motionDirection, setMotionDirection] = useState(1);
   const step = welcomeSteps[stepIndex] ?? welcomeSteps[0];
+  const StepIcon = step.icon;
   const isFirstStep = stepIndex === 0;
   const isLastStep = stepIndex === welcomeSteps.length - 1;
-  const isFinishStep = step.kind === 'finish';
-  const StepIcon = step.icon;
+  const primaryActionLabel = requireLogin ? i18nService.t('onboardingGoToLogin') : i18nService.t('onboardingStart');
+  const highlight = i18nService.t(step.highlightKey);
 
-  const visibleDetails = step.detailKeys.map((key) => i18nService.t(key));
+  const setActiveStep = (nextIndex: number) => {
+    if (nextIndex === stepIndex) return;
+    setMotionDirection(nextIndex > stepIndex ? 1 : -1);
+    setStepIndex(nextIndex);
+  };
 
   const goNext = () => {
     if (isLastStep) {
       void onStart();
       return;
     }
+    setMotionDirection(1);
     setStepIndex((current) => Math.min(current + 1, welcomeSteps.length - 1));
   };
 
   const goBack = () => {
+    setMotionDirection(-1);
     setStepIndex((current) => Math.max(current - 1, 0));
   };
 
   return (
-    <div className="fixed inset-0 z-[10060] bg-[#06101d] text-white">
-      <div
-        className="absolute inset-0"
-        style={{
-          background:
-            'linear-gradient(135deg, rgba(55, 124, 240, 0.1) 0%, rgba(6, 16, 29, 0.98) 34%, rgba(5, 10, 18, 1) 100%)',
-        }}
-      />
-      <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.018)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.018)_1px,transparent_1px)] bg-[size:42px_42px] opacity-20" />
-      <div className="absolute inset-0 bg-[#03070d]/55" />
+    <div className="fixed inset-0 z-[10060] overflow-hidden bg-[#020714] text-white">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_42%,rgba(8,145,178,0.22),transparent_34%),radial-gradient(circle_at_78%_48%,rgba(2,6,23,0.76),transparent_42%),linear-gradient(180deg,#010612_0%,#031326_50%,#01040c_100%)]" />
+      <OnboardingOrbitScene activeStep={stepIndex} />
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(90deg,rgba(1,7,19,0.18)_0%,transparent_34%,rgba(1,7,19,0.58)_72%,rgba(1,7,19,0.84)_100%)]" />
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-64 bg-[linear-gradient(180deg,transparent,rgba(1,5,13,0.88))]" />
 
-      {!requireLogin && (
-        <button
-          onClick={onClose}
-          className="absolute right-5 top-5 z-20 flex h-9 w-9 items-center justify-center rounded-lg border border-white/15 bg-[#111827]/90 text-[#e5eefc] shadow-lg transition-colors hover:bg-[#1a2435] hover:text-white"
-          aria-label={i18nService.t('onboardingClose')}
-        >
-          <XMarkIcon className="h-5 w-5" />
-        </button>
-      )}
-
-      <div className="relative z-10 flex h-full min-h-0 flex-col">
-        <div className="draggable flex h-12 shrink-0 items-center justify-center">
-          <div className="remove-app-drag flex items-center gap-1.5">
-            {welcomeSteps.map((item, index) => (
-              <button
-                key={item.titleKey}
-                type="button"
-                onClick={() => setStepIndex(index)}
-                className={`h-1.5 rounded-full transition-all duration-300 ${
-                  index === stepIndex
-                    ? 'w-8 bg-[#64a3ff]'
-                    : index < stepIndex
-                      ? 'w-5 bg-[#64a3ff]/75'
-                      : 'w-2.5 bg-white/[0.32] hover:bg-white/50'
-                }`}
-                aria-label={i18nService.t('onboardingStepIndicator').replace('{current}', String(index + 1))}
-              />
-            ))}
+      <header className="draggable relative z-20 flex h-20 items-center justify-between px-4 sm:px-8">
+        <div className="remove-app-drag flex items-center gap-4">
+          <img
+            src="logo.png"
+            alt="LZClaw"
+            width={54}
+            height={54}
+            className="h-11 w-11 rounded-lg shadow-[0_16px_44px_rgba(239,68,68,0.38)] sm:h-[54px] sm:w-[54px]"
+            draggable={false}
+          />
+          <div>
+            <div className="text-xl font-bold leading-6 tracking-normal text-white sm:text-[22px]">LZClaw</div>
+            <div className="mt-1 text-sm font-medium text-[#94a3b8]">AI 企业工作站</div>
           </div>
         </div>
 
-        <main className="flex min-h-0 flex-1 items-center justify-center px-8 pb-12">
-          <div className="grid w-full max-w-5xl grid-cols-[minmax(0,0.95fr)_minmax(320px,1.05fr)] items-stretch gap-8">
-            <section className="flex flex-col items-start justify-center rounded-lg border border-[#2c4262] bg-[#0c1728] p-7 shadow-[0_24px_72px_rgba(0,0,0,0.42)]">
-              <img
-                src="logo.png"
-                alt="LZClaw"
-                width={76}
-                height={76}
-                className="mb-7 rounded-lg shadow-[0_18px_60px_rgba(72,133,255,0.28)]"
-                draggable={false}
-              />
-              <div className="mb-3 text-sm font-bold uppercase text-[#b8d7ff]">
-                {i18nService.t('onboardingEyebrow')}
+        {!requireLogin && (
+          <button
+            onClick={onClose}
+            className="remove-app-drag inline-flex h-10 items-center gap-2 rounded-lg px-3 text-sm font-semibold text-[#9fb0c6] transition-colors hover:bg-white/8 hover:text-white"
+            aria-label={i18nService.t('onboardingClose')}
+          >
+            <span className="hidden sm:inline">跳过引导</span>
+            <span className="sm:hidden">跳过</span>
+            <XMarkIcon className="h-4 w-4" />
+          </button>
+        )}
+      </header>
+
+      <main
+        className="relative z-10 grid h-[calc(100vh-80px)] min-h-0 grid-rows-[minmax(0,1fr)_auto] px-4 pb-4 text-white sm:min-h-[620px] sm:px-8 sm:pb-8"
+        style={{ backgroundColor: 'transparent' }}
+      >
+        <section className="relative grid min-h-0 items-center gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(360px,448px)]">
+          <div className="pointer-events-none hidden max-w-[380px] self-end pb-20 lg:block">
+            <div className="inline-flex items-center gap-2 rounded-full border border-[#4bdcff]/18 bg-[#02172b]/38 px-4 py-2 text-xs font-bold uppercase text-[#8cecff] shadow-[0_0_32px_rgba(34,211,238,0.12)] backdrop-blur-md">
+              <span className="h-1.5 w-1.5 rounded-full bg-[#5ce7ff] shadow-[0_0_16px_rgba(92,231,255,0.9)]" />
+              Cyber-Ocean AI Workspace
+            </div>
+            <div
+              key={`${step.titleKey}-stage`}
+              className={`mt-7 ${motionDirection >= 0 ? 'animate-fade-in-up' : 'animate-fade-in-down'}`}
+            >
+              <div className="text-[74px] font-semibold leading-none text-[#66e8ff]/56">{step.eyebrow}</div>
+              <div className="mt-4 flex items-center gap-4">
+                <span className="h-px w-20 bg-gradient-to-r from-[#5ce7ff] to-transparent" />
+                <span className="text-sm font-bold text-[#baf6ff]">{step.label}</span>
               </div>
-              <h1 className="max-w-xl text-5xl font-bold leading-tight text-white drop-shadow-[0_2px_18px_rgba(0,0,0,0.55)]">
-                {i18nService.t(step.titleKey)}
-              </h1>
-              <p className="mt-5 max-w-lg text-[17px] font-medium leading-8 text-[#f1f6ff] drop-shadow-[0_1px_8px_rgba(0,0,0,0.42)]">
-                {i18nService.t(step.subtitleKey)}
-              </p>
-
-              <div className="mt-9 flex items-center gap-3">
-                {!isFirstStep && (
-                  <button
-                    onClick={goBack}
-                    className="flex h-11 items-center gap-2 rounded-lg border border-white/[0.18] bg-[#111827]/90 px-5 text-sm font-semibold text-[#e5eefc] shadow-lg transition-colors hover:bg-[#1a2435] hover:text-white"
-                  >
-                    <ArrowLeftIcon className="h-4 w-4" />
-                    {i18nService.t('onboardingBack')}
-                  </button>
-                )}
-                {!isFinishStep && (
-                  <button
-                    onClick={goNext}
-                    className="flex h-11 items-center gap-2 rounded-lg bg-[#3f8cff] px-6 text-sm font-semibold text-white shadow-[0_16px_44px_rgba(72,133,255,0.42)] transition-colors hover:bg-[#2f7df3]"
-                  >
-                    {i18nService.t('onboardingNext')}
-                    <ArrowRightIcon className="h-4 w-4" />
-                  </button>
-                )}
-                {isFinishStep && (
-                  <button
-                    onClick={onStart}
-                    className="flex h-11 items-center gap-2 rounded-lg bg-[#3f8cff] px-6 text-sm font-semibold text-white shadow-[0_16px_44px_rgba(72,133,255,0.42)] transition-colors hover:bg-[#2f7df3]"
-                  >
-                    {i18nService.t('onboardingStart')}
-                    <RocketLaunchIcon className="h-4 w-4" />
-                  </button>
-                )}
-              </div>
-            </section>
-
-            <section className="relative min-h-[420px] overflow-hidden rounded-lg border border-[#d8e3f2] bg-[#f8fbff] p-6 text-[#101827] shadow-[0_28px_90px_rgba(0,0,0,0.5)]">
-              <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-[#2563eb] via-[#0891b2] to-[#7c3aed]" />
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="grid h-12 w-12 place-items-center rounded-lg border border-[#b8cef0] bg-[#e8f1ff] text-[#1d4f91]">
-                    <StepIcon className="h-6 w-6" />
-                  </div>
-                  <div>
-                    <div className="text-sm font-semibold text-[#526176]">
-                      {i18nService.t('onboardingStepLabel')
-                        .replace('{current}', String(stepIndex + 1))
-                        .replace('{total}', String(welcomeSteps.length))}
-                    </div>
-                    <div className="text-lg font-bold text-[#0b1628]">{i18nService.t(step.titleKey)}</div>
-                  </div>
-                </div>
-              </div>
-
-              {isFinishStep ? (
-                <div className="mt-8">
-                  <div className="rounded-lg border border-[#c9daf0] bg-white p-6 shadow-[0_12px_32px_rgba(15,23,42,0.08)]">
-                    <div className="flex items-center gap-4">
-                      <img
-                        src="logo.png"
-                        alt="LZClaw"
-                        width={56}
-                        height={56}
-                        className="rounded-lg"
-                        draggable={false}
-                      />
-                      <div>
-                        <h2 className="text-2xl font-bold text-[#0b1628]">{i18nService.t('onboardingStartCardTitle')}</h2>
-                        <p className="mt-1 text-sm font-medium leading-6 text-[#526176]">
-                          {i18nService.t('onboardingStartCardSubtitle')}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="mt-6 space-y-3">
-                      {visibleDetails.map((detail) => (
-                        <div
-                          key={detail}
-                          className="flex items-start gap-3 rounded-lg border border-[#d7e0ec] bg-[#f8fbff] p-3"
-                        >
-                          <CheckCircleIcon className="mt-0.5 h-5 w-5 shrink-0 text-[#2563eb]" />
-                          <p className="text-[15px] font-semibold leading-6 text-[#182439]">{detail}</p>
-                        </div>
-                      ))}
-                    </div>
-
-                    <div className="mt-7 space-y-3">
-                      <button
-                        onClick={onStart}
-                        className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-[#2563eb] px-5 text-base font-bold text-white shadow-[0_16px_34px_rgba(37,99,235,0.28)] transition-colors hover:bg-[#1d4ed8]"
-                      >
-                        <RocketLaunchIcon className="h-5 w-5" />
-                        {i18nService.t('onboardingStart')}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <div className="mt-8 space-y-4">
-                    {visibleDetails.map((detail, index) => (
-                      <div
-                        key={detail}
-                        className="flex items-start gap-3 rounded-lg border border-[#d7e0ec] bg-white p-4 shadow-[0_8px_24px_rgba(15,23,42,0.08)]"
-                        style={{ transitionDelay: `${index * 80}ms` }}
-                      >
-                        <div className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-md bg-[#e8f1ff] text-xs font-bold text-[#17467d]">
-                          {index + 1}
-                        </div>
-                        <p className="text-[15px] font-medium leading-6 text-[#182439]">{detail}</p>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="mt-8 rounded-lg border border-[#bfd4f2] bg-[#eaf3ff] p-4">
-                    <div className="mb-2 text-sm font-bold text-[#0b1628]">{i18nService.t('onboardingHintTitle')}</div>
-                    <p className="text-sm font-medium leading-6 text-[#26364f]">{i18nService.t('onboardingHintBody')}</p>
-                  </div>
-                </>
-              )}
-            </section>
+              <p className="mt-5 text-sm font-medium leading-6 text-[#88a9c0]">{step.shortTitle}</p>
+            </div>
           </div>
-        </main>
-      </div>
+
+          <article
+            key={step.titleKey}
+            className={`remove-app-drag relative ml-auto w-full max-w-[448px] rounded-lg border border-[#45dbff]/28 bg-[#04172a]/58 p-5 shadow-[0_28px_90px_rgba(0,0,0,0.46),0_0_0_1px_rgba(122,236,255,0.06)] backdrop-blur-xl sm:p-6 ${
+              motionDirection >= 0 ? 'animate-fade-in-up' : 'animate-fade-in-down'
+            }`}
+          >
+            <div className="absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-[#5ce7ff]/70 to-transparent" />
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="grid h-12 w-12 shrink-0 place-items-center rounded-lg border border-[#5ce7ff]/18 bg-[#062c46]/82 text-[#baf6ff] shadow-[0_0_26px_rgba(34,211,238,0.18)]">
+                  <StepIcon className="h-6 w-6" />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-xs font-bold uppercase text-[#5ce7ff]">
+                    {i18nService.t('onboardingStepLabel')
+                      .replace('{current}', String(stepIndex + 1))
+                      .replace('{total}', String(welcomeSteps.length))}
+                  </div>
+                  <div className="mt-1 text-sm font-semibold text-[#8ba4bb]">{step.label}</div>
+                </div>
+              </div>
+              <div className="text-5xl font-semibold leading-none text-[#5ce7ff]/34 sm:text-6xl">{step.eyebrow}</div>
+            </div>
+
+            <h1 className="mt-6 text-[28px] font-bold leading-tight text-white sm:text-[34px]">
+              {i18nService.t(step.titleKey)}
+            </h1>
+            <p className="mt-3 max-w-[390px] text-sm font-medium leading-6 text-[#c6d8ea] sm:text-[15px]">
+              {i18nService.t(step.subtitleKey)}
+            </p>
+
+            <div className="mt-6 flex items-start gap-3 rounded-lg border border-[#69e6ff]/18 bg-[#03111f]/58 px-4 py-3 text-[#f2f8ff] shadow-[inset_0_1px_0_rgba(125,233,255,0.08)]">
+              <div className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-[#083550] text-[#a8f1ff]">
+                <CheckCircleIcon className="h-[18px] w-[18px]" />
+              </div>
+              <p className="text-sm font-semibold leading-6">{highlight}</p>
+            </div>
+          </article>
+        </section>
+
+        <section className="relative z-20 mx-auto grid w-full max-w-6xl grid-cols-1 items-center gap-4 pt-4 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:gap-6">
+          <div className="order-2 flex justify-center sm:order-none sm:justify-start">
+            <button
+              onClick={goBack}
+              disabled={isFirstStep}
+              className="remove-app-drag inline-flex h-[52px] items-center gap-3 rounded-lg border border-white/12 bg-white/8 px-5 text-sm font-semibold text-[#dce9fb] shadow-[0_18px_42px_rgba(0,0,0,0.22)] transition-all duration-300 hover:-translate-y-0.5 hover:bg-white/12 disabled:pointer-events-none disabled:opacity-35"
+            >
+              <ArrowLeftIcon className="h-5 w-5" />
+              {i18nService.t('onboardingBack')}
+            </button>
+          </div>
+
+          <div className="order-1 min-w-0 sm:order-none">
+            <div className="mx-auto grid max-w-[620px] grid-cols-4 gap-1 rounded-lg border border-white/10 bg-[#03111f]/52 p-1.5 shadow-[0_18px_60px_rgba(0,0,0,0.32)] backdrop-blur-xl">
+              {welcomeSteps.map((item, index) => {
+                const active = index === stepIndex;
+                const completed = index < stepIndex;
+                const ItemIcon = item.icon;
+                return (
+                  <button
+                    key={item.titleKey}
+                    type="button"
+                    onClick={() => setActiveStep(index)}
+                    className={`remove-app-drag group flex min-w-0 items-center justify-center gap-2 rounded-lg px-2 py-2 text-left transition-all duration-300 sm:justify-start sm:px-3 ${
+                      active ? 'bg-[#0a3855] text-white shadow-[inset_0_0_0_1px_rgba(92,231,255,0.26)]' : 'text-[#8497aa] hover:bg-white/8 hover:text-[#dcefff]'
+                    }`}
+                  >
+                    <span
+                      className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg border transition-all duration-300 ${
+                        active
+                          ? 'border-[#5ce7ff]/60 bg-[#0e7490] text-white shadow-[0_0_24px_rgba(34,211,238,0.38)]'
+                          : completed
+                            ? 'border-[#65e6ff]/40 bg-[#07324b] text-[#b9f4ff]'
+                            : 'border-white/12 bg-[#071325] text-[#8ea0b8] group-hover:border-[#7dd3fc]/40'
+                      }`}
+                    >
+                      <ItemIcon className="h-[18px] w-[18px]" />
+                    </span>
+                    <span className="hidden min-w-0 sm:block">
+                      <span className="block text-[11px] font-bold leading-4 text-[#5ce7ff]/90">{item.eyebrow}</span>
+                      <span className="block truncate text-sm font-semibold">{item.label}</span>
+                    </span>
+                    <span className="text-xs font-bold sm:hidden">
+                      {index + 1}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="order-3 flex justify-center sm:order-none sm:justify-start">
+            <button
+              onClick={goNext}
+              className="remove-app-drag inline-flex h-[52px] items-center gap-4 rounded-full bg-[#ef4438] px-5 pl-6 text-sm font-semibold text-white shadow-[0_18px_48px_rgba(239,68,56,0.36)] transition-all duration-300 hover:-translate-y-0.5 hover:bg-[#ff513f]"
+            >
+              {isLastStep ? primaryActionLabel : i18nService.t('onboardingNext')}
+              <span className="grid h-10 w-10 place-items-center rounded-full bg-white/14">
+                {isLastStep ? <RocketLaunchIcon className="h-5 w-5" /> : <ArrowRightIcon className="h-5 w-5" />}
+              </span>
+            </button>
+          </div>
+        </section>
+      </main>
     </div>
   );
 };

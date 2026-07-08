@@ -1530,21 +1530,6 @@ interface IElectronAPI {
         restrictionHint?: string;
       }>;
     }>;
-    getPricingCatalog: () => Promise<{
-      success: boolean;
-      textModels?: Array<{
-        modelId: string;
-        modelName: string;
-        provider?: string;
-        providerLabel?: string;
-        description?: string;
-        supportsImage?: boolean;
-        supportsThinking?: boolean;
-        contextWindow?: number | null;
-        costMultiplier?: number;
-      }>;
-      error?: string;
-    }>;
     getProfileSummary: () => Promise<{ success: boolean; data?: ProfileSummaryData }>;
     getActiveClientBanner: () => Promise<{ success: boolean; data?: ClientBannerData | null }>;
     getActiveClientBanners: () => Promise<{ success: boolean; data?: ClientBannerData[] }>;

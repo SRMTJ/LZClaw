@@ -43,13 +43,14 @@ export const isTestModeEnabled = (): boolean => {
 };
 
 /**
- * Server API base URL — switches based on testMode.
+ * Server API base URL.
  * Used for auth exchange/refresh, models, proxy, etc.
  */
 export const getServerApiBaseUrl = (): string => {
   const envOverride = normalizeBaseUrl(process.env.LZCLAW_SERVER_API_BASE_URL);
   if (cachedEnterpriseServerApiBaseUrl) return cachedEnterpriseServerApiBaseUrl;
   if (envOverride) return envOverride;
+  if (!app.isPackaged) return 'http://127.0.0.1:8081';
   if (cachedAppConfigServerApiBaseUrl) return cachedAppConfigServerApiBaseUrl;
   return isTestModeEnabled()
     ? 'https://lobsterai-server.inner.youdao.com'

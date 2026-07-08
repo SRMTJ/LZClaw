@@ -36,11 +36,11 @@ describe('authLoginWindowPolicy', () => {
     const allowedOrigins = new Set(['http://127.0.0.1:8081']);
 
     expect(rememberAuthLoginRedirectOrigin(
-      'http://127.0.0.1:8000/login/oauth/authorize',
+      'http://127.0.0.1:8999/login/oauth/authorize',
       'http://127.0.0.1:8081/api/auth/workstation/sso/start',
       allowedOrigins,
     )).toBe(true);
-    expect(allowedOrigins.has('http://127.0.0.1:8000')).toBe(true);
+    expect(allowedOrigins.has('http://127.0.0.1:8999')).toBe(true);
 
     expect(rememberAuthLoginRedirectOrigin(
       'http://evil.example/login',

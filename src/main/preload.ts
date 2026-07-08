@@ -999,7 +999,6 @@ contextBridge.exposeInMainWorld('electron', {
     refreshToken: () => ipcRenderer.invoke('auth:refreshToken'),
     getAccessToken: () => ipcRenderer.invoke('auth:getAccessToken'),
     getModels: () => ipcRenderer.invoke('auth:getModels'),
-    getPricingCatalog: () => ipcRenderer.invoke(AuthIpcChannel.GetPricingCatalog),
     getProfileSummary: () => ipcRenderer.invoke('auth:getProfileSummary'),
     getActiveClientBanner: () => ipcRenderer.invoke('auth:getActiveClientBanner'),
     getActiveClientBanners: () => ipcRenderer.invoke('auth:getActiveClientBanners'),

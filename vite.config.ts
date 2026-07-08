@@ -71,13 +71,17 @@ function pdfJsStaticAssetsPlugin(): Plugin {
   };
 }
 
-export default defineConfig({
+export default defineConfig(async () => {
+  const { default: glsl } = await import('vite-plugin-glsl');
+
+  return {
   define: {
     // KaTeX ESM bundle references this compile-time constant.
     __VERSION__: JSON.stringify(katexVersion),
   },
   plugins: [
     react(),
+    glsl(),
     pdfJsStaticAssetsPlugin(),
     electron([
       {
@@ -158,4 +162,5 @@ export default defineConfig({
     },
   },
   clearScreen: false,
+  };
 });

@@ -6,6 +6,8 @@ vi.mock('electron', () => ({
   },
 }));
 
+import { app } from 'electron';
+
 import {
   getServerApiBaseUrl,
   refreshEndpointsTestMode,
@@ -25,6 +27,7 @@ class MemoryStore {
 
 describe('getServerApiBaseUrl', () => {
   beforeEach(() => {
+    vi.mocked(app).isPackaged = true;
     delete process.env.LZCLAW_SERVER_API_BASE_URL;
     refreshEndpointsTestMode(new MemoryStore() as any);
   });
@@ -92,5 +95,27 @@ describe('getServerApiBaseUrl', () => {
     refreshEndpointsTestMode(store as any);
 
     expect(getServerApiBaseUrl()).toBe('https://lobsterai-server.inner.youdao.com');
+  });
+
+  test('uses local AIZhongtai API by default in development', () => {
+    vi.mocked(app).isPackaged = false;
+
+    refreshEndpointsTestMode(new MemoryStore() as any);
+
+    expect(getServerApiBaseUrl()).toBe('http://127.0.0.1:8081');
+  });
+
+  test('uses local AIZhongtai API before app_config in development', () => {
+    vi.mocked(app).isPackaged = false;
+    const store = new MemoryStore();
+    store.set('app_config', {
+      auth: {
+        apiBaseUrl: 'https://stale-app-api.example.com/',
+      },
+    });
+
+    refreshEndpointsTestMode(store as any);
+
+    expect(getServerApiBaseUrl()).toBe('http://127.0.0.1:8081');
   });
 });
