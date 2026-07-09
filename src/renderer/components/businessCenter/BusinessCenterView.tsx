@@ -285,6 +285,30 @@ const parseDepartmentSortOrder = (value: string): number => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+const confirmBusinessAction = async ({
+  title,
+  detail,
+  confirmLabel,
+  type = 'question',
+}: {
+  title: string;
+  detail: string;
+  confirmLabel: string;
+  type?: 'question' | 'warning';
+}): Promise<boolean> => {
+  const result = await window.electron.dialog.showMessageBox({
+    type,
+    title,
+    message: title,
+    detail,
+    buttons: [confirmLabel, '取消'],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true,
+  });
+  return result.response === 0;
+};
+
 const MiniSparkline: React.FC<{ tone: Tone }> = ({ tone }) => {
   const color = toneClasses[tone].chart;
 
@@ -732,7 +756,13 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
     status: BusinessDepartmentStatus,
   ) => {
     const actionText = status === 'disabled' ? '停用' : '启用';
-    if (!window.confirm(`确定${actionText}「${department.name}」吗？`)) return;
+    const confirmed = await confirmBusinessAction({
+      title: `确定${actionText}组织节点？`,
+      detail: `即将${actionText}「${department.name}」。操作后组织架构列表会自动刷新。`,
+      confirmLabel: actionText,
+      type: status === 'disabled' ? 'warning' : 'question',
+    });
+    if (!confirmed) return;
     try {
       await businessCenterService.setDepartmentStatus(department.id, status, department.sortOrder);
       await refreshOrganizationData();
@@ -743,7 +773,13 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
   };
 
   const handleDeleteDepartment = async (department: BusinessDepartment) => {
-    if (!window.confirm(`确定删除「${department.name}」吗？删除后将不再显示在组织架构中。`)) return;
+    const confirmed = await confirmBusinessAction({
+      title: '确定删除组织节点？',
+      detail: `删除「${department.name}」后将不再显示在组织架构中。存在下级节点或员工归属时，系统会拒绝删除。`,
+      confirmLabel: '删除',
+      type: 'warning',
+    });
+    if (!confirmed) return;
     setIsDepartmentDeleting(true);
     try {
       await businessCenterService.deleteDepartment(department.id);
