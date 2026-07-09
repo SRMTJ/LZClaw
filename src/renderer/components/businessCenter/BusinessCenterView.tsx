@@ -425,7 +425,6 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
     active: i18nService.t('businessCenterOrgActive'),
     disabled: i18nService.t('businessCenterOrgDisabled'),
     add: i18nService.t('businessCenterOrgAdd'),
-    refresh: i18nService.t('businessCenterOrgRefresh'),
     code: i18nService.t('businessCenterOrgCode'),
     structure: i18nService.t('businessCenterOrgStructure'),
     manager: i18nService.t('businessCenterOrgManager'),
@@ -996,18 +995,10 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
               </button>
             </div>
           </div>
-          <div className="mt-4 flex flex-col gap-2 text-sm text-[#354560] sm:flex-row sm:items-center sm:justify-between">
+          <div className="mt-4 text-sm text-[#354560]">
             <span>
               共 {departments.length} 个组织节点（{orgText.active} {activeDepartments.length} 个，{orgText.disabled} {disabledDepartmentCount} 个）
             </span>
-            <button
-              type="button"
-              onClick={() => void refreshOrganizationData()}
-              className="inline-flex h-8 w-fit items-center gap-2 rounded-md border border-[#d8e1ee] bg-white px-3 text-xs font-semibold text-[#354560] transition-colors hover:border-blue-300 hover:bg-blue-50 hover:text-blue-600"
-            >
-              <ArrowPathIcon className={`h-4 w-4 ${isOrgLoading ? 'animate-spin' : ''}`} />
-              {orgText.refresh}
-            </button>
           </div>
         </div>
 
