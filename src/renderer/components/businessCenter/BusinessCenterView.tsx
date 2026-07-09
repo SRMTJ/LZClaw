@@ -414,8 +414,6 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
     || user?.phone?.trim()
     || user?.yid?.trim()
     || 'admin';
-  const businessBaseName = workspace?.name?.trim() || user?.enterpriseName?.trim() || '海豚买买';
-  const businessTitle = businessBaseName.includes('业务中心') ? businessBaseName : `${businessBaseName}业务中心`;
   const remainingTokens = formatCompactNumber(profileSummary?.totalCreditsRemaining ?? quota?.creditsRemaining);
   const currentRole = workspace?.role || 'employee';
   const canManageOrg = currentRole === 'owner' || currentRole === 'admin';
@@ -1449,8 +1447,7 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
                 {updateBadge}
               </div>
             )}
-            <div className="flex min-w-0 items-center gap-2">
-              <BuildingOffice2Icon className="h-5 w-5 shrink-0 text-primary" />
+            <div className="flex min-w-0 items-center">
               <h1 className="truncate text-lg font-semibold text-foreground">{i18nService.t('businessCenter')}</h1>
             </div>
           </div>
@@ -1492,9 +1489,8 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
               {updateBadge}
             </div>
           )}
-          <div className="flex min-w-0 items-center gap-2">
-            <BuildingOffice2Icon className="h-5 w-5 shrink-0 text-blue-600" />
-            <h1 className="truncate text-lg font-semibold text-[#0d1730]">{businessTitle}</h1>
+          <div className="flex min-w-0 items-center">
+            <h1 className="truncate text-lg font-semibold text-[#0d1730]">{i18nService.t('businessCenter')}</h1>
           </div>
         </div>
         <WindowTitleBar inline />
