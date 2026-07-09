@@ -1052,13 +1052,8 @@ interface IElectronAPI {
     ) => Promise<{ success: boolean; dataUrl?: string; error?: string }>;
     showMessageBox: (options: {
       message: string;
-      detail?: string;
       type?: 'none' | 'info' | 'error' | 'question' | 'warning';
       title?: string;
-      buttons?: string[];
-      defaultId?: number;
-      cancelId?: number;
-      noLink?: boolean;
     }) => Promise<{ response: number }>;
   };
   shell: {

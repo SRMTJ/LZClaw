@@ -614,13 +614,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('dialog:generateThumbnail', filePath),
     showMessageBox: (options: {
       message: string;
-      detail?: string;
       type?: 'none' | 'info' | 'error' | 'question' | 'warning';
       title?: string;
-      buttons?: string[];
-      defaultId?: number;
-      cancelId?: number;
-      noLink?: boolean;
     }) => ipcRenderer.invoke('dialog:showMessageBox', options),
   },
   shell: {

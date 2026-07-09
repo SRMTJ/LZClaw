@@ -9729,13 +9729,8 @@ if (!gotTheLock) {
       event,
       options: {
         message: string;
-        detail?: string;
         type?: 'none' | 'info' | 'error' | 'question' | 'warning';
         title?: string;
-        buttons?: string[];
-        defaultId?: number;
-        cancelId?: number;
-        noLink?: boolean;
       },
     ) => {
       const ownerWindow = BrowserWindow.fromWebContents(event.sender);
@@ -9744,11 +9739,7 @@ if (!gotTheLock) {
         type: options.type || 'warning',
         title: options.title || '',
         message: options.message,
-        detail: options.detail,
-        buttons: options.buttons && options.buttons.length > 0 ? options.buttons : ['OK'],
-        defaultId: options.defaultId,
-        cancelId: options.cancelId,
-        noLink: options.noLink,
+        buttons: ['OK'],
       });
     },
   );

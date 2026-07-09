@@ -9,6 +9,7 @@ import {
   CircleStackIcon,
   CubeIcon,
   EllipsisHorizontalIcon,
+  ExclamationTriangleIcon,
   HomeIcon,
   KeyIcon,
   MagnifyingGlassIcon,
@@ -55,6 +56,7 @@ type DepartmentTreeNode = BusinessDepartment & {
 
 type DepartmentStatusFilter = 'all' | BusinessDepartmentStatus;
 type DepartmentModalMode = 'create' | 'edit';
+type DepartmentConfirmAction = 'enable' | 'disable' | 'delete';
 
 interface DepartmentFormState {
   name: string;
@@ -63,6 +65,11 @@ interface DepartmentFormState {
   managerEnterpriseUserId: string;
   sortOrder: string;
   status: BusinessDepartmentStatus;
+}
+
+interface DepartmentConfirmState {
+  action: DepartmentConfirmAction;
+  department: BusinessDepartment;
 }
 
 const EMPLOYEE_PAGE_SIZE = 20;
@@ -285,30 +292,6 @@ const parseDepartmentSortOrder = (value: string): number => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
-const confirmBusinessAction = async ({
-  title,
-  detail,
-  confirmLabel,
-  type = 'question',
-}: {
-  title: string;
-  detail: string;
-  confirmLabel: string;
-  type?: 'question' | 'warning';
-}): Promise<boolean> => {
-  const result = await window.electron.dialog.showMessageBox({
-    type,
-    title,
-    message: title,
-    detail,
-    buttons: [confirmLabel, '取消'],
-    defaultId: 1,
-    cancelId: 1,
-    noLink: true,
-  });
-  return result.response === 0;
-};
-
 const MiniSparkline: React.FC<{ tone: Tone }> = ({ tone }) => {
   const color = toneClasses[tone].chart;
 
@@ -392,6 +375,79 @@ const UsageItem: React.FC<UsageItemProps> = ({
   </div>
 );
 
+interface DepartmentConfirmModalProps {
+  state: DepartmentConfirmState;
+  isWorking: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}
+
+const DepartmentConfirmModal: React.FC<DepartmentConfirmModalProps> = ({
+  state,
+  isWorking,
+  onConfirm,
+  onCancel,
+}) => {
+  const isDelete = state.action === 'delete';
+  const isDisable = state.action === 'disable';
+  const actionLabel = isDelete ? '删除' : isDisable ? '停用' : '启用';
+  const title = isDelete
+    ? '删除组织节点'
+    : `${actionLabel}组织节点`;
+  const message = isDelete
+    ? `确定要删除组织节点「${state.department.name}」吗？存在下级节点或员工归属时，系统会拒绝删除。`
+    : `确定要${actionLabel}组织节点「${state.department.name}」吗？`;
+  const confirmClassName = isDelete || isDisable
+    ? 'bg-red-500 text-white hover:bg-red-600'
+    : 'bg-blue-600 text-white hover:bg-blue-700';
+
+  return (
+    <div
+      className="fixed inset-0 z-[9999] flex items-center justify-center"
+      onClick={isWorking ? undefined : onCancel}
+    >
+      <div className="absolute inset-0 bg-black/40 dark:bg-black/60" />
+      <div
+        className="relative w-80 rounded-xl border border-border bg-surface p-5 shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="business-center-department-confirm-title"
+      >
+        <div className="flex flex-col items-center text-center">
+          <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-red-100 dark:bg-red-900/30">
+            <ExclamationTriangleIcon className="h-5 w-5 text-red-500" />
+          </div>
+          <h3 id="business-center-department-confirm-title" className="mb-2 text-sm font-semibold text-foreground">
+            {title}
+          </h3>
+          <p className="mb-5 text-sm text-secondary">
+            {message}
+          </p>
+          <div className="flex w-full items-center gap-3">
+            <button
+              type="button"
+              onClick={onCancel}
+              disabled={isWorking}
+              className="flex-1 rounded-lg border border-border px-4 py-2 text-sm text-foreground transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {i18nService.t('cancel')}
+            </button>
+            <button
+              type="button"
+              onClick={onConfirm}
+              disabled={isWorking}
+              className={`flex-1 rounded-lg px-4 py-2 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${confirmClassName}`}
+            >
+              {isWorking ? '处理中' : actionLabel}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
   isSidebarCollapsed,
   onToggleSidebar,
@@ -419,9 +475,10 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
     mode: DepartmentModalMode;
     department?: BusinessDepartment;
   } | null>(null);
+  const [departmentConfirm, setDepartmentConfirm] = useState<DepartmentConfirmState | null>(null);
   const [departmentForm, setDepartmentForm] = useState<DepartmentFormState>(() => createEmptyDepartmentForm());
   const [isDepartmentSaving, setIsDepartmentSaving] = useState(false);
-  const [isDepartmentDeleting, setIsDepartmentDeleting] = useState(false);
+  const [isDepartmentActionRunning, setIsDepartmentActionRunning] = useState(false);
   const [employeeForm, setEmployeeForm] = useState({
     username: '',
     password: '',
@@ -755,40 +812,50 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
     department: BusinessDepartment,
     status: BusinessDepartmentStatus,
   ) => {
-    const actionText = status === 'disabled' ? '停用' : '启用';
-    const confirmed = await confirmBusinessAction({
-      title: `确定${actionText}组织节点？`,
-      detail: `即将${actionText}「${department.name}」。操作后组织架构列表会自动刷新。`,
-      confirmLabel: actionText,
-      type: status === 'disabled' ? 'warning' : 'question',
+    setDepartmentConfirm({
+      action: status === 'disabled' ? 'disable' : 'enable',
+      department,
     });
-    if (!confirmed) return;
+  };
+
+  const handleDeleteDepartment = async (department: BusinessDepartment) => {
+    setDepartmentConfirm({ action: 'delete', department });
+  };
+
+  const handleCancelDepartmentAction = () => {
+    if (isDepartmentActionRunning) return;
+    setDepartmentConfirm(null);
+  };
+
+  const handleConfirmDepartmentAction = async () => {
+    if (!departmentConfirm) return;
+    const { action, department } = departmentConfirm;
+    setIsDepartmentActionRunning(true);
+    if (action === 'delete') {
+      try {
+        await businessCenterService.deleteDepartment(department.id);
+        await refreshOrganizationData();
+        showToast(orgText.deleted);
+        setDepartmentConfirm(null);
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : orgText.deleteFailed);
+      } finally {
+        setIsDepartmentActionRunning(false);
+      }
+      return;
+    }
+
+    const status: BusinessDepartmentStatus = action === 'disable' ? 'disabled' : 'active';
+    const actionText = status === 'disabled' ? '停用' : '启用';
     try {
       await businessCenterService.setDepartmentStatus(department.id, status, department.sortOrder);
       await refreshOrganizationData();
       showToast(`组织节点已${actionText}`);
+      setDepartmentConfirm(null);
     } catch (error) {
       showToast(error instanceof Error ? error.message : `${actionText}组织节点失败`);
-    }
-  };
-
-  const handleDeleteDepartment = async (department: BusinessDepartment) => {
-    const confirmed = await confirmBusinessAction({
-      title: '确定删除组织节点？',
-      detail: `删除「${department.name}」后将不再显示在组织架构中。存在下级节点或员工归属时，系统会拒绝删除。`,
-      confirmLabel: '删除',
-      type: 'warning',
-    });
-    if (!confirmed) return;
-    setIsDepartmentDeleting(true);
-    try {
-      await businessCenterService.deleteDepartment(department.id);
-      await refreshOrganizationData();
-      showToast(orgText.deleted);
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : orgText.deleteFailed);
     } finally {
-      setIsDepartmentDeleting(false);
+      setIsDepartmentActionRunning(false);
     }
   };
 
@@ -1114,7 +1181,7 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
                         </button>
                         <button
                           type="button"
-                          disabled={!canManageOrg || isDepartmentDeleting}
+                          disabled={!canManageOrg || isDepartmentActionRunning}
                           onClick={() => void handleDeleteDepartment(department)}
                           className="text-xs font-semibold text-blue-600 transition-colors hover:text-red-600 disabled:cursor-not-allowed disabled:text-[#94a3b8]"
                         >
@@ -1589,6 +1656,14 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
             : activeTab === 'employees'
               ? employeesContent
               : overviewContent}
+          {departmentConfirm && (
+            <DepartmentConfirmModal
+              state={departmentConfirm}
+              isWorking={isDepartmentActionRunning}
+              onConfirm={() => void handleConfirmDepartmentAction()}
+              onCancel={handleCancelDepartmentAction}
+            />
+          )}
         </main>
       </div>
     </div>
