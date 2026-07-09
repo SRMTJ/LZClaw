@@ -105,6 +105,12 @@ const unwrap = <T>(result: { success: boolean; data?: T; error?: string }, fallb
   return result.data;
 };
 
+const ensureSuccess = (result: { success: boolean; error?: string }, fallback: string): void => {
+  if (!result.success) {
+    throw new Error(normalizeBusinessCenterError(result.error, fallback));
+  }
+};
+
 class BusinessCenterService {
   async getDepartments(): Promise<BusinessDepartment[]> {
     return unwrap(await window.electron.businessCenter.getDepartments(), '加载组织架构失败');
@@ -118,16 +124,19 @@ class BusinessCenterService {
     return unwrap(await window.electron.businessCenter.updateDepartment(id, { ...input }), '更新组织节点失败');
   }
 
-  async setDepartmentStatus(id: string, status: BusinessDepartmentStatus, sortOrder = 0): Promise<BusinessDepartment> {
-    return this.updateDepartment(id, { status, sortOrder });
+  async setDepartmentStatus(id: string, status: BusinessDepartmentStatus, sortOrder = 0): Promise<void> {
+    ensureSuccess(
+      await window.electron.businessCenter.updateDepartment(id, { status, sortOrder }),
+      status === 'disabled' ? '停用组织节点失败' : '启用组织节点失败',
+    );
   }
 
-  async disableDepartment(id: string, sortOrder = 0): Promise<BusinessDepartment> {
-    return this.setDepartmentStatus(id, 'disabled', sortOrder);
+  async disableDepartment(id: string, sortOrder = 0): Promise<void> {
+    await this.setDepartmentStatus(id, 'disabled', sortOrder);
   }
 
-  async deleteDepartment(id: string): Promise<BusinessDepartment> {
-    return unwrap(await window.electron.businessCenter.deleteDepartment(id), '删除组织节点失败');
+  async deleteDepartment(id: string): Promise<void> {
+    ensureSuccess(await window.electron.businessCenter.deleteDepartment(id), '删除组织节点失败');
   }
 
   async getEmployees(query: Record<string, unknown> = {}): Promise<BusinessEmployeeList> {

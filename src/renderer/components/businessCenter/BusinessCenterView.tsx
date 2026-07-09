@@ -850,7 +850,6 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
     try {
       await businessCenterService.setDepartmentStatus(department.id, status, department.sortOrder);
       await refreshOrganizationData();
-      showToast(`组织节点已${actionText}`);
       setDepartmentConfirm(null);
     } catch (error) {
       showToast(error instanceof Error ? error.message : `${actionText}组织节点失败`);

@@ -4017,7 +4017,21 @@ if (!gotTheLock) {
         message?: string;
         error?: { message?: string };
       } | null;
-      const body = await resp.json().catch((): null => null) as WorkstationResponseBody;
+      const responseText = await resp.text();
+      if (!responseText.trim()) {
+        return resp.ok
+          ? { success: true }
+          : { success: false, error: `Request failed: ${resp.status}` };
+      }
+      let body: WorkstationResponseBody;
+      try {
+        body = JSON.parse(responseText) as WorkstationResponseBody;
+      } catch {
+        return {
+          success: false,
+          error: resp.ok ? 'Invalid workstation response' : `Request failed: ${resp.status}`,
+        };
+      }
       if (!resp.ok || body?.code !== 0) {
         return {
           success: false,
