@@ -5,8 +5,6 @@ import {
   CheckCircleIcon,
   ExclamationCircleIcon,
   LockClosedIcon,
-  ServerStackIcon,
-  ShieldCheckIcon,
   UserCircleIcon,
 } from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useMemo,useRef, useState } from 'react';
@@ -102,25 +100,26 @@ type MainView = 'cowork' | 'skills' | 'scheduledTasks' | 'kits' | 'mcp' | 'busin
 const INIT_STEP_TIMEOUT_MS_WINDOWS = 24_000;
 const INIT_STEP_TIMEOUT_MS_DEFAULT = 16_000;
 const SCHEDULED_TASK_INIT_TIMEOUT_MS = 15_000;
-const shouldAlwaysShowOnboardingOnStartup = import.meta.env.DEV;
 
-const loginFeatureItems = [
-  {
-    icon: ShieldCheckIcon,
-    title: '企业身份',
-    body: '账号验证通过后换取工作站会话。',
-  },
-  {
-    icon: ServerStackIcon,
-    title: '默认工作区',
-    body: '登录后自动进入当前企业工作区。',
-  },
-  {
-    icon: CheckCircleIcon,
-    title: '模型额度',
-    body: '可用模型和 Token 余额随账号同步。',
-  },
-];
+type EnterpriseConfig = {
+  ui?: Record<string, 'hide' | 'disable' | 'readonly'>;
+  onboarding?: {
+    enabled?: boolean;
+  };
+  disableUpdate?: boolean;
+} | null;
+
+const isOnboardingEnabledValue = (value: unknown): boolean => {
+  return value === true || value === 'true' || value === 1 || value === '1';
+};
+
+const resolveOnboardingEnabled = (enterpriseConfig: EnterpriseConfig, storedValue: unknown): boolean => {
+  if (typeof enterpriseConfig?.onboarding?.enabled === 'boolean') {
+    return enterpriseConfig.onboarding.enabled;
+  }
+
+  return isOnboardingEnabledValue(storedValue);
+};
 
 const LoginRequiredScreen: React.FC<{
   onPasswordLogin: (account: string, password: string) => Promise<void>;
@@ -167,10 +166,10 @@ const LoginRequiredScreen: React.FC<{
         }`}
       >
         <div className="mx-auto grid w-full max-w-6xl grid-cols-1 items-center gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(360px,430px)]">
-          <section className="hidden max-w-[430px] self-end pb-14 lg:block">
+          <section className="hidden max-w-[390px] self-end pb-16 lg:block">
             <div className="inline-flex items-center gap-2 rounded-full border border-[#4bdcff]/18 bg-[#02172b]/42 px-4 py-2 text-xs font-bold uppercase text-[#8cecff] shadow-[0_0_32px_rgba(34,211,238,0.12)] backdrop-blur-md">
               <span className="h-1.5 w-1.5 rounded-full bg-[#5ce7ff] shadow-[0_0_16px_rgba(92,231,255,0.9)]" />
-              Cyber-Ocean AI Workspace
+              LZClaw 工作站
             </div>
             <img
               src="logo.png"
@@ -181,28 +180,11 @@ const LoginRequiredScreen: React.FC<{
               draggable={false}
             />
             <h1 className="mt-7 text-[42px] font-bold leading-tight text-white">
-              登录工作台
+              企业 AI 工作台
             </h1>
             <p className="mt-4 text-sm font-medium leading-6 text-[#b9cce2]">
-              使用企业账号进入默认工作区，模型、额度和本地 Agent 能力随账号同步。
+              使用企业账号进入默认工作区，模型和额度随账号同步。
             </p>
-
-            <div className="mt-8 grid gap-3">
-              {loginFeatureItems.map((item) => {
-                const ItemIcon = item.icon;
-                return (
-                  <div key={item.title} className="flex items-center gap-3 text-[#dcefff]">
-                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-[#5ce7ff]/18 bg-[#062c46]/72 text-[#baf6ff] shadow-[0_0_24px_rgba(34,211,238,0.14)]">
-                      <ItemIcon className="h-5 w-5" />
-                    </span>
-                    <span>
-                      <span className="block text-sm font-bold text-white">{item.title}</span>
-                      <span className="mt-0.5 block text-xs font-medium leading-5 text-[#8ba4bb]">{item.body}</span>
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
           </section>
 
           <section className="remove-app-drag relative mx-auto w-full max-w-[430px] rounded-lg border border-[#45dbff]/28 bg-[#04172a]/64 p-5 shadow-[0_28px_90px_rgba(0,0,0,0.48),0_0_0_1px_rgba(122,236,255,0.06)] backdrop-blur-xl sm:p-6">
@@ -214,29 +196,17 @@ const LoginRequiredScreen: React.FC<{
                   <UserCircleIcon className="h-6 w-6" />
                 </div>
                 <div className="min-w-0">
-                  <div className="text-xs font-bold uppercase text-[#5ce7ff]">Enterprise Account</div>
+                  <div className="text-xs font-bold text-[#5ce7ff]">企业账号</div>
                   <div className="mt-1 text-sm font-semibold text-[#8ba4bb]">LZClaw 企业工作站</div>
                 </div>
               </div>
               <BuildingOffice2Icon className="h-7 w-7 text-[#5ce7ff]/42" />
             </div>
 
-            <h1 className="mt-6 text-[28px] font-bold leading-tight text-white sm:text-[32px]">使用企业账号登录</h1>
+            <h1 className="mt-6 text-[28px] font-bold leading-tight text-white sm:text-[32px]">企业账号登录</h1>
             <p className="mt-3 text-sm font-medium leading-6 text-[#c6d8ea]">
-              登录后自动进入默认工作区，无需提前选择企业。
+              登录后进入默认工作区。
             </p>
-
-            <div className="mt-5 grid grid-cols-3 gap-2 rounded-lg border border-[#69e6ff]/14 bg-[#03111f]/48 p-1.5">
-              {loginFeatureItems.map((item) => {
-                const ItemIcon = item.icon;
-                return (
-                  <div key={item.title} className="flex min-w-0 flex-col items-center gap-1 rounded-lg px-2 py-2 text-center text-[#9fb6cc]">
-                    <ItemIcon className="h-5 w-5 text-[#9ef1ff]" />
-                    <span className="w-full truncate text-xs font-semibold">{item.title}</span>
-                  </div>
-                );
-              })}
-            </div>
 
             {errorMessage && (
               <div className="mt-5 flex items-start gap-2 rounded-lg border border-red-400/30 bg-red-500/12 px-3 py-2 text-sm leading-5 text-red-100">
@@ -282,16 +252,16 @@ const LoginRequiredScreen: React.FC<{
                 className="mt-2 inline-flex h-[52px] items-center justify-center gap-3 rounded-full bg-[#ef4438] px-5 text-sm font-semibold text-white shadow-[0_18px_48px_rgba(239,68,56,0.36)] transition-all duration-300 hover:-translate-y-0.5 hover:bg-[#ff513f] disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:translate-y-0"
               >
                 {submittingMode === 'password' && <ArrowPathIcon className="h-4 w-4 animate-spin" />}
-                {submittingMode === 'password' ? '正在登录' : '登录并进入工作区'}
+                {submittingMode === 'password' ? '正在登录' : '登录'}
               </button>
             </form>
 
-            <div className="mt-5 flex items-start gap-3 rounded-lg border border-[#69e6ff]/18 bg-[#03111f]/58 px-4 py-3 text-[#f2f8ff] shadow-[inset_0_1px_0_rgba(125,233,255,0.08)]">
-              <div className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-[#083550] text-[#a8f1ff]">
-                <CheckCircleIcon className="h-[18px] w-[18px]" />
+            <div className="mt-5 flex items-center gap-2 rounded-lg border border-[#69e6ff]/18 bg-[#03111f]/58 px-4 py-3 text-[#cde8f5] shadow-[inset_0_1px_0_rgba(125,233,255,0.08)]">
+              <div className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-[#083550] text-[#a8f1ff]">
+                <CheckCircleIcon className="h-4 w-4" />
               </div>
-              <p className="text-xs font-semibold leading-5 text-[#cde8f5]">
-                仅保存 AIZhongtai 工作站业务会话，不保存 Casdoor 身份 Token。
+              <p className="text-xs font-semibold leading-5">
+                仅保存业务会话，不保存身份 Token。
               </p>
             </div>
           </section>
@@ -323,10 +293,7 @@ const App: React.FC = () => {
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [privacyAgreed, setPrivacyAgreed] = useState<boolean | null>(null);
   const [showWelcome, setShowWelcome] = useState(false);
-  const [enterpriseConfig, setEnterpriseConfig] = useState<{
-    ui?: Record<string, 'hide' | 'disable' | 'readonly'>;
-    disableUpdate?: boolean;
-  } | null>(null);
+  const [enterpriseConfig, setEnterpriseConfig] = useState<EnterpriseConfig>(null);
   const toastTimerRef = useRef<number | null>(null);
   const hasInitialized = useRef(false);
   const hasReportedAppStartedRef = useRef(false);
@@ -364,6 +331,17 @@ const App: React.FC = () => {
     },
     []
   );
+
+  const shouldShowOnboarding = useCallback(async (config: EnterpriseConfig): Promise<boolean> => {
+    const enabledValue = await window.electron.store.get(OnboardingState.EnabledKey);
+    const onboardingEnabled = resolveOnboardingEnabled(config, enabledValue);
+    if (!onboardingEnabled) {
+      return false;
+    }
+
+    const completedOnboardingVersion = await window.electron.store.get(OnboardingState.CompletionKey);
+    return completedOnboardingVersion !== OnboardingState.Version;
+  }, []);
 
   // 初始化应用
   useEffect(() => {
@@ -452,12 +430,9 @@ const App: React.FC = () => {
         const hasAgreedToPrivacy = agreed === true;
         setPrivacyAgreed(hasAgreedToPrivacy);
         if (hasAgreedToPrivacy) {
-          if (shouldAlwaysShowOnboardingOnStartup) {
-            setShowWelcome(true);
-          } else {
-            const completedOnboardingVersion = await window.electron.store.get(OnboardingState.CompletionKey);
-            setShowWelcome(completedOnboardingVersion !== OnboardingState.Version);
-          }
+          setShowWelcome(await shouldShowOnboarding(entConfig));
+        } else {
+          setShowWelcome(false);
         }
         mark('privacy check done');
 
@@ -492,7 +467,7 @@ const App: React.FC = () => {
     };
 
     void initializeApp();
-  }, [dispatch, waitWithTimeout]);
+  }, [dispatch, shouldShowOnboarding, waitWithTimeout]);
 
   useEffect(() => {
     const unsubscribe = i18nService.subscribe(() => {
@@ -824,8 +799,8 @@ const App: React.FC = () => {
   const handlePrivacyAccept = useCallback(async () => {
     await window.electron.store.set('privacy_agreed', true);
     setPrivacyAgreed(true);
-    setShowWelcome(true);
-  }, []);
+    setShowWelcome(await shouldShowOnboarding(enterpriseConfig));
+  }, [enterpriseConfig, shouldShowOnboarding]);
 
   const handlePrivacyReject = useCallback(() => {
     // 立刻隐藏窗口，让用户感觉立即关闭
@@ -833,9 +808,7 @@ const App: React.FC = () => {
   }, []);
 
   const completeWelcome = useCallback(async () => {
-    if (!shouldAlwaysShowOnboardingOnStartup) {
-      await window.electron.store.set(OnboardingState.CompletionKey, OnboardingState.Version);
-    }
+    await window.electron.store.set(OnboardingState.CompletionKey, OnboardingState.Version);
     setShowWelcome(false);
   }, []);
 

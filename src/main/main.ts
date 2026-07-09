@@ -5001,12 +5001,79 @@ if (!gotTheLock) {
     try {
       const body = await resp.json() as {
         message?: string;
-        error?: { message?: string };
+        error?: { code?: string; message?: string };
       };
-      return body.error?.message || body.message || fallback;
+      return localizeWorkstationError(body.error?.message || body.message || fallback, body.error?.code);
     } catch {
-      return fallback;
+      return localizeWorkstationError(fallback);
     }
+  };
+
+  const localizeWorkstationError = (message: string, code?: string): string => {
+    const normalizedCode = typeof code === 'string' ? code.trim().toUpperCase() : '';
+    const normalizedMessage = String(message || '').trim();
+    const lowerMessage = normalizedMessage.toLowerCase();
+
+    const byCode: Record<string, string> = {
+      CASDOOR_NOT_CONFIGURED: '企业登录服务未配置，请检查 Casdoor 配置。',
+      INVALID_REDIRECT_URI: '登录回调地址不合法，请检查客户端配置。',
+      STATE_ERROR: '创建登录状态失败，请稍后重试。',
+      MISSING_CODE: '登录回调缺少授权码，请重新登录。',
+      INVALID_STATE: '登录状态已失效，请重新登录。',
+      CASDOOR_EXCHANGE_FAILED: 'Casdoor 授权失败，请重新登录。',
+      CODE_ERROR: '创建登录凭证失败，请稍后重试。',
+      SESSION_ERROR: '保存登录会话失败，请稍后重试。',
+      REDIRECT_ERROR: '生成登录回调地址失败，请检查服务配置。',
+      VALIDATION_ERROR: '登录参数不完整，请检查账号和密码。',
+      INVALID_CREDENTIALS: '账号或密码错误。',
+      CASDOOR_PASSWORD_LOGIN_FAILED: 'Casdoor 密码登录失败，请检查 Casdoor 应用和账号配置。',
+      UNAUTHORIZED: '登录状态已失效，请重新登录。',
+      ENTERPRISE_USER_NOT_MAPPED: '当前账号未绑定企业成员，请先在业务后台添加员工。',
+      INVALID_CODE: '登录凭证无效，请重新登录。',
+      CODE_USED: '登录凭证已使用，请重新登录。',
+      CODE_EXPIRED: '登录凭证已过期，请重新登录。',
+      ENTERPRISE_DISABLED: '当前企业已停用，无法登录。',
+      ENTERPRISE_EXPIRED: '当前企业已过期，无法登录。',
+      ENTERPRISE_USER_DISABLED: '当前员工账号已停用，无法登录。',
+      INVALID_IDENTITY_PROVIDER: '当前员工账号未绑定企业身份登录。',
+      WORKSPACE_NOT_ALLOWED: '当前账号无权进入该工作区。',
+      TOKEN_ERROR: '生成登录令牌失败，请稍后重试。',
+      INTERNAL_ERROR: '服务异常，请稍后重试。',
+      FORBIDDEN: '当前账号无权限执行该操作。',
+      NOT_FOUND: '请求的数据不存在。',
+      CONFLICT: '数据已存在或状态冲突，请刷新后重试。',
+    };
+
+    if (normalizedCode && byCode[normalizedCode]) {
+      if (
+        normalizedCode === 'CASDOOR_PASSWORD_LOGIN_FAILED' &&
+        (lowerMessage.includes('client_id') || lowerMessage.includes('client id'))
+      ) {
+        return 'Casdoor 应用 client_id 无效，请检查 AIZhongtai 的 Casdoor 配置。';
+      }
+      return byCode[normalizedCode];
+    }
+
+    if (lowerMessage.includes('client_id') || lowerMessage.includes('client id')) {
+      return 'Casdoor 应用 client_id 无效，请检查 AIZhongtai 的 Casdoor 配置。';
+    }
+    if (lowerMessage.includes('the user does not exist')) {
+      return '账号不存在，请先在 Casdoor 和业务后台创建并绑定员工。';
+    }
+    if (lowerMessage.includes('invalid account or password') || lowerMessage.includes('invalid credentials')) {
+      return '账号或密码错误。';
+    }
+    if (lowerMessage.includes('not mapped to an enterprise user')) {
+      return '当前账号未绑定企业成员，请先在业务后台添加员工。';
+    }
+    if (lowerMessage.includes('failed to fetch') || lowerMessage.includes('network')) {
+      return '无法连接企业登录服务，请确认 AIZhongtai API 已启动。';
+    }
+    if (lowerMessage.startsWith('exchange failed')) {
+      return '登录换取会话失败，请重新登录。';
+    }
+
+    return normalizedMessage || '操作失败，请稍后重试。';
   };
 
   const exchangeAuthCode = async (code: string) => {
@@ -5020,7 +5087,7 @@ if (!gotTheLock) {
         body: JSON.stringify(withKeyfromBody({ code })),
       });
       if (!resp.ok) {
-        return { success: false, error: await readWorkstationError(resp, `Exchange failed: ${resp.status}`) };
+        return { success: false, error: await readWorkstationError(resp, `登录换取会话失败: ${resp.status}`) };
       }
       const body = (await resp.json()) as {
         code: number;
@@ -10677,12 +10744,32 @@ if (!gotTheLock) {
       }
     }, 30000);
 
+    const openMainWindowDevTools = (reason: string, delayMs = 0) => {
+      if (!isDev) return;
+
+      setTimeout(() => {
+        const win = mainWindow;
+        if (!win || win.isDestroyed()) return;
+
+        const webContents = win.webContents;
+        if (webContents.isDestroyed() || webContents.isDevToolsOpened()) return;
+
+        try {
+          webContents.openDevTools({ mode: 'detach', activate: true });
+          console.log(`[Main] opened DevTools after ${reason}`);
+        } catch (err) {
+          console.warn(`[Main] failed to open DevTools after ${reason}:`, err);
+        }
+      }, delayMs);
+    };
+
     // 清除超时
     mainWindow.webContents.once('did-finish-load', () => {
       clearTimeout(loadTimeout);
     });
     mainWindow.webContents.on('did-finish-load', () => {
       windowStatePersist.emitState();
+      openMainWindowDevTools('did-finish-load', 100);
       if (openClawEngineManager && !mainWindow?.isDestroyed()) {
         mainWindow.webContents.send(
           OpenClawEngineIpc.OnProgress,
@@ -10739,9 +10826,6 @@ if (!gotTheLock) {
       };
 
       tryLoadURL();
-
-      // 打开开发者工具
-      mainWindow.webContents.openDevTools();
     } else {
       // 生产环境
       mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
@@ -10784,6 +10868,7 @@ if (!gotTheLock) {
       if (!isAutoLaunched()) {
         mainWindow?.show();
       }
+      openMainWindowDevTools('ready-to-show', 250);
       // Initialize main-process i18n from stored language before creating UI elements.
       const initLang = getStore().get<{ language?: string }>('app_config')?.language;
       setLanguage(initLang === 'en' ? 'en' : 'zh');

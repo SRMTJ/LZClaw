@@ -1,13 +1,14 @@
 import {
   ArrowPathIcon,
+  ArrowUpRightIcon,
   BellIcon,
   BoltIcon,
   BuildingOffice2Icon,
   CalendarDaysIcon,
-  CheckCircleIcon,
   ChevronRightIcon,
   CircleStackIcon,
   CubeIcon,
+  EllipsisHorizontalIcon,
   HomeIcon,
   KeyIcon,
   MagnifyingGlassIcon,
@@ -18,6 +19,7 @@ import {
   Squares2X2Icon,
   UserGroupIcon,
   UsersIcon,
+  XMarkIcon,
 } from '@heroicons/react/24/outline';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSelector } from 'react-redux';
@@ -26,6 +28,7 @@ import { authService } from '../../services/auth';
 import {
   businessCenterService,
   type BusinessDepartment,
+  type BusinessDepartmentStatus,
   type BusinessEmployee,
 } from '../../services/businessCenter';
 import { i18nService } from '../../services/i18n';
@@ -50,8 +53,28 @@ type DepartmentTreeNode = BusinessDepartment & {
   depth: number;
 };
 
+type DepartmentStatusFilter = 'all' | BusinessDepartmentStatus;
+type DepartmentModalMode = 'create' | 'edit';
+
+interface DepartmentFormState {
+  name: string;
+  code: string;
+  parentId: string;
+  managerEnterpriseUserId: string;
+  sortOrder: string;
+  status: BusinessDepartmentStatus;
+}
+
 const EMPLOYEE_PAGE_SIZE = 20;
-const DEPARTMENT_MEMBER_PREVIEW_SIZE = 6;
+
+const createEmptyDepartmentForm = (): DepartmentFormState => ({
+  name: '',
+  code: '',
+  parentId: '',
+  managerEnterpriseUserId: '',
+  sortOrder: '0',
+  status: 'active',
+});
 
 interface StatCardProps {
   icon: IconComponent;
@@ -60,6 +83,9 @@ interface StatCardProps {
   detail: string;
   tone: Tone;
   progress?: number;
+  footer?: string;
+  sparkline?: boolean;
+  trend?: string;
 }
 
 interface UsageItemProps {
@@ -75,30 +101,40 @@ const toneClasses: Record<Tone, {
   soft: string;
   text: string;
   bar: string;
+  chart: string;
+  glow: string;
 }> = {
   cyan: {
-    icon: 'bg-cyan-500/10 text-cyan-500',
-    soft: 'bg-cyan-500/10 text-cyan-500 border-cyan-500/20',
-    text: 'text-cyan-500',
-    bar: 'bg-cyan-500',
+    icon: 'bg-blue-100 text-blue-600',
+    soft: 'bg-blue-50 text-blue-600 border-blue-100',
+    text: 'text-blue-600',
+    bar: 'bg-blue-500',
+    chart: '#2563eb',
+    glow: 'shadow-blue-100/80',
   },
   green: {
-    icon: 'bg-emerald-500/10 text-emerald-500',
-    soft: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20',
-    text: 'text-emerald-500',
+    icon: 'bg-emerald-100 text-emerald-600',
+    soft: 'bg-emerald-50 text-emerald-600 border-emerald-100',
+    text: 'text-emerald-600',
     bar: 'bg-emerald-500',
+    chart: '#16a34a',
+    glow: 'shadow-emerald-100/80',
   },
   amber: {
-    icon: 'bg-amber-500/10 text-amber-500',
-    soft: 'bg-amber-500/10 text-amber-500 border-amber-500/20',
-    text: 'text-amber-500',
+    icon: 'bg-orange-100 text-orange-500',
+    soft: 'bg-orange-50 text-orange-500 border-orange-100',
+    text: 'text-orange-500',
     bar: 'bg-amber-500',
+    chart: '#f97316',
+    glow: 'shadow-orange-100/80',
   },
   violet: {
-    icon: 'bg-violet-500/10 text-violet-500',
-    soft: 'bg-violet-500/10 text-violet-500 border-violet-500/20',
-    text: 'text-violet-500',
+    icon: 'bg-violet-100 text-violet-600',
+    soft: 'bg-violet-50 text-violet-600 border-violet-100',
+    text: 'text-violet-600',
     bar: 'bg-violet-500',
+    chart: '#4f7cff',
+    glow: 'shadow-violet-100/80',
   },
 };
 
@@ -171,24 +207,102 @@ const buildDepartmentTree = (departments: BusinessDepartment[]): DepartmentTreeN
   return roots;
 };
 
-const filterDepartmentTree = (
+const filterDepartmentTreeForTable = (
   nodes: DepartmentTreeNode[],
   keyword: string,
+  statusFilter: DepartmentStatusFilter,
 ): DepartmentTreeNode[] => {
   const normalizedKeyword = keyword.trim().toLowerCase();
-  if (!normalizedKeyword) return nodes;
 
   return nodes.flatMap((node) => {
-    const children = filterDepartmentTree(node.children, normalizedKeyword);
-    const matched = node.name.toLowerCase().includes(normalizedKeyword)
+    const children = filterDepartmentTreeForTable(node.children, normalizedKeyword, statusFilter);
+    const keywordMatched = !normalizedKeyword
+      || node.name.toLowerCase().includes(normalizedKeyword)
       || departmentCodeLabel(node).toLowerCase().includes(normalizedKeyword)
       || node.managerName?.toLowerCase().includes(normalizedKeyword);
+    const statusMatched = statusFilter === 'all' || node.status === statusFilter;
 
-    if (matched || children.length > 0) {
+    if ((keywordMatched && statusMatched) || children.length > 0) {
       return [{ ...node, children }];
     }
     return [];
   });
+};
+
+const flattenDepartmentTreeForTable = (
+  nodes: DepartmentTreeNode[],
+  expandedIds: Set<string>,
+  forceExpanded: boolean,
+): DepartmentTreeNode[] => {
+  const rows: DepartmentTreeNode[] = [];
+
+  const walk = (items: DepartmentTreeNode[]) => {
+    items.forEach((item) => {
+      rows.push(item);
+      if (item.children.length > 0 && (forceExpanded || expandedIds.has(item.id))) {
+        walk(item.children);
+      }
+    });
+  };
+
+  walk(nodes);
+  return rows;
+};
+
+const getDepartmentDescendantIds = (
+  nodes: DepartmentTreeNode[],
+  departmentId: string,
+): Set<string> => {
+  const result = new Set<string>();
+  const collect = (items: DepartmentTreeNode[], shouldCollect: boolean): boolean => {
+    let found = false;
+    items.forEach((item) => {
+      const isTarget = item.id === departmentId;
+      const collectChildren = shouldCollect || isTarget;
+      if (shouldCollect) {
+        result.add(item.id);
+      }
+      if (collect(item.children, collectChildren) || isTarget) {
+        found = true;
+      }
+    });
+    return found;
+  };
+  collect(nodes, false);
+  return result;
+};
+
+const formatBusinessDateTime = (value?: string): string => {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const pad = (part: number) => String(part).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+};
+
+const parseDepartmentSortOrder = (value: string): number => {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const MiniSparkline: React.FC<{ tone: Tone }> = ({ tone }) => {
+  const color = toneClasses[tone].chart;
+
+  return (
+    <svg className="h-11 w-24 shrink-0" viewBox="0 0 96 44" fill="none" aria-hidden="true">
+      <path
+        d="M4 35 C14 31 19 28 28 30 C37 32 41 21 49 22 C58 23 61 16 69 13 C78 10 82 3 92 9"
+        stroke={color}
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      <path
+        d="M4 35 C14 31 19 28 28 30 C37 32 41 21 49 22 C58 23 61 16 69 13 C78 10 82 3 92 9 L92 42 L4 42 Z"
+        fill={color}
+        fillOpacity="0.1"
+      />
+    </svg>
+  );
 };
 
 const StatCard: React.FC<StatCardProps> = ({
@@ -198,29 +312,38 @@ const StatCard: React.FC<StatCardProps> = ({
   detail,
   tone,
   progress,
+  footer,
+  sparkline,
+  trend,
 }) => (
-  <section className="group rounded-lg border border-border bg-surface p-4 shadow-subtle transition-colors hover:border-primary/30 hover:bg-surface-raised/60">
-    <div className="flex items-start justify-between gap-3">
-      <div className="min-w-0">
-        <p className="truncate text-sm text-secondary">{label}</p>
-        <strong className="mt-2 block truncate text-2xl font-semibold tracking-normal text-foreground">{value}</strong>
+  <section className="group min-h-[112px] rounded-lg border border-[#e6ebf2] bg-white p-4 shadow-[0_8px_24px_rgba(15,35,80,0.04)] transition-all duration-200 hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-[0_12px_30px_rgba(15,35,80,0.08)]">
+    <div className="flex h-full items-center gap-4">
+      <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-full shadow-lg ${toneClasses[tone].icon} ${toneClasses[tone].glow}`}>
+        <Icon className="h-7 w-7" />
       </div>
-      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${toneClasses[tone].icon}`}>
-        <Icon className="h-5 w-5" />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-xs font-medium text-[#6b7890]">{label}</p>
+        <div className="mt-1 flex min-w-0 flex-wrap items-baseline gap-2">
+          <strong className="truncate text-[26px] font-bold leading-8 tracking-normal text-[#0d1730]">{value}</strong>
+          {trend && <span className="shrink-0 text-xs font-semibold text-emerald-600">{trend}</span>}
+        </div>
+        <p className="mt-1 truncate text-xs text-[#64748b]">{detail}</p>
+        {typeof progress === 'number' && (
+          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[#e7eef8]">
+            <div
+              className={`h-full rounded-full ${toneClasses[tone].bar}`}
+              style={{ width: `${Math.max(0, Math.min(100, progress))}%` }}
+            />
+          </div>
+        )}
+        {footer && <p className="mt-2 truncate text-xs text-[#64748b]">{footer}</p>}
       </div>
+      {sparkline ? (
+        <MiniSparkline tone={tone} />
+      ) : (
+        <ArrowUpRightIcon className={`h-4 w-4 shrink-0 ${toneClasses[tone].text}`} />
+      )}
     </div>
-    <div className="mt-3 flex items-center justify-between gap-3">
-      <p className="min-w-0 truncate text-xs text-secondary">{detail}</p>
-      <span className={`shrink-0 text-xs font-medium ${toneClasses[tone].text}`}>稳定</span>
-    </div>
-    {typeof progress === 'number' && (
-      <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-surface-raised">
-        <div
-          className={`h-full rounded-full ${toneClasses[tone].bar}`}
-          style={{ width: `${Math.max(0, Math.min(100, progress))}%` }}
-        />
-      </div>
-    )}
   </section>
 );
 
@@ -231,15 +354,15 @@ const UsageItem: React.FC<UsageItemProps> = ({
   detail,
   tone,
 }) => (
-  <div className="flex min-w-0 items-center gap-3 rounded-lg border border-border bg-background px-3 py-3">
-    <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${toneClasses[tone].icon}`}>
-      <Icon className="h-5 w-5" />
+  <div className="flex min-w-0 items-center gap-4 px-4 py-3">
+    <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-full ${toneClasses[tone].icon}`}>
+      <Icon className="h-7 w-7" />
     </div>
     <div className="min-w-0 flex-1">
-      <p className="truncate text-xs text-secondary">{label}</p>
-      <div className="mt-1 flex items-baseline gap-2">
-        <strong className="truncate text-lg font-semibold text-foreground">{value}</strong>
-        <span className={`shrink-0 text-xs ${toneClasses[tone].text}`}>{detail}</span>
+      <p className="truncate text-xs font-medium text-[#6b7890]">{label}</p>
+      <div className="mt-1 flex min-w-0 items-baseline gap-2">
+        <strong className="truncate text-2xl font-bold leading-7 text-[#0d1730]">{value}</strong>
+        <span className={`shrink-0 text-xs font-semibold ${toneClasses[tone].text}`}>{detail}</span>
       </div>
     </div>
   </div>
@@ -259,17 +382,22 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [departments, setDepartments] = useState<BusinessDepartment[]>([]);
   const [employees, setEmployees] = useState<BusinessEmployee[]>([]);
+  const [managerEmployees, setManagerEmployees] = useState<BusinessEmployee[]>([]);
   const [employeeTotal, setEmployeeTotal] = useState(0);
   const [employeePage, setEmployeePage] = useState(1);
   const [employeePageCount, setEmployeePageCount] = useState(0);
-  const [departmentEmployees, setDepartmentEmployees] = useState<BusinessEmployee[]>([]);
-  const [departmentEmployeeTotal, setDepartmentEmployeeTotal] = useState<number | null>(null);
   const [isOrgLoading, setIsOrgLoading] = useState(false);
   const [isEmployeeLoading, setIsEmployeeLoading] = useState(false);
-  const [isDepartmentEmployeeLoading, setIsDepartmentEmployeeLoading] = useState(false);
-  const [selectedDepartmentId, setSelectedDepartmentId] = useState<string>('');
   const [orgSearch, setOrgSearch] = useState('');
-  const [departmentForm, setDepartmentForm] = useState({ name: '', code: '', parentId: '' });
+  const [orgStatusFilter, setOrgStatusFilter] = useState<DepartmentStatusFilter>('all');
+  const [expandedDepartmentIds, setExpandedDepartmentIds] = useState<Set<string>>(() => new Set());
+  const [departmentModal, setDepartmentModal] = useState<{
+    mode: DepartmentModalMode;
+    department?: BusinessDepartment;
+  } | null>(null);
+  const [departmentForm, setDepartmentForm] = useState<DepartmentFormState>(() => createEmptyDepartmentForm());
+  const [isDepartmentSaving, setIsDepartmentSaving] = useState(false);
+  const [isDepartmentDeleting, setIsDepartmentDeleting] = useState(false);
   const [employeeForm, setEmployeeForm] = useState({
     username: '',
     password: '',
@@ -291,34 +419,84 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
   const remainingTokens = formatCompactNumber(profileSummary?.totalCreditsRemaining ?? quota?.creditsRemaining);
   const currentRole = workspace?.role || 'employee';
   const canManageOrg = currentRole === 'owner' || currentRole === 'admin';
+  const orgText = useMemo(() => ({
+    title: i18nService.t('businessCenterOrgTitle'),
+    description: i18nService.t('businessCenterOrgDescription'),
+    searchPlaceholder: i18nService.t('businessCenterOrgSearchPlaceholder'),
+    allStatus: i18nService.t('businessCenterOrgAllStatus'),
+    active: i18nService.t('businessCenterOrgActive'),
+    disabled: i18nService.t('businessCenterOrgDisabled'),
+    add: i18nService.t('businessCenterOrgAdd'),
+    refresh: i18nService.t('businessCenterOrgRefresh'),
+    code: i18nService.t('businessCenterOrgCode'),
+    structure: i18nService.t('businessCenterOrgStructure'),
+    manager: i18nService.t('businessCenterOrgManager'),
+    status: i18nService.t('businessCenterOrgStatus'),
+    createdAt: i18nService.t('businessCenterOrgCreatedAt'),
+    actions: i18nService.t('businessCenterOrgActions'),
+    edit: i18nService.t('businessCenterOrgEdit'),
+    enable: i18nService.t('businessCenterOrgEnable'),
+    disable: i18nService.t('businessCenterOrgDisable'),
+    delete: i18nService.t('businessCenterOrgDelete'),
+    more: i18nService.t('businessCenterOrgMore'),
+    empty: i18nService.t('businessCenterOrgEmpty'),
+    loading: i18nService.t('businessCenterOrgLoading'),
+    createTitle: i18nService.t('businessCenterOrgCreateTitle'),
+    editTitle: i18nService.t('businessCenterOrgEditTitle'),
+    name: i18nService.t('businessCenterOrgName'),
+    parent: i18nService.t('businessCenterOrgParent'),
+    noParent: i18nService.t('businessCenterOrgNoParent'),
+    sort: i18nService.t('businessCenterOrgSort'),
+    namePlaceholder: i18nService.t('businessCenterOrgNamePlaceholder'),
+    codePlaceholder: i18nService.t('businessCenterOrgCodePlaceholder'),
+    managerPlaceholder: i18nService.t('businessCenterOrgManagerPlaceholder'),
+    sortPlaceholder: i18nService.t('businessCenterOrgSortPlaceholder'),
+    close: i18nService.t('businessCenterOrgClose'),
+    cancel: i18nService.t('businessCenterOrgCancel'),
+    save: i18nService.t('businessCenterOrgSave'),
+    saving: i18nService.t('businessCenterOrgSaving'),
+    nameRequired: i18nService.t('businessCenterOrgNameRequired'),
+    saveSuccess: i18nService.t('businessCenterOrgSaveSuccess'),
+    createSuccess: i18nService.t('businessCenterOrgCreateSuccess'),
+    saveFailed: i18nService.t('businessCenterOrgSaveFailed'),
+    deleted: i18nService.t('businessCenterOrgDeleted'),
+    deleteFailed: i18nService.t('businessCenterOrgDeleteFailed'),
+    managerLoadFailed: i18nService.t('businessCenterOrgManagerLoadFailed'),
+  }), []);
 
   const activeDepartments = useMemo(
     () => departments.filter((department) => department.status !== 'disabled'),
     [departments],
   );
-  const departmentNameById = useMemo(
-    () => new Map(departments.map((department) => [department.id, department.name])),
-    [departments],
-  );
   const orgTree = useMemo(() => buildDepartmentTree(departments), [departments]);
-  const filteredOrgTree = useMemo(() => filterDepartmentTree(orgTree, orgSearch), [orgTree, orgSearch]);
-  const selectedDepartment = useMemo(
-    () => departments.find((department) => department.id === selectedDepartmentId)
-      ?? activeDepartments[0]
-      ?? departments[0]
-      ?? null,
-    [activeDepartments, departments, selectedDepartmentId],
+  const filteredOrgTree = useMemo(
+    () => filterDepartmentTreeForTable(orgTree, orgSearch, orgStatusFilter),
+    [orgSearch, orgStatusFilter, orgTree],
   );
-  const childDepartments = useMemo(
-    () => selectedDepartment
-      ? departments.filter((department) => department.parentId === selectedDepartment.id)
-      : [],
-    [departments, selectedDepartment],
+  const departmentTableRows = useMemo(
+    () => flattenDepartmentTreeForTable(
+      filteredOrgTree,
+      expandedDepartmentIds,
+      orgSearch.trim() !== '' || orgStatusFilter !== 'all',
+    ),
+    [expandedDepartmentIds, filteredOrgTree, orgSearch, orgStatusFilter],
+  );
+  const editingDepartment = departmentModal?.mode === 'edit' ? departmentModal.department : undefined;
+  const editingDepartmentDescendantIds = useMemo(
+    () => editingDepartment ? getDepartmentDescendantIds(orgTree, editingDepartment.id) : new Set<string>(),
+    [editingDepartment, orgTree],
+  );
+  const departmentParentOptions = useMemo(
+    () => activeDepartments.filter((department) =>
+      department.id !== editingDepartment?.id && !editingDepartmentDescendantIds.has(department.id)
+    ),
+    [activeDepartments, editingDepartment?.id, editingDepartmentDescendantIds],
+  );
+  const activeManagerEmployees = useMemo(
+    () => managerEmployees.filter((employee) => employee.status !== 'disabled'),
+    [managerEmployees],
   );
   const disabledDepartmentCount = departments.length - activeDepartments.length;
-  const selectedDepartmentMemberTotal = selectedDepartment
-    ? departmentEmployeeTotal ?? departmentEmployeeCount(selectedDepartment)
-    : 0;
 
   const navItems = useMemo(() => ([
     { key: 'overview' as const, label: '首页概览', icon: HomeIcon, enabled: true },
@@ -329,16 +507,18 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
   ]), []);
 
   const tokenRows = useMemo(() => ([
-    { source: 'AI 聚合接待', employee: '李娜', usage: '4,920', time: '10:08', status: '已结算' },
-    { source: 'Claw 对话', employee: '陈昊', usage: '2,100', time: '09:31', status: '已结算' },
-    { source: '拼多多运营', employee: '王敏', usage: '6,700', time: '09:15', status: '峰值' },
-    { source: 'AI 聚合接待', employee: '李娜', usage: '3,210', time: '08:47', status: '已结算' },
-    { source: 'Claw 对话', employee: '陈昊', usage: '1,960', time: '08:30', status: '已结算' },
+    { source: 'AI 聚合接待', employee: '李娜', usage: '4,920', time: '2026-06-25 10:08:12' },
+    { source: 'AI 客服后台', employee: '王敏', usage: '3,450', time: '2026-06-25 09:45:16' },
+    { source: '拼多多运营管理后台', employee: '陈昊', usage: '2,800', time: '2026-06-25 09:31:45' },
+    { source: 'AI 聚合接待', employee: '李娜', usage: '2,310', time: '2026-06-25 08:47:21' },
+    { source: 'AI 客服后台', employee: '李娜', usage: '1,960', time: '2026-06-25 08:30:19' },
+    { source: '拼多多运营管理后台', employee: '王敏', usage: '1,280', time: '2026-06-25 07:58:33' },
   ]), []);
 
   const enabledApps = useMemo(() => ([
-    { id: 'ai-reception', name: 'AI 聚合接待', subtitle: '接待台与客户分析', label: 'AI', tone: 'cyan' as Tone },
-    { id: 'pdd-ops', name: '拼多多运营', subtitle: '商品与活动运营', label: 'PDD', tone: 'violet' as Tone },
+    { id: 'ai-reception', name: 'AI 聚合接待后台管理', subtitle: '独立应用后台入口', label: 'AI', tone: 'cyan' as Tone },
+    { id: 'ai-service', name: 'AI 客服后台', subtitle: '智能客服系统管理平台', label: 'AI', tone: 'violet' as Tone },
+    { id: 'pdd-ops', name: '拼多多运营管理后台', subtitle: '拼多多店铺运营管理平台', label: 'PDD', tone: 'cyan' as Tone },
   ]), []);
 
   const loadDepartments = useCallback(async () => {
@@ -392,31 +572,19 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
     }
   }, [canManageOrg]);
 
-  const loadDepartmentEmployees = useCallback(async (departmentId: string) => {
-    if (!canManageOrg || !departmentId) {
-      setDepartmentEmployees([]);
-      setDepartmentEmployeeTotal(null);
+  const loadManagerEmployees = useCallback(async () => {
+    if (!canManageOrg) {
+      setManagerEmployees([]);
       return;
     }
-    setDepartmentEmployees([]);
-    setDepartmentEmployeeTotal(null);
-    setIsDepartmentEmployeeLoading(true);
     try {
-      const result = await businessCenterService.getEmployees({
-        page: 1,
-        pageSize: DEPARTMENT_MEMBER_PREVIEW_SIZE,
-        departmentId,
-      });
-      setDepartmentEmployees(result.items);
-      setDepartmentEmployeeTotal(result.total);
+      const result = await businessCenterService.getEmployees({ page: 1, pageSize: 100 });
+      setManagerEmployees(result.items);
     } catch (error) {
-      setDepartmentEmployees([]);
-      setDepartmentEmployeeTotal(null);
-      showToast(error instanceof Error ? error.message : '加载部门成员失败');
-    } finally {
-      setIsDepartmentEmployeeLoading(false);
+      setManagerEmployees([]);
+      showToast(error instanceof Error ? error.message : orgText.managerLoadFailed);
     }
-  }, [canManageOrg]);
+  }, [canManageOrg, orgText.managerLoadFailed]);
 
   useEffect(() => {
     if (!canManageOrg) {
@@ -425,6 +593,7 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
     if (activeTab === 'organization') {
       void loadDepartments();
       void loadEmployeeSummary();
+      void loadManagerEmployees();
     }
     if (activeTab === 'employees') {
       void loadDepartments();
@@ -433,26 +602,24 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
     if (activeTab === 'overview') {
       void loadEmployeeSummary();
     }
-  }, [activeTab, canManageOrg, employeePage, loadDepartments, loadEmployees, loadEmployeeSummary]);
-
-  useEffect(() => {
-    if (activeTab === 'organization' && selectedDepartment?.id) {
-      void loadDepartmentEmployees(selectedDepartment.id);
-    } else {
-      setDepartmentEmployees([]);
-      setDepartmentEmployeeTotal(null);
-    }
-  }, [activeTab, loadDepartmentEmployees, selectedDepartment?.id]);
+  }, [activeTab, canManageOrg, employeePage, loadDepartments, loadEmployees, loadEmployeeSummary, loadManagerEmployees]);
 
   useEffect(() => {
     if (departments.length === 0) {
-      setSelectedDepartmentId('');
+      setExpandedDepartmentIds(new Set());
       return;
     }
-    if (!selectedDepartmentId || !departments.some((department) => department.id === selectedDepartmentId)) {
-      setSelectedDepartmentId((activeDepartments[0] ?? departments[0]).id);
-    }
-  }, [activeDepartments, departments, selectedDepartmentId]);
+    setExpandedDepartmentIds((prev) => {
+      const validIds = new Set(departments.map((department) => department.id));
+      const next = new Set(Array.from(prev).filter((id) => validIds.has(id)));
+      if (next.size === 0) {
+        departments
+          .filter((department) => !department.parentId)
+          .forEach((department) => next.add(department.id));
+      }
+      return next;
+    });
+  }, [departments]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -462,10 +629,7 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
         authService.fetchProfileSummary(),
       ];
       if (canManageOrg && activeTab === 'organization') {
-        refreshTasks.push(loadDepartments(), loadEmployeeSummary());
-        if (selectedDepartment?.id) {
-          refreshTasks.push(loadDepartmentEmployees(selectedDepartment.id));
-        }
+        refreshTasks.push(loadDepartments(), loadEmployeeSummary(), loadManagerEmployees());
       }
       if (canManageOrg && activeTab === 'employees') {
         refreshTasks.push(loadDepartments(), loadEmployees(employeePage));
@@ -490,34 +654,108 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
     setActiveTab(item.key);
   };
 
-  const handleCreateDepartment = async (event: React.FormEvent<HTMLFormElement>) => {
+  const openCreateDepartmentModal = () => {
+    setDepartmentForm(createEmptyDepartmentForm());
+    setDepartmentModal({ mode: 'create' });
+  };
+
+  const openEditDepartmentModal = (department: BusinessDepartment) => {
+    setDepartmentForm({
+      name: department.name,
+      code: department.code,
+      parentId: department.parentId || '',
+      managerEnterpriseUserId: department.managerEnterpriseUserId || '',
+      sortOrder: String(department.sortOrder || 0),
+      status: department.status === 'disabled' ? 'disabled' : 'active',
+    });
+    setDepartmentModal({ mode: 'edit', department });
+  };
+
+  const closeDepartmentModal = () => {
+    setDepartmentModal(null);
+    setDepartmentForm(createEmptyDepartmentForm());
+  };
+
+  const toggleDepartmentExpanded = (departmentId: string) => {
+    setExpandedDepartmentIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(departmentId)) {
+        next.delete(departmentId);
+      } else {
+        next.add(departmentId);
+      }
+      return next;
+    });
+  };
+
+  const refreshOrganizationData = async () => {
+    await Promise.all([
+      loadDepartments(),
+      loadEmployeeSummary(),
+      loadManagerEmployees(),
+    ]);
+  };
+
+  const handleSubmitDepartment = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!departmentForm.name.trim()) {
-      showToast('请输入部门名称');
+    if (!departmentModal) return;
+    const name = departmentForm.name.trim();
+    if (!name) {
+      showToast(orgText.nameRequired);
       return;
     }
+    setIsDepartmentSaving(true);
     try {
-      await businessCenterService.createDepartment({
-        name: departmentForm.name.trim(),
+      const payload = {
+        name,
         code: departmentForm.code.trim(),
         parentId: departmentForm.parentId || undefined,
-      });
-      setDepartmentForm({ name: '', code: '', parentId: '' });
-      await loadDepartments();
-      showToast('部门已新增');
+        managerEnterpriseUserId: departmentForm.managerEnterpriseUserId || undefined,
+        sortOrder: parseDepartmentSortOrder(departmentForm.sortOrder),
+        status: departmentForm.status,
+      };
+      if (departmentModal.mode === 'edit' && departmentModal.department) {
+        await businessCenterService.updateDepartment(departmentModal.department.id, payload);
+        showToast(orgText.saveSuccess);
+      } else {
+        await businessCenterService.createDepartment(payload);
+        showToast(orgText.createSuccess);
+      }
+      closeDepartmentModal();
+      await refreshOrganizationData();
     } catch (error) {
-      showToast(error instanceof Error ? error.message : '新增部门失败');
+      showToast(error instanceof Error ? error.message : orgText.saveFailed);
+    } finally {
+      setIsDepartmentSaving(false);
     }
   };
 
-  const handleDisableDepartment = async (department: BusinessDepartment) => {
-    if (!window.confirm(`确定停用「${department.name}」吗？`)) return;
+  const handleSetDepartmentStatus = async (
+    department: BusinessDepartment,
+    status: BusinessDepartmentStatus,
+  ) => {
+    const actionText = status === 'disabled' ? '停用' : '启用';
+    if (!window.confirm(`确定${actionText}「${department.name}」吗？`)) return;
     try {
-      await businessCenterService.disableDepartment(department.id);
-      await loadDepartments();
-      showToast('部门已停用');
+      await businessCenterService.setDepartmentStatus(department.id, status, department.sortOrder);
+      await refreshOrganizationData();
+      showToast(`组织节点已${actionText}`);
     } catch (error) {
-      showToast(error instanceof Error ? error.message : '停用部门失败');
+      showToast(error instanceof Error ? error.message : `${actionText}组织节点失败`);
+    }
+  };
+
+  const handleDeleteDepartment = async (department: BusinessDepartment) => {
+    if (!window.confirm(`确定删除「${department.name}」吗？删除后将不再显示在组织架构中。`)) return;
+    setIsDepartmentDeleting(true);
+    try {
+      await businessCenterService.deleteDepartment(department.id);
+      await refreshOrganizationData();
+      showToast(orgText.deleted);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : orgText.deleteFailed);
+    } finally {
+      setIsDepartmentDeleting(false);
     }
   };
 
@@ -549,7 +787,7 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
       await Promise.all([
         loadEmployees(employeePage),
         loadEmployeeSummary(),
-        selectedDepartment?.id ? loadDepartmentEmployees(selectedDepartment.id) : Promise.resolve(),
+        loadManagerEmployees(),
       ]);
       showToast('员工已新增');
     } catch (error) {
@@ -564,7 +802,7 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
       await Promise.all([
         loadEmployees(employeePage),
         loadEmployeeSummary(),
-        selectedDepartment?.id ? loadDepartmentEmployees(selectedDepartment.id) : Promise.resolve(),
+        loadManagerEmployees(),
       ]);
       showToast('员工已禁用');
     } catch (error) {
@@ -583,51 +821,6 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
     }
   };
 
-  const renderDepartmentTreeNode = (node: DepartmentTreeNode): React.ReactNode => {
-    const isSelected = selectedDepartment?.id === node.id;
-    const isDisabled = node.status === 'disabled';
-
-    return (
-      <div key={node.id} className="space-y-1">
-        <button
-          type="button"
-          onClick={() => setSelectedDepartmentId(node.id)}
-          className={`group flex min-h-[52px] w-full items-center gap-3 rounded-md border px-3 py-2 text-left transition-colors ${
-            isSelected
-              ? 'border-primary/30 bg-primary-muted text-primary'
-              : 'border-transparent text-foreground hover:border-border hover:bg-surface-raised/70'
-          } ${isDisabled ? 'opacity-60' : ''}`}
-          style={{ paddingLeft: `${12 + node.depth * 18}px` }}
-        >
-          <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
-            isSelected ? 'bg-primary text-primary-foreground' : 'bg-background text-secondary group-hover:text-foreground'
-          }`}>
-            <UserGroupIcon className="h-4 w-4" />
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="flex min-w-0 items-center gap-2">
-              <span className="truncate text-sm font-medium">{node.name}</span>
-              {isDisabled && (
-                <span className="shrink-0 rounded-md border border-border bg-background px-1.5 py-0.5 text-[11px] text-secondary">
-                  停用
-                </span>
-              )}
-            </span>
-            <span className="mt-0.5 block truncate text-xs text-secondary">
-              {departmentCodeLabel(node)} · {departmentEmployeeCount(node)} 人 · {node.children.length} 个下级
-            </span>
-          </span>
-          <ChevronRightIcon className={`h-4 w-4 shrink-0 transition-transform ${isSelected ? 'rotate-90' : 'text-tertiary'}`} />
-        </button>
-        {node.children.length > 0 && (
-          <div className="space-y-1">
-            {node.children.map((child) => renderDepartmentTreeNode(child))}
-          </div>
-        )}
-      </div>
-    );
-  };
-
   const overviewContent = (
     <>
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -637,383 +830,425 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
           value="2027-06-30"
           detail="剩余 369 天"
           tone="cyan"
-          progress={34}
+          progress={42}
+          footer="2026-06-25 ~ 2027-06-30"
         />
         <StatCard
           icon={CircleStackIcon}
-          label="Token 余额"
-          value={remainingTokens}
+          label="Token 总额度 / 剩余"
+          value={`1,000K / ${remainingTokens}`}
           detail="企业级 Token 池"
           tone="green"
-          progress={72}
+          sparkline
         />
         <StatCard
           icon={BoltIcon}
-          label="今日消耗"
+          label="今日 Token 消耗"
           value="18.2K"
-          detail="全部 AI 调用汇总"
+          detail="较昨日 +8.7%"
           tone="amber"
-          progress={48}
+          sparkline
         />
         <StatCard
           icon={CubeIcon}
-          label="已开通应用"
+          label="已开通应用数量"
           value={String(enabledApps.length)}
           detail="平台授权可用"
           tone="violet"
-          progress={40}
+          sparkline
         />
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-        <div className="rounded-lg border border-border bg-surface shadow-subtle">
-          <div className="flex flex-col gap-3 border-b border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0">
-              <h2 className="truncate text-base font-semibold text-foreground">Token 消耗明细</h2>
-              <p className="mt-1 text-xs text-secondary">按应用、员工和时间聚合最近调用</p>
-            </div>
+      <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(380px,0.82fr)]">
+        <div className="rounded-lg border border-[#e6ebf2] bg-white shadow-[0_8px_24px_rgba(15,35,80,0.04)]">
+          <div className="flex flex-col gap-3 border-b border-[#e6ebf2] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <h2 className="truncate text-base font-bold text-[#0d1730]">Token 消耗明细</h2>
             <button
               type="button"
               onClick={() => showToast(i18nService.t('businessCenterComingSoon'))}
-              className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm text-foreground transition-colors hover:bg-surface-raised"
+              className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md border border-[#d8e1ee] bg-white px-3 text-xs font-medium text-[#354560] transition-colors hover:border-blue-300 hover:bg-blue-50 hover:text-blue-600"
             >
               近 7 天
               <ChevronRightIcon className="h-3.5 w-3.5" />
             </button>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[560px] border-collapse text-left text-sm">
+            <table className="w-full min-w-[620px] border-collapse text-left text-sm">
               <thead>
-                <tr className="border-b border-border bg-surface-raised/40 text-xs text-secondary">
-                  <th className="px-4 py-2.5 font-medium">来源</th>
-                  <th className="px-4 py-2.5 font-medium">员工</th>
-                  <th className="px-4 py-2.5 font-medium">消耗</th>
-                  <th className="px-4 py-2.5 font-medium">时间</th>
-                  <th className="px-4 py-2.5 font-medium">状态</th>
+                <tr className="border-b border-[#e6ebf2] bg-[#f8fbff] text-xs text-[#6b7890]">
+                  <th className="px-4 py-2.5 font-semibold">来源</th>
+                  <th className="px-4 py-2.5 font-semibold">员工</th>
+                  <th className="px-4 py-2.5 font-semibold">消耗（Token）</th>
+                  <th className="px-4 py-2.5 font-semibold">时间</th>
                 </tr>
               </thead>
               <tbody>
                 {tokenRows.map((row) => (
-                  <tr key={`${row.source}-${row.employee}-${row.time}`} className="border-b border-border/60 text-foreground last:border-b-0 hover:bg-surface-raised/40">
+                  <tr key={`${row.source}-${row.employee}-${row.time}`} className="border-b border-[#edf2f8] text-[#22304a] last:border-b-0 hover:bg-[#f8fbff]">
                     <td className="px-4 py-3">{row.source}</td>
-                    <td className="px-4 py-3 text-secondary">{row.employee}</td>
+                    <td className="px-4 py-3 text-[#354560]">{row.employee}</td>
                     <td className="px-4 py-3 font-semibold">{row.usage}</td>
-                    <td className="px-4 py-3 text-secondary">{row.time}</td>
-                    <td className="px-4 py-3">
-                      <span className="inline-flex rounded-md border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-500">
-                        {row.status}
-                      </span>
-                    </td>
+                    <td className="px-4 py-3 text-[#354560]">{row.time}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+          <div className="flex items-center justify-between border-t border-[#edf2f8] px-4 py-3 text-xs">
+            <span className="text-[#6b7890]">共 25 条</span>
+            <button
+              type="button"
+              onClick={() => showToast(i18nService.t('businessCenterComingSoon'))}
+              className="inline-flex items-center gap-1.5 font-semibold text-blue-600 transition-colors hover:text-blue-700"
+            >
+              查看全部明细
+              <ChevronRightIcon className="h-3.5 w-3.5" />
+            </button>
+          </div>
         </div>
 
-        <div className="space-y-4">
-          <section className="rounded-lg border border-border bg-surface p-4 shadow-subtle">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <h2 className="truncate text-base font-semibold text-foreground">已开通应用</h2>
-              <span className="rounded-full border border-border bg-background px-2 py-1 text-xs text-secondary">{enabledApps.length} 个</span>
-            </div>
-            <div className="space-y-2">
-              {enabledApps.map((app) => (
-                <article key={app.id} className="flex items-center gap-3 rounded-lg border border-border bg-background p-3 transition-colors hover:bg-surface-raised/60">
-                  <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-sm font-semibold ${toneClasses[app.tone].soft}`}>
-                    {app.label}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <h3 className="truncate text-sm font-semibold text-foreground">{app.name}</h3>
-                    <p className="mt-0.5 truncate text-xs text-secondary">{app.subtitle}</p>
-                  </div>
-                  <button type="button" onClick={() => showToast(i18nService.t('businessCenterComingSoon'))} className="inline-flex h-8 shrink-0 items-center rounded-md border border-border px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-surface-raised">
-                    打开
+        <section className="rounded-lg border border-[#e6ebf2] bg-white p-4 shadow-[0_8px_24px_rgba(15,35,80,0.04)]">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h2 className="truncate text-base font-bold text-[#0d1730]">已开通应用</h2>
+          </div>
+          <div className="space-y-3">
+            {enabledApps.map((app) => (
+              <article key={app.id} className="flex items-center gap-4 rounded-lg border border-[#e6ebf2] bg-white p-3 transition-all hover:border-blue-200 hover:bg-[#fbfdff] hover:shadow-[0_8px_22px_rgba(15,35,80,0.06)]">
+                <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-lg text-lg font-bold ${toneClasses[app.tone].soft}`}>
+                  {app.label}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h3 className="truncate text-base font-bold text-[#0d1730]">{app.name}</h3>
+                  <p className="mt-1 truncate text-xs text-[#6b7890]">{app.subtitle}</p>
+                </div>
+                <div className="flex shrink-0 flex-col items-end gap-2">
+                  <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-600">已开通</span>
+                  <button
+                    type="button"
+                    onClick={() => showToast(i18nService.t('businessCenterComingSoon'))}
+                    className="inline-flex h-8 items-center rounded-md bg-blue-600 px-4 text-xs font-semibold text-white shadow-[0_6px_16px_rgba(37,99,235,0.22)] transition-colors hover:bg-blue-700"
+                  >
+                    打开后台
                   </button>
-                </article>
-              ))}
-            </div>
-          </section>
+                </div>
+              </article>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => showToast(i18nService.t('businessCenterComingSoon'))}
+            className="mt-4 inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 transition-colors hover:text-blue-700"
+          >
+            进入应用管理中心
+            <ChevronRightIcon className="h-3.5 w-3.5" />
+          </button>
+        </section>
+      </section>
 
-          <section className="rounded-lg border border-border bg-surface p-4 shadow-subtle">
-            <h2 className="mb-3 text-base font-semibold text-foreground">平台使用情况</h2>
-            <div className="grid gap-2">
-              <UsageItem icon={UsersIcon} label="企业成员" value={String(employeeTotal || employees.length || '-')} detail="已同步" tone="cyan" />
-              <UsageItem icon={CubeIcon} label="应用调用总数" value="28.6K" detail="+12.4%" tone="green" />
-              <UsageItem icon={BoltIcon} label="Token 日均消耗" value="16.3K" detail="+8.7%" tone="amber" />
-              <UsageItem icon={CircleStackIcon} label="存量预计可用" value="51 天" detail="按当前消耗" tone="violet" />
-            </div>
-          </section>
+      <section className="rounded-lg border border-[#e6ebf2] bg-white p-4 shadow-[0_8px_24px_rgba(15,35,80,0.04)]">
+        <h2 className="mb-4 text-base font-bold text-[#0d1730]">平台使用情况</h2>
+        <div className="grid divide-y divide-[#e6ebf2] overflow-hidden rounded-lg border border-[#e6ebf2] md:grid-cols-2 md:divide-x md:divide-y-0 xl:grid-cols-4">
+          <UsageItem icon={UsersIcon} label="企业成员" value={String(employeeTotal || employees.length || 128)} detail="较昨日 +2 人 ↑" tone="cyan" />
+          <UsageItem icon={CubeIcon} label="应用调用总数" value="28.6K" detail="较昨日 +12.4%" tone="green" />
+          <UsageItem icon={BoltIcon} label="Token 日均消耗" value="16.3K" detail="较上周 +8.7%" tone="amber" />
+          <UsageItem icon={CircleStackIcon} label="存量 Token 预计可用" value="51 天" detail="按当前消耗速度估算" tone="violet" />
         </div>
       </section>
     </>
   );
 
   const organizationContent = (
-    <section className="space-y-4">
-      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          icon={UserGroupIcon}
-          label="部门总数"
-          value={String(departments.length)}
-          detail={`${activeDepartments.length} 个启用中`}
-          tone="cyan"
-          progress={departments.length ? (activeDepartments.length / departments.length) * 100 : 0}
-        />
-        <StatCard
-          icon={BuildingOffice2Icon}
-          label="一级部门"
-          value={String(departments.filter((department) => !department.parentId).length)}
-          detail="组织树根节点"
-          tone="green"
-        />
-        <StatCard
-          icon={UsersIcon}
-          label="已绑定成员"
-          value={String(employeeTotal || employees.length)}
-          detail="企业成员总数"
-          tone="violet"
-        />
-        <StatCard
-          icon={NoSymbolIcon}
-          label="停用部门"
-          value={String(disabledDepartmentCount)}
-          detail="不影响历史成员记录"
-          tone="amber"
-        />
-      </section>
-
-      <section className="grid gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
-        <div className="space-y-4">
-          <section className="rounded-lg border border-border bg-surface shadow-subtle">
-            <div className="border-b border-border px-4 py-3">
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <h2 className="truncate text-base font-semibold text-foreground">组织树</h2>
-                  <p className="mt-1 text-xs text-secondary">当前工作区的部门层级</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    void loadDepartments();
-                    void loadEmployees();
-                  }}
-                  className="inline-flex h-8 shrink-0 items-center gap-2 rounded-md border border-border px-3 text-sm text-foreground transition-colors hover:bg-surface-raised"
-                >
-                  <ArrowPathIcon className={`h-4 w-4 ${isOrgLoading || isEmployeeLoading ? 'animate-spin' : ''}`} />
-                  刷新
-                </button>
-              </div>
-              <label className="mt-3 flex h-9 items-center gap-2 rounded-md border border-border bg-background px-3 text-sm text-foreground focus-within:border-primary">
-                <MagnifyingGlassIcon className="h-4 w-4 shrink-0 text-secondary" />
+    <>
+      <section className="overflow-hidden rounded-lg border border-[#e6ebf2] bg-white shadow-[0_8px_24px_rgba(15,35,80,0.04)]">
+        <div className="border-b border-[#e6ebf2] px-4 py-4 sm:px-5">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+            <div className="min-w-0">
+              <h2 className="truncate text-2xl font-bold tracking-normal text-[#0d1730]">{orgText.title}</h2>
+              <p className="mt-1 text-sm text-[#64748b]">
+                {orgText.description}
+              </p>
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <label className="flex h-10 min-w-0 items-center gap-2 rounded-md border border-[#d8e1ee] bg-white px-3 text-sm text-[#22304a] focus-within:border-blue-400 xl:w-[280px]">
+                <MagnifyingGlassIcon className="h-4 w-4 shrink-0 text-[#6b7890]" />
                 <input
                   value={orgSearch}
                   onChange={(event) => setOrgSearch(event.target.value)}
-                  className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-tertiary"
-                  placeholder="搜索部门、编码或负责人"
+                  className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-[#94a3b8]"
+                  placeholder={orgText.searchPlaceholder}
                 />
               </label>
+              <select
+                value={orgStatusFilter}
+                onChange={(event) => setOrgStatusFilter(event.target.value as DepartmentStatusFilter)}
+                className="h-10 rounded-md border border-[#d8e1ee] bg-white px-3 text-sm font-medium text-[#354560] outline-none transition-colors hover:border-blue-300 focus:border-blue-400"
+              >
+                <option value="all">{orgText.allStatus}</option>
+                <option value="active">{orgText.active}</option>
+                <option value="disabled">{orgText.disabled}</option>
+              </select>
+              <button
+                type="button"
+                onClick={openCreateDepartmentModal}
+                disabled={!canManageOrg}
+                className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-semibold text-white shadow-[0_8px_18px_rgba(37,99,235,0.22)] transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <PlusIcon className="h-4 w-4" />
+                {orgText.add}
+              </button>
             </div>
-            <div className="max-h-[520px] overflow-y-auto p-3 [scrollbar-gutter:stable]">
-              {filteredOrgTree.length > 0 ? (
-                <div className="space-y-1">
-                  {filteredOrgTree.map((department) => renderDepartmentTreeNode(department))}
-                </div>
-              ) : (
-                <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-secondary">
-                  {isOrgLoading ? '正在加载组织架构' : '暂无匹配部门'}
-                </div>
-              )}
-            </div>
-          </section>
+          </div>
+          <div className="mt-4 flex flex-col gap-2 text-sm text-[#354560] sm:flex-row sm:items-center sm:justify-between">
+            <span>
+              共 {departments.length} 个组织节点（{orgText.active} {activeDepartments.length} 个，{orgText.disabled} {disabledDepartmentCount} 个）
+            </span>
+            <button
+              type="button"
+              onClick={() => void refreshOrganizationData()}
+              className="inline-flex h-8 w-fit items-center gap-2 rounded-md border border-[#d8e1ee] bg-white px-3 text-xs font-semibold text-[#354560] transition-colors hover:border-blue-300 hover:bg-blue-50 hover:text-blue-600"
+            >
+              <ArrowPathIcon className={`h-4 w-4 ${isOrgLoading ? 'animate-spin' : ''}`} />
+              {orgText.refresh}
+            </button>
+          </div>
+        </div>
 
-          <form onSubmit={handleCreateDepartment} className="rounded-lg border border-border bg-surface p-4 shadow-subtle">
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <h2 className="truncate text-base font-semibold text-foreground">新增部门</h2>
-                <p className="mt-1 text-xs text-secondary">部门数据由 AIZhongtai 管理</p>
-              </div>
-              <UserGroupIcon className="h-5 w-5 shrink-0 text-primary" />
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[980px] border-collapse text-left text-sm">
+            <thead>
+              <tr className="border-b border-[#e6ebf2] bg-[#f8fbff] text-xs text-[#6b7890]">
+                <th className="w-[150px] px-4 py-3 font-semibold">{orgText.code}</th>
+                <th className="min-w-[300px] px-4 py-3 font-semibold">{orgText.structure}</th>
+                <th className="w-[140px] px-4 py-3 font-semibold">{orgText.manager}</th>
+                <th className="w-[100px] px-4 py-3 font-semibold">{orgText.status}</th>
+                <th className="w-[180px] px-4 py-3 font-semibold">{orgText.createdAt}</th>
+                <th className="w-[190px] px-4 py-3 text-right font-semibold">{orgText.actions}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {departmentTableRows.map((department) => {
+                const hasChildren = department.children.length > 0;
+                const isExpanded = expandedDepartmentIds.has(department.id);
+                const isDisabled = department.status === 'disabled';
+                const Icon = department.depth === 0 ? BuildingOffice2Icon : UserGroupIcon;
+                return (
+                  <tr
+                    key={department.id}
+                    className={`border-b border-[#edf2f8] text-[#22304a] last:border-b-0 hover:bg-[#f8fbff] ${isDisabled ? 'bg-[#fbfcfe] text-[#6b7890]' : ''}`}
+                  >
+                    <td className="px-4 py-3 font-medium">{departmentCodeLabel(department)}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex min-w-0 items-center gap-2" style={{ paddingLeft: `${department.depth * 28}px` }}>
+                        {hasChildren ? (
+                          <button
+                            type="button"
+                            onClick={() => toggleDepartmentExpanded(department.id)}
+                            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[#64748b] transition-colors hover:bg-blue-50 hover:text-blue-600"
+                            aria-label={isExpanded ? '收起组织节点' : '展开组织节点'}
+                          >
+                            <ChevronRightIcon className={`h-4 w-4 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                          </button>
+                        ) : (
+                          <span className="h-6 w-6 shrink-0" />
+                        )}
+                        <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md ${department.depth === 0 ? 'bg-blue-50 text-blue-600' : 'bg-[#eff6ff] text-blue-500'}`}>
+                          <Icon className="h-4 w-4" />
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block truncate font-semibold">{department.name}</span>
+                          <span className="mt-0.5 block truncate text-xs text-[#6b7890]">
+                            {departmentEmployeeCount(department)} 名成员 · 排序 {department.sortOrder}
+                          </span>
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">{department.managerName || '-'}</td>
+                    <td className="px-4 py-3">
+                      <span className={`inline-flex rounded-md border px-2 py-0.5 text-xs font-semibold ${statusClass(department.status)}`}>
+                        {isDisabled ? orgText.disabled : orgText.active}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-[#4d5f7a]">{formatBusinessDateTime(department.createdAt)}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-end gap-3">
+                        <button
+                          type="button"
+                          disabled={!canManageOrg}
+                          onClick={() => openEditDepartmentModal(department)}
+                          className="text-xs font-semibold text-blue-600 transition-colors hover:text-blue-700 disabled:cursor-not-allowed disabled:text-[#94a3b8]"
+                        >
+                          {orgText.edit}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!canManageOrg}
+                          onClick={() => void handleSetDepartmentStatus(department, isDisabled ? 'active' : 'disabled')}
+                          className="text-xs font-semibold text-blue-600 transition-colors hover:text-blue-700 disabled:cursor-not-allowed disabled:text-[#94a3b8]"
+                        >
+                          {isDisabled ? orgText.enable : orgText.disable}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!canManageOrg || isDepartmentDeleting}
+                          onClick={() => void handleDeleteDepartment(department)}
+                          className="text-xs font-semibold text-blue-600 transition-colors hover:text-red-600 disabled:cursor-not-allowed disabled:text-[#94a3b8]"
+                        >
+                          {orgText.delete}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => showToast(i18nService.t('businessCenterComingSoon'))}
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-md text-[#64748b] transition-colors hover:bg-blue-50 hover:text-blue-600"
+                          aria-label={orgText.more}
+                        >
+                          <EllipsisHorizontalIcon className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              {!isOrgLoading && departmentTableRows.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-12 text-center text-sm text-[#64748b]">
+                    {orgText.empty}
+                  </td>
+                </tr>
+              )}
+              {isOrgLoading && departmentTableRows.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-12 text-center text-sm text-[#64748b]">
+                    {orgText.loading}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {departmentModal && (
+        <div className="non-draggable fixed inset-0 z-50 flex items-center justify-center bg-[#0b1220]/35 px-4 py-6 backdrop-blur-[2px]">
+          <form
+            onSubmit={handleSubmitDepartment}
+            className="w-full max-w-[420px] rounded-lg border border-[#e6ebf2] bg-white p-5 shadow-[0_24px_80px_rgba(15,23,42,0.22)]"
+          >
+            <div className="mb-5 flex items-center justify-between gap-3">
+              <h3 className="truncate text-lg font-bold text-[#0d1730]">
+                {departmentModal.mode === 'edit' ? orgText.editTitle : orgText.createTitle}
+              </h3>
+              <button
+                type="button"
+                disabled={isDepartmentSaving}
+                onClick={closeDepartmentModal}
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[#64748b] transition-colors hover:bg-[#f1f5f9] hover:text-[#0d1730] disabled:cursor-not-allowed disabled:opacity-50"
+                aria-label={orgText.close}
+              >
+                <XMarkIcon className="h-4 w-4" />
+              </button>
             </div>
-            <fieldset disabled={!canManageOrg} className="space-y-3 disabled:opacity-60">
-              <label className="block">
-                <span className="text-xs font-medium text-secondary">部门名称</span>
+
+            <fieldset disabled={isDepartmentSaving} className="space-y-3 disabled:opacity-70">
+              <label className="grid gap-1.5 text-sm sm:grid-cols-[92px_minmax(0,1fr)] sm:items-center">
+                <span className="font-medium text-[#354560]"><span className="text-red-500">*</span> {orgText.name}</span>
                 <input
                   value={departmentForm.name}
                   onChange={(event) => setDepartmentForm((prev) => ({ ...prev, name: event.target.value }))}
-                  className="mt-1 h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-primary"
-                  placeholder="例如 运营部"
+                  className="h-10 rounded-md border border-[#d8e1ee] bg-white px-3 text-sm text-[#22304a] outline-none transition-colors placeholder:text-[#94a3b8] focus:border-blue-400"
+                  placeholder={orgText.namePlaceholder}
                 />
               </label>
-              <label className="block">
-                <span className="text-xs font-medium text-secondary">部门编码</span>
+              <label className="grid gap-1.5 text-sm sm:grid-cols-[92px_minmax(0,1fr)] sm:items-center">
+                <span className="font-medium text-[#354560]"><span className="text-red-500">*</span> {orgText.code}</span>
                 <input
                   value={departmentForm.code}
                   onChange={(event) => setDepartmentForm((prev) => ({ ...prev, code: event.target.value }))}
-                  className="mt-1 h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-primary"
-                  placeholder="例如 ops"
+                  className="h-10 rounded-md border border-[#d8e1ee] bg-white px-3 text-sm text-[#22304a] outline-none transition-colors placeholder:text-[#94a3b8] focus:border-blue-400"
+                  placeholder={orgText.codePlaceholder}
                 />
               </label>
-              <label className="block">
-                <span className="text-xs font-medium text-secondary">上级部门</span>
+              <label className="grid gap-1.5 text-sm sm:grid-cols-[92px_minmax(0,1fr)] sm:items-center">
+                <span className="font-medium text-[#354560]"><span className="text-red-500">*</span> {orgText.parent}</span>
                 <select
                   value={departmentForm.parentId}
                   onChange={(event) => setDepartmentForm((prev) => ({ ...prev, parentId: event.target.value }))}
-                  className="mt-1 h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-primary"
+                  className="h-10 rounded-md border border-[#d8e1ee] bg-white px-3 text-sm text-[#22304a] outline-none transition-colors focus:border-blue-400"
                 >
-                  <option value="">无上级</option>
-                  {activeDepartments.map((department) => (
+                  <option value="">{orgText.noParent}</option>
+                  {departmentParentOptions.map((department) => (
                     <option key={department.id} value={department.id}>{department.name}</option>
                   ))}
                 </select>
               </label>
+              <label className="grid gap-1.5 text-sm sm:grid-cols-[92px_minmax(0,1fr)] sm:items-center">
+                <span className="font-medium text-[#354560]"><span className="text-red-500">*</span> {orgText.manager}</span>
+                <select
+                  value={departmentForm.managerEnterpriseUserId}
+                  onChange={(event) => setDepartmentForm((prev) => ({ ...prev, managerEnterpriseUserId: event.target.value }))}
+                  className="h-10 rounded-md border border-[#d8e1ee] bg-white px-3 text-sm text-[#22304a] outline-none transition-colors focus:border-blue-400"
+                >
+                  <option value="">{orgText.managerPlaceholder}</option>
+                  {activeManagerEmployees.map((employee) => (
+                    <option key={employee.id} value={employee.id}>{employee.name || employee.username}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="grid gap-1.5 text-sm sm:grid-cols-[92px_minmax(0,1fr)] sm:items-center">
+                <span className="font-medium text-[#354560]"><span className="text-red-500">*</span> {orgText.sort}</span>
+                <input
+                  type="number"
+                  value={departmentForm.sortOrder}
+                  onChange={(event) => setDepartmentForm((prev) => ({ ...prev, sortOrder: event.target.value }))}
+                  className="h-10 rounded-md border border-[#d8e1ee] bg-white px-3 text-sm text-[#22304a] outline-none transition-colors placeholder:text-[#94a3b8] focus:border-blue-400"
+                  placeholder={orgText.sortPlaceholder}
+                />
+              </label>
+              <div className="grid gap-1.5 text-sm sm:grid-cols-[92px_minmax(0,1fr)] sm:items-center">
+                <span className="font-medium text-[#354560]"><span className="text-red-500">*</span> {orgText.status}</span>
+                <div className="flex items-center gap-6">
+                  <label className="inline-flex items-center gap-2 text-[#354560]">
+                    <input
+                      type="radio"
+                      checked={departmentForm.status === 'active'}
+                      onChange={() => setDepartmentForm((prev) => ({ ...prev, status: 'active' }))}
+                      className="h-4 w-4 accent-blue-600"
+                    />
+                    {orgText.active}
+                  </label>
+                  <label className="inline-flex items-center gap-2 text-[#354560]">
+                    <input
+                      type="radio"
+                      checked={departmentForm.status === 'disabled'}
+                      onChange={() => setDepartmentForm((prev) => ({ ...prev, status: 'disabled' }))}
+                      className="h-4 w-4 accent-blue-600"
+                    />
+                    {orgText.disabled}
+                  </label>
+                </div>
+              </div>
+            </fieldset>
+
+            <div className="mt-5 flex justify-end gap-3">
+              <button
+                type="button"
+                disabled={isDepartmentSaving}
+                onClick={closeDepartmentModal}
+                className="inline-flex h-10 items-center justify-center rounded-md border border-[#d8e1ee] bg-white px-5 text-sm font-semibold text-[#354560] transition-colors hover:bg-[#f8fbff] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {orgText.cancel}
+              </button>
               <button
                 type="submit"
-                className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+                disabled={isDepartmentSaving}
+                className="inline-flex h-10 items-center justify-center rounded-md bg-blue-600 px-5 text-sm font-semibold text-white shadow-[0_8px_18px_rgba(37,99,235,0.22)] transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                <PlusIcon className="h-4 w-4" />
-                新增部门
+                {isDepartmentSaving ? orgText.saving : orgText.save}
               </button>
-            </fieldset>
-            {!canManageOrg && <p className="mt-3 text-xs text-secondary">当前角色仅可查看组织架构。</p>}
+            </div>
           </form>
         </div>
-
-        <section className="rounded-lg border border-border bg-surface shadow-subtle">
-          {selectedDepartment ? (
-            <>
-              <div className="flex flex-col gap-4 border-b border-border px-5 py-4 lg:flex-row lg:items-start lg:justify-between">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className={`rounded-md border px-2 py-0.5 text-xs font-medium ${statusClass(selectedDepartment.status)}`}>
-                      {statusLabel(selectedDepartment.status)}
-                    </span>
-                    <span className="rounded-md border border-border bg-background px-2 py-0.5 text-xs text-secondary">
-                      {selectedDepartment.code}
-                    </span>
-                  </div>
-                  <h2 className="mt-3 truncate text-2xl font-semibold tracking-normal text-foreground">
-                    {selectedDepartment.name}
-                  </h2>
-                  <p className="mt-2 text-sm text-secondary">
-                    上级部门：{selectedDepartment.parentId ? departmentNameById.get(selectedDepartment.parentId) || '未知部门' : '无'}
-                  </p>
-                </div>
-                {canManageOrg && selectedDepartment.status !== 'disabled' && (
-                  <button
-                    type="button"
-                    onClick={() => handleDisableDepartment(selectedDepartment)}
-                    className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-md border border-border px-3 text-sm text-secondary transition-colors hover:border-red-500/30 hover:bg-red-500/10 hover:text-red-500"
-                  >
-                    <NoSymbolIcon className="h-4 w-4" />
-                    停用部门
-                  </button>
-                )}
-              </div>
-
-              <div className="grid gap-3 border-b border-border p-5 md:grid-cols-3">
-                <div className="rounded-lg border border-border bg-background p-4">
-                  <p className="text-xs text-secondary">负责人</p>
-                  <p className="mt-2 truncate text-lg font-semibold text-foreground">{selectedDepartment.managerName || '未设置'}</p>
-                </div>
-                <div className="rounded-lg border border-border bg-background p-4">
-                  <p className="text-xs text-secondary">部门成员</p>
-                  <p className="mt-2 truncate text-lg font-semibold text-foreground">
-                    {selectedDepartmentMemberTotal} 人
-                  </p>
-                </div>
-                <div className="rounded-lg border border-border bg-background p-4">
-                  <p className="text-xs text-secondary">直属下级</p>
-                  <p className="mt-2 truncate text-lg font-semibold text-foreground">{childDepartments.length} 个</p>
-                </div>
-              </div>
-
-              <div className="grid gap-4 p-5 xl:grid-cols-[minmax(0,1fr)_320px]">
-                <section className="min-w-0">
-                  <div className="mb-3 flex items-center justify-between gap-3">
-                    <h3 className="truncate text-sm font-semibold text-foreground">部门成员</h3>
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('employees')}
-                      className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs text-foreground transition-colors hover:bg-surface-raised"
-                    >
-                      员工管理
-                      <ChevronRightIcon className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                  <div className="overflow-hidden rounded-lg border border-border">
-                    {departmentEmployees.length > 0 ? (
-                      <table className="w-full min-w-[520px] border-collapse text-left text-sm">
-                        <thead className="bg-surface-raised/40 text-xs text-secondary">
-                          <tr>
-                            <th className="px-4 py-2.5 font-medium">成员</th>
-                            <th className="px-4 py-2.5 font-medium">角色</th>
-                            <th className="px-4 py-2.5 font-medium">状态</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {departmentEmployees.map((employee) => (
-                            <tr key={employee.id} className="border-t border-border/60 hover:bg-surface-raised/40">
-                              <td className="px-4 py-3">
-                                <div className="font-medium text-foreground">{employee.name || employee.username}</div>
-                                <div className="mt-0.5 text-xs text-secondary">{employee.phone || employee.email || employee.username}</div>
-                              </td>
-                              <td className="px-4 py-3 text-secondary">{roleLabel(employee.role)}</td>
-                              <td className="px-4 py-3">
-                                <span className={`inline-flex rounded-md border px-2 py-0.5 text-xs font-medium ${statusClass(employee.status)}`}>
-                                  {statusLabel(employee.status)}
-                                </span>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    ) : (
-                      <div className="p-8 text-center text-sm text-secondary">
-                        {isDepartmentEmployeeLoading ? '正在加载部门成员' : '当前部门暂无成员'}
-                      </div>
-                    )}
-                  </div>
-                  {selectedDepartmentMemberTotal > departmentEmployees.length && (
-                    <p className="mt-2 text-xs text-secondary">
-                      已预览 {departmentEmployees.length} / {selectedDepartmentMemberTotal} 名成员，完整列表可在员工管理中查看。
-                    </p>
-                  )}
-                </section>
-
-                <section className="min-w-0">
-                  <h3 className="mb-3 truncate text-sm font-semibold text-foreground">直属下级部门</h3>
-                  <div className="space-y-2">
-                    {childDepartments.length > 0 ? childDepartments.map((department) => (
-                      <button
-                        key={department.id}
-                        type="button"
-                        onClick={() => setSelectedDepartmentId(department.id)}
-                        className="flex w-full items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-3 text-left transition-colors hover:bg-surface-raised"
-                      >
-                        <span className="min-w-0">
-                          <span className="block truncate text-sm font-medium text-foreground">{department.name}</span>
-                          <span className="mt-0.5 block truncate text-xs text-secondary">{departmentCodeLabel(department)} · {departmentEmployeeCount(department)} 人</span>
-                        </span>
-                        <ChevronRightIcon className="h-4 w-4 shrink-0 text-secondary" />
-                      </button>
-                    )) : (
-                      <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-secondary">
-                        暂无下级部门
-                      </div>
-                    )}
-                  </div>
-                </section>
-              </div>
-            </>
-          ) : (
-            <div className="p-12 text-center text-sm text-secondary">
-              暂无组织架构数据
-            </div>
-          )}
-        </section>
-      </section>
-    </section>
+      )}
+    </>
   );
 
   const employeesContent = (
@@ -1235,8 +1470,8 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
   }
 
   return (
-    <div className="flex h-full flex-1 flex-col bg-background">
-      <div className="draggable flex h-12 shrink-0 items-center justify-between border-b border-border bg-background px-4">
+    <div className="flex h-full flex-1 flex-col bg-[#f3f6fb]">
+      <div className="draggable flex h-12 shrink-0 items-center justify-between border-b border-[#e6ebf2] bg-white/95 px-4">
         <div className="flex h-8 min-w-0 items-center gap-3">
           {isSidebarCollapsed && (
             <div className={`non-draggable flex items-center gap-1 ${isMac ? 'pl-[68px]' : ''}`}>
@@ -1258,59 +1493,16 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
             </div>
           )}
           <div className="flex min-w-0 items-center gap-2">
-            <BuildingOffice2Icon className="h-5 w-5 shrink-0 text-primary" />
-            <h1 className="truncate text-lg font-semibold text-foreground">{i18nService.t('businessCenter')}</h1>
+            <BuildingOffice2Icon className="h-5 w-5 shrink-0 text-blue-600" />
+            <h1 className="truncate text-lg font-semibold text-[#0d1730]">{businessTitle}</h1>
           </div>
         </div>
         <WindowTitleBar inline />
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto bg-background [scrollbar-gutter:stable]">
-        <main className="mx-auto w-full max-w-[1220px] space-y-4 px-4 py-5 sm:px-6">
-          <section className="rounded-lg border border-border bg-surface p-5 shadow-subtle">
-            <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
-                    <CheckCircleIcon className="h-3.5 w-3.5" />
-                    当前工作区
-                  </span>
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-500">
-                    <ShieldCheckIcon className="h-3.5 w-3.5" />
-                    安全防护中
-                  </span>
-                </div>
-                <h2 className="mt-4 truncate text-[28px] font-semibold leading-tight tracking-normal text-foreground">
-                  {businessTitle}
-                </h2>
-                <p className="mt-2 max-w-2xl text-sm leading-6 text-secondary">
-                  欢迎回来，{displayName}。这里汇总企业组织、员工、Token 和应用状态。
-                </p>
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-3 xl:w-[520px]">
-                <div className="rounded-lg border border-border bg-background px-3 py-3">
-                  <p className="text-xs text-secondary">工作区角色</p>
-                  <p className="mt-1 truncate text-sm font-semibold text-foreground">{roleLabel(currentRole)}</p>
-                </div>
-                <div className="rounded-lg border border-border bg-background px-3 py-3">
-                  <p className="text-xs text-secondary">套餐状态</p>
-                  <p className="mt-1 truncate text-sm font-semibold text-foreground">{quota?.planName || '企业版'}</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleRefresh}
-                  disabled={isRefreshing}
-                  className="inline-flex h-full min-h-[62px] items-center justify-center gap-2 rounded-lg bg-primary px-3 py-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  <ArrowPathIcon className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-                  刷新数据
-                </button>
-              </div>
-            </div>
-          </section>
-
-          <nav className="non-draggable flex gap-1 overflow-x-auto rounded-lg border border-border bg-surface p-1">
+      <div className="min-h-0 flex-1 overflow-y-auto bg-[#f3f6fb] [scrollbar-gutter:stable]">
+        <main className="mx-auto w-full max-w-[1280px] space-y-4 px-4 py-4 sm:px-5">
+          <nav className="non-draggable flex min-h-[56px] items-center gap-1 overflow-x-auto rounded-lg border border-[#e6ebf2] bg-white px-4 shadow-[0_8px_24px_rgba(15,35,80,0.04)]">
             {navItems.map((item) => {
               const Icon = item.icon;
               const isActive = activeTab === item.key;
@@ -1319,12 +1511,12 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
                   key={item.key}
                   type="button"
                   onClick={() => handleTabClick(item)}
-                  className={`inline-flex h-9 shrink-0 items-center gap-2 rounded-md px-3 text-sm font-medium transition-colors ${
+                  className={`relative inline-flex h-14 shrink-0 items-center gap-2 px-4 text-sm font-semibold transition-colors ${
                     isActive
-                      ? 'bg-primary-muted text-primary'
+                      ? 'text-blue-600 after:absolute after:bottom-0 after:left-3 after:right-3 after:h-0.5 after:rounded-full after:bg-blue-600'
                       : item.enabled
-                        ? 'text-secondary hover:bg-surface-raised hover:text-foreground'
-                        : 'text-tertiary hover:bg-surface-raised'
+                        ? 'text-[#354560] hover:text-blue-600'
+                        : 'text-[#94a3b8] hover:text-[#64748b]'
                   }`}
                   aria-current={isActive ? 'page' : undefined}
                 >
@@ -1333,14 +1525,41 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
                 </button>
               );
             })}
-            <div className="ml-auto hidden items-center gap-2 px-2 text-xs text-secondary lg:flex">
-              <BellIcon className="h-4 w-4" />
-              12 条待处理提醒
-              <button type="button" onClick={() => showToast(i18nService.t('businessCenterComingSoon'))} className="rounded-md p-1 transition-colors hover:bg-surface-raised hover:text-foreground" aria-label="帮助">
-                <QuestionMarkCircleIcon className="h-4 w-4" />
+            <div className="ml-auto hidden items-center gap-3 pl-3 text-xs text-[#354560] lg:flex">
+              <button type="button" onClick={() => showToast(i18nService.t('businessCenterComingSoon'))} className="relative rounded-md p-1.5 transition-colors hover:bg-blue-50 hover:text-blue-600" aria-label="通知">
+                <BellIcon className="h-5 w-5" />
+                <span className="absolute -right-1 -top-1 rounded-full bg-red-500 px-1.5 text-[10px] font-bold leading-4 text-white">12</span>
               </button>
+              <button type="button" onClick={() => showToast(i18nService.t('businessCenterComingSoon'))} className="rounded-md p-1.5 transition-colors hover:bg-blue-50 hover:text-blue-600" aria-label="帮助">
+                <QuestionMarkCircleIcon className="h-5 w-5" />
+              </button>
+              <div className="flex items-center gap-2 border-l border-[#e6ebf2] pl-3">
+                <span className="flex h-7 w-7 items-center justify-center rounded-full bg-blue-100 text-xs font-bold text-blue-600">
+                  {displayName.slice(0, 1).toUpperCase()}
+                </span>
+                <span className="max-w-[120px] truncate font-medium">{displayName}</span>
+                <ChevronRightIcon className="h-3.5 w-3.5 rotate-90" />
+              </div>
             </div>
           </nav>
+
+          {activeTab === 'overview' && (
+            <section className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <h2 className="truncate text-2xl font-bold tracking-normal text-[#0d1730]">欢迎回来，{displayName}</h2>
+                <p className="mt-1 text-sm text-[#64748b]">以下是企业运营的关键数据概览</p>
+              </div>
+              <button
+                type="button"
+                onClick={handleRefresh}
+                disabled={isRefreshing}
+                className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-md border border-[#d8e1ee] bg-white px-4 text-sm font-semibold text-[#354560] shadow-[0_8px_20px_rgba(15,35,80,0.04)] transition-colors hover:border-blue-300 hover:bg-blue-50 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <ArrowPathIcon className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+                刷新数据
+              </button>
+            </section>
+          )}
 
           {activeTab === 'organization'
             ? organizationContent

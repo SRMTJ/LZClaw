@@ -14,6 +14,9 @@ export type EnterpriseManifest = {
   auth?: {
     apiBaseUrl?: string;
   };
+  onboarding?: {
+    enabled?: boolean;
+  };
   ui?: Record<string, EnterpriseUIAction>;
   disableUpdate?: boolean;
   sync: {

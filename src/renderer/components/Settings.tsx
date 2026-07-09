@@ -882,6 +882,9 @@ interface SettingsProps extends SettingsOpenOptions {
   onUpdateFound?: (info: AppUpdateInfo) => void;
   enterpriseConfig?: {
     ui?: Record<string, 'hide' | 'disable' | 'readonly'>;
+    onboarding?: {
+      enabled?: boolean;
+    };
     disableUpdate?: boolean;
   } | null;
 }
