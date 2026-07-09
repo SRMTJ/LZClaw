@@ -18,6 +18,7 @@ interface SubagentSessionDetailProps {
 
 const SubagentSessionDetail: React.FC<SubagentSessionDetailProps> = ({ subagent, onBack, isSidebarCollapsed, onToggleSidebar, onNewChat, updateBadge }) => {
   const isMac = window.electron.platform === 'darwin';
+  const isWindows = window.electron.platform === 'win32';
   const [messages, setMessages] = useState<CoworkMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState<'running' | 'done' | 'error'>(subagent.status);
@@ -95,7 +96,7 @@ const SubagentSessionDetail: React.FC<SubagentSessionDetailProps> = ({ subagent,
       {/* Header */}
       <div className="draggable flex h-12 items-center gap-3 border-b border-border px-4 bg-background shrink-0">
         <div className="non-draggable flex items-center gap-2">
-          {isSidebarCollapsed && (
+          {isSidebarCollapsed && !isWindows && (
             <div className={`flex items-center gap-1 mr-1 ${isMac ? 'pl-[68px]' : ''}`}>
               <button
                 type="button"

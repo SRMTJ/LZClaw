@@ -28,7 +28,7 @@ import Toast from './components/Toast';
 import AppUpdateBadge from './components/update/AppUpdateBadge';
 import AppUpdateModal from './components/update/AppUpdateModal';
 import WelcomeDialog from './components/WelcomeDialog';
-import WindowTitleBar from './components/window/WindowTitleBar';
+import WindowsAppTitleBar from './components/window/WindowsAppTitleBar';
 import { defaultConfig, getProviderDisplayName, ShortcutAction } from './config';
 import type { ApiConfig } from './services/api';
 import { apiService } from './services/api';
@@ -96,6 +96,7 @@ const App: React.FC = () => {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [, forceLanguageRefresh] = useState(0);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(244);
   const [appUpdateState, setAppUpdateState] = useState<AppUpdateRuntimeState>({
     status: AppUpdateStatus.Idle,
     source: null,
@@ -397,6 +398,14 @@ const App: React.FC = () => {
   }, [openHomeWithKit]);
 
   const handleToggleSidebar = useCallback(() => {
+    const nextCollapsed = !isSidebarCollapsed;
+    const message = `sidebar toggle requested activeView=${mainView} nextCollapsed=${nextCollapsed} platform=${window.electron.platform}`;
+    console.debug(`[AppLayout] ${message}`);
+    try {
+      window.electron?.log?.fromRenderer?.('debug', 'AppLayout', message);
+    } catch {
+      // Logging should never block sidebar interactions.
+    }
     void reportYdAnalyzer({
       action: LogReporterAction.SidebarAction,
       source: 'home_sidebar',
@@ -990,10 +999,20 @@ const App: React.FC = () => {
       onClick={handleOpenUpdateModal}
     />
   ) : null;
+  const canUseWindowsTopBarActions = isInitialized && !initError;
+  const canUseWindowsCollapsedTopBarActions = canUseWindowsTopBarActions && isSidebarCollapsed;
+  const collapsedHeaderUpdateBadge = isSidebarCollapsed && !isWindows ? updateBadge : null;
   const windowsStandaloneTitleBar = isWindows ? (
-    <div className="draggable relative h-9 shrink-0 bg-surface-raised">
-      <WindowTitleBar isOverlayActive={isOverlayActive} />
-    </div>
+    <WindowsAppTitleBar
+      isOverlayActive={isOverlayActive}
+      isSidebarCollapsed={isSidebarCollapsed}
+      sidebarWidth={sidebarWidth}
+      onToggleSidebar={canUseWindowsTopBarActions ? handleToggleSidebar : undefined}
+      onNewChat={canUseWindowsCollapsedTopBarActions ? handleNewChat : undefined}
+      sidebarToggleLabel={isSidebarCollapsed ? i18nService.t('expand') : i18nService.t('collapse')}
+      newChatLabel={i18nService.t('newChat')}
+      updateBadge={canUseWindowsCollapsedTopBarActions ? updateBadge : null}
+    />
   ) : null;
 
   if (!isInitialized) {
@@ -1054,6 +1073,7 @@ const App: React.FC = () => {
       {toastMessage && (
         <Toast message={toastMessage} onClose={() => setToastMessage(null)} />
       )}
+      {windowsStandaloneTitleBar}
       <div className="flex flex-1 min-h-0 overflow-hidden">
         <Sidebar
           onShowLogin={handleShowLogin}
@@ -1067,6 +1087,7 @@ const App: React.FC = () => {
           onNewChat={handleNewChat}
           isCollapsed={isSidebarCollapsed}
           onToggleCollapse={handleToggleSidebar}
+          onWidthChange={setSidebarWidth}
           updateBadge={!isSidebarCollapsed ? updateBadge : null}
           hideLogin={enterpriseConfig?.ui?.login === 'hide'}
         />
@@ -1079,7 +1100,7 @@ const App: React.FC = () => {
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}
                 onCreateSkillByChat={handleCreateSkillByChat}
-                updateBadge={isSidebarCollapsed ? updateBadge : null}
+                updateBadge={collapsedHeaderUpdateBadge}
                 readOnly={enterpriseConfig?.ui?.skills === 'readonly'}
               />
             ) : mainView === 'scheduledTasks' ? (
@@ -1087,14 +1108,14 @@ const App: React.FC = () => {
                 isSidebarCollapsed={isSidebarCollapsed}
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}
-                updateBadge={isSidebarCollapsed ? updateBadge : null}
+                updateBadge={collapsedHeaderUpdateBadge}
               />
             ) : mainView === 'kits' ? (
               <KitsView
                 isSidebarCollapsed={isSidebarCollapsed}
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}
-                updateBadge={isSidebarCollapsed ? updateBadge : null}
+                updateBadge={collapsedHeaderUpdateBadge}
                 onTryAsking={handleKitTryAsking}
                 onUseKit={handleKitUse}
               />
@@ -1103,7 +1124,7 @@ const App: React.FC = () => {
                 isSidebarCollapsed={isSidebarCollapsed}
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}
-                updateBadge={isSidebarCollapsed ? updateBadge : null}
+                updateBadge={collapsedHeaderUpdateBadge}
               />
             ) : (
               <CoworkView
@@ -1113,7 +1134,7 @@ const App: React.FC = () => {
                 isSidebarCollapsed={isSidebarCollapsed}
                 onToggleSidebar={handleToggleSidebar}
                 onNewChat={handleNewChat}
-                updateBadge={isSidebarCollapsed ? updateBadge : null}
+                updateBadge={collapsedHeaderUpdateBadge}
                 minimizedPermission={isPendingPermissionMinimized ? pendingPermission : null}
                 onRestorePermission={handleRestorePermission}
                 onRespondToPermission={handlePermissionResponse}
