@@ -1,3 +1,6 @@
+import type { CoworkImageAttachmentPayload } from './imageAttachments';
+import type { CoworkSelectedTextSnippet } from './selectedText';
+
 export const CoworkSteerStatus = {
   Pending: 'pending',
   Accepted: 'accepted',
@@ -35,9 +38,19 @@ export interface CoworkPendingSteer {
   id: string;
   sessionId: string;
   text: string;
+  attachments?: CoworkSteerAttachment[];
+  imageAttachments?: CoworkImageAttachmentPayload[];
+  selectedTextSnippets?: CoworkSelectedTextSnippet[];
   status: CoworkSteerStatus;
   createdAt: number;
   updatedAt: number;
   error?: string;
   reason?: CoworkSteerRejectReason;
+}
+
+export interface CoworkSteerAttachment {
+  path: string;
+  name: string;
+  isImage?: boolean;
+  dataUrl?: string;
 }

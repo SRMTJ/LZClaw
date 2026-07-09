@@ -4178,15 +4178,19 @@ if (!gotTheLock) {
           `生成后请妥善保存视频，若误删可在[「个人主页-用量详情-生成任务」](${portalTasksUrl})中下载`,
           '~~（链接有时效性，请尽快下载）~~',
         ].join('\n');
-        const confirmResponse = await getMcpRuntime().askUserInternal([{
-          question: questionText,
-          title: '确认生成视频？',
-          subtitle,
-          options: [
-            { label: '确认生成', description: '开始视频生成任务' },
-            { label: '取消', description: '暂不生成' },
-          ],
-        }]);
+        const confirmResponse = await getMcpRuntime().askUserInternal(
+          [{
+            question: questionText,
+            title: '确认生成视频？',
+            subtitle,
+            options: [
+              { label: '确认生成', description: '开始视频生成任务' },
+              { label: '取消', description: '暂不生成' },
+            ],
+          }],
+          undefined,
+          { sessionKey: request.context.sessionKey },
+        );
 
         const userCancelled = confirmResponse?.behavior === 'deny'
           || confirmResponse?.answers?.[questionText] === '取消';
@@ -7031,6 +7035,14 @@ if (!gotTheLock) {
       : path.join(stateDir, `workspace-${agentId}`);
   };
 
+  const resolveExistingAgentWorkspacePath = (agentId?: string): string => {
+    const normalizedAgentId = agentId?.trim() || AgentId.Main;
+    if (normalizedAgentId !== AgentId.Main && getAgentManager().getAgent(normalizedAgentId) === null) {
+      throw new Error(`Agent ${normalizedAgentId} not found`);
+    }
+    return resolveAgentWorkspacePath(normalizedAgentId);
+  };
+
   const cleanupLegacyIdentityBlockForAgent = async (agentId: string): Promise<AgentLegacyIdentityCleanupResult> => {
     if (agentId !== AgentId.Main && getAgentManager().getAgent(agentId) === null) {
       return buildLegacyIdentityCleanupFailure(`Agent ${agentId} not found`);
@@ -7774,10 +7786,14 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('cowork:bootstrap:read', async (_event, filename: string) => {
+  ipcMain.handle(CoworkIpcChannel.BootstrapRead, async (
+    _event,
+    filename: string,
+    options?: { agentId?: string },
+  ) => {
     try {
-      const mainWorkspace = getMainAgentWorkspacePath(getOpenClawEngineManager().getStateDir());
-      const content = readBootstrapFile(mainWorkspace, filename);
+      const workspace = resolveExistingAgentWorkspacePath(options?.agentId);
+      const content = readBootstrapFile(workspace, filename);
       return { success: true, content };
     } catch (error) {
       return {
@@ -7787,10 +7803,15 @@ if (!gotTheLock) {
       };
     }
   });
-  ipcMain.handle('cowork:bootstrap:write', async (_event, filename: string, content: string) => {
+  ipcMain.handle(CoworkIpcChannel.BootstrapWrite, async (
+    _event,
+    filename: string,
+    content: string,
+    options?: { agentId?: string },
+  ) => {
     try {
-      const mainWorkspace = getMainAgentWorkspacePath(getOpenClawEngineManager().getStateDir());
-      writeBootstrapFile(mainWorkspace, filename, content);
+      const workspace = resolveExistingAgentWorkspacePath(options?.agentId);
+      writeBootstrapFile(workspace, filename, content);
       syncOpenClawConfig({ reason: 'bootstrap-updated' }).catch(err => {
         console.error('[OpenClaw] config sync after bootstrap-updated failed:', err);
       });

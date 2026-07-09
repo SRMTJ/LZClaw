@@ -196,6 +196,13 @@ const reportModelSelected = (
 // so that attachment state survives view switches (cowork ↔ skills, etc.)
 type CoworkAttachment = DraftAttachment;
 
+interface PreparedPromptPayload {
+  finalPrompt: string;
+  imageAttachments?: CoworkImageAttachment[];
+  mediaReferences?: MediaAttachmentRef[];
+  selectedTextSnippets?: CoworkSelectedTextSnippet[];
+}
+
 const IMAGE_ATTACHMENT_PREVIEW_MAX_DIMENSION = 512;
 const IMAGE_ATTACHMENT_PREVIEW_QUALITY = 0.78;
 
@@ -1022,72 +1029,6 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   }, [dispatch, sessionId, steerDraft, steerValue]);
 
   useEffect(() => {
-    const wasStreaming = wasStreamingRef.current;
-    wasStreamingRef.current = isStreaming;
-    if (isStreaming || !wasStreaming || !sessionId || remoteManaged || disabled) {
-      return;
-    }
-
-    if (suppressQueuedSteerAfterStopRef.current) {
-      suppressQueuedSteerAfterStopRef.current = false;
-      interruptingQueuedSteerIdRef.current = null;
-      console.debug(
-        `[CoworkSteer] skipped queued follow-up after manual stop for session ${sessionId}; `
-        + `queued=${pendingSteers.length}.`,
-      );
-      return;
-    }
-
-    const interruptingQueuedSteerId = interruptingQueuedSteerIdRef.current;
-    const nextQueuedSteer = interruptingQueuedSteerId
-      ? pendingSteers.find(steer => steer.id === interruptingQueuedSteerId) ?? pendingSteers[0]
-      : pendingSteers[0];
-    if (!nextQueuedSteer) {
-      interruptingQueuedSteerIdRef.current = null;
-      return;
-    }
-    if (autoSubmittingQueuedSteerRef.current === nextQueuedSteer.id) {
-      return;
-    }
-
-    autoSubmittingQueuedSteerRef.current = nextQueuedSteer.id;
-    interruptingQueuedSteerIdRef.current = null;
-    console.debug(
-      `[CoworkSteer] active turn ${interruptingQueuedSteerId ? 'interrupted' : 'completed'}; `
-      + `submitting queued follow-up for session ${sessionId}; `
-      + `id=${nextQueuedSteer.id}; chars=${nextQueuedSteer.text.length}.`,
-    );
-    void Promise.resolve(onSubmit(
-      nextQueuedSteer.text,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      CoworkCollaborationMode.Default,
-    ))
-      .then((result) => {
-        if (result === false) {
-          console.warn(
-            `[CoworkSteer] queued follow-up was rejected by normal continue flow for session ${sessionId}; `
-            + `id=${nextQueuedSteer.id}.`,
-          );
-          return;
-        }
-        dispatch(removePendingSteer({ sessionId, steerId: nextQueuedSteer.id }));
-      })
-      .catch((error) => {
-        console.error(
-          `[CoworkSteer] failed to submit queued follow-up for session ${sessionId}; `
-          + `id=${nextQueuedSteer.id}.`,
-          error,
-        );
-      })
-      .finally(() => {
-        autoSubmittingQueuedSteerRef.current = null;
-      });
-  }, [disabled, dispatch, isStreaming, onSubmit, pendingSteers, remoteManaged, sessionId]);
-
-  useEffect(() => {
     if (!(steerInputActive ? steerValue : value)) {
       setTextareaScrollTop(0);
     }
@@ -1199,6 +1140,258 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     }
   }, [dispatch, draftKey]);
 
+  const preparePromptPayload = useCallback(async (options: {
+    basePrompt: string;
+    attachments: CoworkAttachment[];
+    selectedTextSnippets: CoworkSelectedTextSnippet[];
+    submitMethod: 'button' | 'keyboard' | 'voice';
+  }): Promise<PreparedPromptPayload | null> => {
+    const {
+      basePrompt,
+      attachments: sourceAttachments,
+      selectedTextSnippets: sourceSelectedTextSnippets,
+      submitMethod,
+    } = options;
+
+    console.debug('[CoworkPromptInput] preparePromptPayload: attachment diagnosis', {
+      totalAttachments: sourceAttachments.length,
+      modelSupportsImage,
+      effectiveModelId: effectiveSelectedModel?.id ?? null,
+      ...getAttachmentAnalyticsParams(sourceAttachments),
+      imageAttachmentDataUrlCount: sourceAttachments.filter(item => item.isImage && item.dataUrl).length,
+    });
+
+    const imageAttachments: CoworkImageAttachment[] = [];
+    const imageAttachmentPathsWithPayload = new Set<string>();
+    for (const attachment of sourceAttachments) {
+      let imageDataUrl = attachment.dataUrl;
+      if (attachment.isImage && !imageDataUrl && modelSupportsImage && !attachment.path.startsWith('inline:')) {
+        try {
+          const readResult = await window.electron.dialog.readFileAsDataUrl(attachment.path);
+          if (readResult.success && readResult.dataUrl) {
+            imageDataUrl = readResult.dataUrl;
+            console.debug('[CoworkPromptInput] preparePromptPayload: rehydrated queued image attachment', {
+              path: attachment.path,
+              dataUrlLength: readResult.dataUrl.length,
+            });
+          } else {
+            console.warn('[CoworkPromptInput] preparePromptPayload: failed to rehydrate queued image attachment', {
+              path: attachment.path,
+              success: readResult.success,
+            });
+          }
+        } catch (error) {
+          console.warn('[CoworkPromptInput] preparePromptPayload: queued image rehydrate threw', error);
+        }
+      }
+
+      if (attachment.isImage && imageDataUrl) {
+        const extracted = extractBase64FromDataUrl(imageDataUrl);
+        if (extracted) {
+          const sizeValidation = validateCoworkImageAttachmentSize({
+            base64Data: extracted.base64Data,
+          });
+          if (!sizeValidation.ok) {
+            console.warn('[CoworkPromptInput] image attachment exceeded single-file limit:', {
+              mimeType: extracted.mimeType,
+              sizeBytes: sizeValidation.sizeBytes,
+              maxBytes: sizeValidation.maxBytes,
+              base64Length: extracted.base64Data.length,
+            });
+            showToast(
+              i18nService.t('coworkImageAttachmentTooLarge')
+                .replace('{name}', attachment.name)
+                .replace('{limit}', formatCoworkImageAttachmentLimit(sizeValidation.maxBytes)),
+            );
+            reportPromptControl('submit_blocked', {
+              blockedReason: 'image_attachment_too_large',
+              submitMethod,
+              ...getPromptTextAnalyticsParams(basePrompt),
+              attachmentCount: sourceAttachments.length,
+              imageAttachmentCount: sourceAttachments.filter(item => item.isImage).length,
+            });
+            return null;
+          }
+
+          let previewMimeType: string | undefined;
+          let previewBase64Data: string | undefined;
+          if (sizeValidation.sizeBytes > COWORK_IMAGE_ATTACHMENT_PREVIEW_FALLBACK_MAX_BYTES) {
+            try {
+              const previewDataUrl = await createImagePreviewDataUrl(imageDataUrl);
+              const preview = extractBase64FromDataUrl(previewDataUrl);
+              if (preview) {
+                previewMimeType = preview.mimeType;
+                previewBase64Data = preview.base64Data;
+              }
+            } catch (error) {
+              console.warn('[CoworkPromptInput] failed to create image preview:', error);
+            }
+            if (!previewBase64Data) {
+              showToast(
+                i18nService.t('coworkImageAttachmentPreviewFailed')
+                  .replace('{name}', attachment.name),
+              );
+              reportPromptControl('submit_blocked', {
+                blockedReason: 'image_preview_failed',
+                submitMethod,
+                ...getPromptTextAnalyticsParams(basePrompt),
+                attachmentCount: sourceAttachments.length,
+                imageAttachmentCount: sourceAttachments.filter(item => item.isImage).length,
+              });
+              return null;
+            }
+          }
+
+          imageAttachments.push({
+            name: attachment.name,
+            mimeType: extracted.mimeType,
+            base64Data: extracted.base64Data,
+            sizeBytes: sizeValidation.sizeBytes,
+            ...(!attachment.path.startsWith('inline:') ? { localPath: attachment.path } : {}),
+            ...(previewMimeType && previewBase64Data ? { previewMimeType, previewBase64Data } : {}),
+          });
+          imageAttachmentPathsWithPayload.add(attachment.path);
+        } else {
+          console.warn('[CoworkPromptInput] preparePromptPayload: extractBase64FromDataUrl returned null', {
+            isImage: attachment.isImage,
+            hasDataUrl: !!imageDataUrl,
+            dataUrlLength: imageDataUrl.length,
+          });
+        }
+      } else if (attachment.isImage) {
+        console.warn('[CoworkPromptInput] preparePromptPayload: image attachment missing dataUrl', {
+          isImage: attachment.isImage,
+          hasDataUrl: !!attachment.dataUrl,
+        });
+      }
+    }
+
+    const attachmentLines = sourceAttachments
+      .filter((a) => !a.path.startsWith('inline:') && !(a.isImage && imageAttachmentPathsWithPayload.has(a.path)))
+      .map((attachment) => `${i18nService.t('inputFileLabel')}: ${attachment.path}`)
+      .join('\n');
+    const finalPrompt = basePrompt
+      ? (attachmentLines ? `${basePrompt}\n\n${attachmentLines}` : basePrompt)
+      : attachmentLines;
+    const sourceMediaLabels = computeMediaLabels(sourceAttachments);
+    const mediaReferences = extractMediaReferencesFromPrompt(finalPrompt, sourceMediaLabels);
+
+    logPromptModelSelection(
+      'debug',
+      `prepared prompt summary: ${summarizePromptShape(finalPrompt)}, `
+      + `attachments=${sourceAttachments.length}, imageAttachments=${imageAttachments.length}, `
+      + `mediaReferences=${mediaReferences.length}`,
+    );
+
+    if (imageAttachments.length > 0) {
+      console.debug('[CoworkPromptInput] preparePromptPayload: passing image attachments to submit', {
+        count: imageAttachments.length,
+        base64Lengths: imageAttachments.map(a => a.base64Data.length),
+      });
+    } else if (sourceAttachments.some(a => a.isImage || isImagePath(a.path))) {
+      console.warn('[CoworkPromptInput] preparePromptPayload: has image-like attachments but imageAtts is EMPTY; images will not be sent as base64', {
+        imageAttachmentCount: sourceAttachments.filter(a => a.isImage || isImagePath(a.path)).length,
+        imageAttachmentDataUrlCount: sourceAttachments.filter(a => (a.isImage || isImagePath(a.path)) && a.dataUrl).length,
+      });
+    }
+
+    return {
+      finalPrompt,
+      imageAttachments: imageAttachments.length > 0 ? imageAttachments : undefined,
+      mediaReferences: mediaReferences.length > 0 ? mediaReferences : undefined,
+      selectedTextSnippets: sourceSelectedTextSnippets.length > 0 ? sourceSelectedTextSnippets : undefined,
+    };
+  }, [
+    effectiveSelectedModel?.id,
+    modelSupportsImage,
+    reportPromptControl,
+  ]);
+
+  useEffect(() => {
+    const wasStreaming = wasStreamingRef.current;
+    wasStreamingRef.current = isStreaming;
+    if (isStreaming || !wasStreaming || !sessionId || remoteManaged || disabled) {
+      return;
+    }
+
+    if (suppressQueuedSteerAfterStopRef.current) {
+      suppressQueuedSteerAfterStopRef.current = false;
+      interruptingQueuedSteerIdRef.current = null;
+      console.debug(
+        `[CoworkSteer] skipped queued follow-up after manual stop for session ${sessionId}; `
+        + `queued=${pendingSteers.length}.`,
+      );
+      return;
+    }
+
+    const interruptingQueuedSteerId = interruptingQueuedSteerIdRef.current;
+    const nextQueuedSteer = interruptingQueuedSteerId
+      ? pendingSteers.find(steer => steer.id === interruptingQueuedSteerId) ?? pendingSteers[0]
+      : pendingSteers[0];
+    if (!nextQueuedSteer) {
+      interruptingQueuedSteerIdRef.current = null;
+      return;
+    }
+    if (autoSubmittingQueuedSteerRef.current === nextQueuedSteer.id) {
+      return;
+    }
+
+    autoSubmittingQueuedSteerRef.current = nextQueuedSteer.id;
+    interruptingQueuedSteerIdRef.current = null;
+    console.debug(
+      `[CoworkSteer] active turn ${interruptingQueuedSteerId ? 'interrupted' : 'completed'}; `
+      + `preparing queued follow-up for session ${sessionId}; `
+      + `id=${nextQueuedSteer.id}; chars=${nextQueuedSteer.text.length}; `
+      + `attachments=${nextQueuedSteer.attachments?.length ?? 0}.`,
+    );
+
+    void preparePromptPayload({
+      basePrompt: nextQueuedSteer.text,
+      attachments: nextQueuedSteer.attachments ?? [],
+      selectedTextSnippets: nextQueuedSteer.selectedTextSnippets ?? [],
+      submitMethod: 'button',
+    })
+      .then((payload) => {
+        if (!payload) {
+          return false;
+        }
+        console.debug(
+          `[CoworkSteer] submitting queued follow-up for session ${sessionId}; `
+          + `id=${nextQueuedSteer.id}; chars=${payload.finalPrompt.length}; `
+          + `imageAttachments=${payload.imageAttachments?.length ?? 0}; `
+          + `mediaReferences=${payload.mediaReferences?.length ?? 0}.`,
+        );
+        return onSubmit(
+          payload.finalPrompt,
+          undefined,
+          payload.imageAttachments,
+          payload.mediaReferences,
+          payload.selectedTextSnippets,
+          CoworkCollaborationMode.Default,
+        );
+      })
+      .then((result) => {
+        if (result === false) {
+          console.warn(
+            `[CoworkSteer] queued follow-up was rejected by normal continue flow for session ${sessionId}; `
+            + `id=${nextQueuedSteer.id}.`,
+          );
+          return;
+        }
+        dispatch(removePendingSteer({ sessionId, steerId: nextQueuedSteer.id }));
+      })
+      .catch((error) => {
+        console.error(
+          `[CoworkSteer] failed to submit queued follow-up for session ${sessionId}; `
+          + `id=${nextQueuedSteer.id}.`,
+          error,
+        );
+      })
+      .finally(() => {
+        autoSubmittingQueuedSteerRef.current = null;
+      });
+  }, [disabled, dispatch, isStreaming, onSubmit, pendingSteers, preparePromptPayload, remoteManaged, sessionId]);
+
   const handleSubmit = useCallback(async (submitMethod: 'button' | 'keyboard' | 'voice' = 'button') => {
     let effectiveSubmitMethod = submitMethod;
     const shouldSubmitAsSteer = isStreaming
@@ -1267,9 +1460,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       && !remoteManaged;
     if (shouldQueueFollowUp) {
       const followUpText = value.trim();
-      if (!followUpText || disabled || isPatchingModel) {
+      if ((!followUpText && attachments.length === 0) || disabled || isPatchingModel) {
         reportPromptControl('submit_blocked', {
-          blockedReason: !followUpText ? 'empty_follow_up' : disabled ? 'disabled' : 'model_patching',
+          blockedReason: !followUpText && attachments.length === 0
+            ? 'empty_follow_up'
+            : disabled
+              ? 'disabled'
+              : 'model_patching',
           submitMethod: effectiveSubmitMethod,
           ...getPromptTextAnalyticsParams(followUpText),
         });
@@ -1289,17 +1486,39 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         showToast(i18nService.t('coworkSteerQueueFull'));
         return;
       }
+      const queuedPayload = await preparePromptPayload({
+        basePrompt: followUpText,
+        attachments,
+        selectedTextSnippets,
+        submitMethod: effectiveSubmitMethod,
+      });
+      if (!queuedPayload) {
+        return;
+      }
+      const queuedAttachments = attachments.map((attachment) => ({
+        path: attachment.path,
+        name: attachment.name,
+        isImage: attachment.isImage,
+        ...(attachment.path.startsWith('inline:') && attachment.dataUrl
+          ? { dataUrl: attachment.dataUrl }
+          : {}),
+      }));
 
       const queuedSteerId = `steer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const now = Date.now();
       console.debug(
         `[CoworkSteer] queued follow-up input for active session ${sessionId}; `
-        + `id=${queuedSteerId}; chars=${followUpText.length}.`,
+        + `id=${queuedSteerId}; chars=${followUpText.length}; `
+        + `attachments=${attachments.length}; `
+        + `queuedAttachmentDataUrls=${queuedAttachments.filter(attachment => Boolean(attachment.dataUrl)).length}; `
+        + `mediaReferences=${queuedPayload.mediaReferences?.length ?? 0}.`,
       );
       dispatch(addPendingSteer({
         id: queuedSteerId,
         sessionId,
         text: followUpText,
+        attachments: queuedAttachments.length > 0 ? queuedAttachments : undefined,
+        selectedTextSnippets: queuedPayload.selectedTextSnippets,
         status: CoworkSteerStatus.Pending,
         createdAt: now,
         updatedAt: now,
@@ -1316,10 +1535,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         submitMethod: effectiveSubmitMethod,
         promptLength: followUpText.length,
         promptLineCount: followUpText.length > 0 ? followUpText.split('\n').length : 0,
-        hasPrompt: true,
+        hasPrompt: queuedPayload.finalPrompt.length > 0,
         params: {
           inputSource: 'queued_follow_up',
-          mediaReferenceCount: 0,
+          mediaReferenceCount: queuedPayload.mediaReferences?.length ?? 0,
           selectedTextSnippetCount: selectedTextSnippets.length,
           effectiveCollaborationMode: CoworkCollaborationMode.Default,
         },
@@ -1491,139 +1710,23 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       );
     }
 
-    // Extract image attachments (with base64 data) for vision-capable models
-    console.debug('[CoworkPromptInput] handleSubmit: attachment diagnosis', {
-      totalAttachments: attachments.length,
-      modelSupportsImage,
-      effectiveModelId: effectiveSelectedModel?.id ?? null,
-      ...getAttachmentAnalyticsParams(attachments),
-      imageAttachmentDataUrlCount: attachments.filter(item => item.isImage && item.dataUrl).length,
-    });
-    const imageAtts: CoworkImageAttachment[] = [];
-    for (const attachment of attachments) {
-      if (attachment.isImage && attachment.dataUrl) {
-        const extracted = extractBase64FromDataUrl(attachment.dataUrl);
-        if (extracted) {
-          const sizeValidation = validateCoworkImageAttachmentSize({
-            base64Data: extracted.base64Data,
-          });
-          if (!sizeValidation.ok) {
-            console.warn('[CoworkPromptInput] image attachment exceeded single-file limit:', {
-              mimeType: extracted.mimeType,
-              sizeBytes: sizeValidation.sizeBytes,
-              maxBytes: sizeValidation.maxBytes,
-              base64Length: extracted.base64Data.length,
-            });
-            showToast(
-              i18nService.t('coworkImageAttachmentTooLarge')
-                .replace('{name}', attachment.name)
-                .replace('{limit}', formatCoworkImageAttachmentLimit(sizeValidation.maxBytes)),
-            );
-            reportPromptControl('submit_blocked', {
-              blockedReason: 'image_attachment_too_large',
-              submitMethod: effectiveSubmitMethod,
-              ...getPromptTextAnalyticsParams(trimmedValue),
-              attachmentCount: attachments.length,
-              imageAttachmentCount: attachments.filter(item => item.isImage).length,
-            });
-            return;
-          }
-
-          let previewMimeType: string | undefined;
-          let previewBase64Data: string | undefined;
-          if (sizeValidation.sizeBytes > COWORK_IMAGE_ATTACHMENT_PREVIEW_FALLBACK_MAX_BYTES) {
-            try {
-              const previewDataUrl = await createImagePreviewDataUrl(attachment.dataUrl);
-              const preview = extractBase64FromDataUrl(previewDataUrl);
-              if (preview) {
-                previewMimeType = preview.mimeType;
-                previewBase64Data = preview.base64Data;
-              }
-            } catch (error) {
-              console.warn('[CoworkPromptInput] failed to create image preview:', error);
-            }
-            if (!previewBase64Data) {
-              showToast(
-                i18nService.t('coworkImageAttachmentPreviewFailed')
-                  .replace('{name}', attachment.name),
-              );
-              reportPromptControl('submit_blocked', {
-                blockedReason: 'image_preview_failed',
-                submitMethod: effectiveSubmitMethod,
-                ...getPromptTextAnalyticsParams(trimmedValue),
-                attachmentCount: attachments.length,
-                imageAttachmentCount: attachments.filter(item => item.isImage).length,
-              });
-              return;
-            }
-          }
-
-          imageAtts.push({
-            name: attachment.name,
-            mimeType: extracted.mimeType,
-            base64Data: extracted.base64Data,
-            sizeBytes: sizeValidation.sizeBytes,
-            ...(!attachment.path.startsWith('inline:') ? { localPath: attachment.path } : {}),
-            ...(previewMimeType && previewBase64Data ? { previewMimeType, previewBase64Data } : {}),
-          });
-        } else {
-          console.warn('[CoworkPromptInput] handleSubmit: extractBase64FromDataUrl returned null', {
-            isImage: attachment.isImage,
-            hasDataUrl: !!attachment.dataUrl,
-            dataUrlLength: attachment.dataUrl.length,
-          });
-        }
-      } else if (attachment.isImage) {
-        console.warn('[CoworkPromptInput] handleSubmit: image attachment missing dataUrl', {
-          isImage: attachment.isImage,
-          hasDataUrl: !!attachment.dataUrl,
-        });
-      }
-    }
-
-    // Build prompt with ALL attachments that have real file paths (both regular files and images).
-    // Image attachments also need their file paths in the prompt so the model knows
-    // where the original files are located (e.g., for skills like seedream that need --image <path>).
-    // Note: inline/clipboard images have pseudo-paths starting with 'inline:' and are excluded.
-    // Note: image attachments that already carry base64 data are excluded — their content
-    // is delivered via the attachments parameter of chat.send. Including the file path
-    // would trigger OpenClaw's Native-image detection, which rejects paths outside allowed
-    // directories and can drop the base64 image during sanitization (macOS-only bug).
-    const attachmentLines = attachments
-      .filter((a) => !a.path.startsWith('inline:') && !(a.isImage && a.dataUrl))
-      .map((attachment) => `${i18nService.t('inputFileLabel')}: ${attachment.path}`)
-      .join('\n');
     const goalCommandPrompt = goalInputActive ? `/goal ${goalInputMode} ${trimmedValue}` : trimmedValue;
-    const finalPrompt = goalCommandPrompt
-      ? (attachmentLines ? `${goalCommandPrompt}\n\n${attachmentLines}` : goalCommandPrompt)
-      : attachmentLines;
-
-    logPromptModelSelection(
-      'debug',
-      `submitting prompt summary: ${summarizePromptShape(finalPrompt)}, attachments=${attachments.length}, imageAttachments=${imageAtts.length}`
-    );
-
-    if (imageAtts.length > 0) {
-      console.debug('[CoworkPromptInput] handleSubmit: passing imageAtts to onSubmit', {
-        count: imageAtts.length,
-        base64Lengths: imageAtts.map(a => a.base64Data.length),
-      });
-    } else if (attachments.some(a => a.isImage || isImagePath(a.path))) {
-      console.warn('[CoworkPromptInput] handleSubmit: has image-like attachments but imageAtts is EMPTY — images will NOT be sent as base64', {
-        imageAttachmentCount: attachments.filter(a => a.isImage || isImagePath(a.path)).length,
-        imageAttachmentDataUrlCount: attachments.filter(a => (a.isImage || isImagePath(a.path)) && a.dataUrl).length,
-      });
+    const promptPayload = await preparePromptPayload({
+      basePrompt: goalCommandPrompt,
+      attachments,
+      selectedTextSnippets,
+      submitMethod: effectiveSubmitMethod,
+    });
+    if (!promptPayload) {
+      return;
     }
-
-    // Resolve @media tokens into MediaAttachmentRef array
-    const mediaReferences = extractMediaReferencesFromPrompt(finalPrompt, mediaLabels);
 
     const result = await onSubmit(
-      finalPrompt,
+      promptPayload.finalPrompt,
       skillPrompt,
-      imageAtts.length > 0 ? imageAtts : undefined,
-      mediaReferences.length > 0 ? mediaReferences : undefined,
-      selectedTextSnippets.length > 0 ? selectedTextSnippets : undefined,
+      promptPayload.imageAttachments,
+      promptPayload.mediaReferences,
+      promptPayload.selectedTextSnippets,
       effectiveCollaborationMode,
     );
     if (result === false) {
@@ -1636,7 +1739,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       return;
     }
     if (goalInputActive && sessionId) {
-      const optimisticGoal = applyOptimisticGoalCommand(finalPrompt, goal, sessionId);
+      const optimisticGoal = applyOptimisticGoalCommand(promptPayload.finalPrompt, goal, sessionId);
       if (optimisticGoal !== undefined) {
         console.debug(`[CoworkGoal] applying optimistic goal after submit for session ${sessionId}.`);
         dispatch(updateSessionGoal({ sessionId, goal: optimisticGoal }));
@@ -1652,8 +1755,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       params: {
         ...getPromptCapabilityAnalyticsParams(),
         ...getPromptTextAnalyticsParams(trimmedValue),
-        inputSource: getPromptInputSource(effectiveSubmitMethod, mediaReferences.length),
-        mediaReferenceCount: mediaReferences.length,
+        inputSource: getPromptInputSource(effectiveSubmitMethod, promptPayload.mediaReferences?.length ?? 0),
+        mediaReferenceCount: promptPayload.mediaReferences?.length ?? 0,
         selectedTextSnippetCount: selectedTextSnippets.length,
         effectiveCollaborationMode,
       },
@@ -1681,7 +1784,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     resetGoalInput(false);
     draftStartedAnalyticsRef.current = false;
     inputSourceOverrideRef.current = null;
-  }, [value, steerInputActive, steerValue, isVoiceRecording, stopVoiceRecordingAndRecognize, goalInputActive, goalInputMode, resetGoalInput, isStreaming, canSteer, remoteManaged, disabled, isPatchingModel, onSubmit, onGoalCommand, activeSkillIds, skills, activeKitIds, marketplaceKits, installedKits, attachments, showFolderSelector, workingDirectory, dispatch, draftKey, effectiveSelectedModel?.id, modelSupportsImage, mediaLabels, selectedTextSnippets, pendingSteers.length, resolveSubmitModelAccessPrompt, isPlanMode, planConfirmation, reportPromptControl, getPromptCapabilityAnalyticsParams, getPromptContextAnalyticsParams, getPromptInputSource, goal, sessionId]);
+  }, [value, steerInputActive, steerValue, isVoiceRecording, stopVoiceRecordingAndRecognize, goalInputActive, goalInputMode, resetGoalInput, isStreaming, canSteer, remoteManaged, disabled, isPatchingModel, onSubmit, onGoalCommand, activeSkillIds, skills, activeKitIds, marketplaceKits, installedKits, attachments, showFolderSelector, workingDirectory, dispatch, draftKey, selectedTextSnippets, pendingSteers.length, resolveSubmitModelAccessPrompt, isPlanMode, planConfirmation, reportPromptControl, getPromptCapabilityAnalyticsParams, getPromptContextAnalyticsParams, getPromptInputSource, goal, sessionId, preparePromptPayload]);
 
   const handleSelectSkill = useCallback((skill: Skill) => {
     const willSelect = !activeSkillIds.includes(skill.id);
@@ -2032,10 +2135,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
   }, [fileToBase64, workingDirectory]);
 
   const handleIncomingFiles = useCallback(async (fileList: FileList | File[], source: 'drop' | 'paste' | 'picker' | 'unknown' = 'unknown') => {
-    if (disabled || isStreaming || voiceInputLocksEditing) {
+    if (disabled || voiceInputLocksEditing) {
       reportPromptControl('attachment_add_blocked', {
         source,
-        blockedReason: disabled ? 'disabled' : isStreaming ? 'streaming' : 'voice_input_active',
+        blockedReason: disabled ? 'disabled' : 'voice_input_active',
       });
       return;
     }
@@ -2144,13 +2247,13 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       hasImageWithoutVision,
       ...getAttachmentAnalyticsParams(incomingAttachments),
     });
-  }, [addAttachment, addImageAttachmentFromDataUrl, disabled, effectiveSelectedModel, fileToDataUrl, getNativeFilePath, isStreaming, modelSupportsImage, reportPromptControl, saveInlineFile, voiceInputLocksEditing]);
+  }, [addAttachment, addImageAttachmentFromDataUrl, disabled, effectiveSelectedModel, fileToDataUrl, getNativeFilePath, modelSupportsImage, reportPromptControl, saveInlineFile, voiceInputLocksEditing]);
 
   const handleAddFile = useCallback(async () => {
-    if (isAddingFile || disabled || isStreaming || voiceInputLocksEditing) {
+    if (isAddingFile || disabled || voiceInputLocksEditing) {
       reportPromptControl('attachment_add_blocked', {
         source: 'picker',
-        blockedReason: isAddingFile ? 'adding_file' : disabled ? 'disabled' : isStreaming ? 'streaming' : 'voice_input_active',
+        blockedReason: isAddingFile ? 'adding_file' : disabled ? 'disabled' : 'voice_input_active',
       });
       return;
     }
@@ -2219,7 +2322,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     } finally {
       setIsAddingFile(false);
     }
-  }, [addAttachment, effectiveSelectedModel, isAddingFile, disabled, isStreaming, modelSupportsImage, reportPromptControl, voiceInputLocksEditing]);
+  }, [addAttachment, effectiveSelectedModel, isAddingFile, disabled, modelSupportsImage, reportPromptControl, voiceInputLocksEditing]);
 
   const handleOpenAddMenu = useCallback(() => {
     reportPromptControl(showAddMenu ? 'add_menu_close' : 'add_menu_open', {
@@ -2462,7 +2565,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     event.preventDefault();
     event.stopPropagation();
     dragDepthRef.current += 1;
-    if (!disabled && !isStreaming) {
+    if (!disabled && !voiceInputLocksEditing) {
       setIsDraggingFiles(true);
     }
   };
@@ -2471,7 +2574,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     if (!hasFileTransfer(event.dataTransfer)) return;
     event.preventDefault();
     event.stopPropagation();
-    event.dataTransfer.dropEffect = disabled || isStreaming || voiceInputLocksEditing ? 'none' : 'copy';
+    event.dataTransfer.dropEffect = disabled || voiceInputLocksEditing ? 'none' : 'copy';
   };
 
   const handleDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
@@ -2490,23 +2593,23 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     event.stopPropagation();
     dragDepthRef.current = 0;
     setIsDraggingFiles(false);
-    if (disabled || isStreaming || voiceInputLocksEditing) return;
+    if (disabled || voiceInputLocksEditing) return;
     void handleIncomingFiles(event.dataTransfer.files, 'drop');
   };
 
   const handlePaste = useCallback((event: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    if (disabled || isStreaming || voiceInputLocksEditing) return;
+    if (disabled || voiceInputLocksEditing) return;
     const files = Array.from(event.clipboardData?.files ?? []);
     if (files.length === 0) return;
     event.preventDefault();
     void handleIncomingFiles(files, 'paste');
-  }, [disabled, handleIncomingFiles, isStreaming, voiceInputLocksEditing]);
+  }, [disabled, handleIncomingFiles, voiceInputLocksEditing]);
 
   const canSubmit = !disabled
     && !isVoiceRecognizing
     && !isPatchingModel
     && !agentModelIsInvalid
-    && (!!activeTextareaValue.trim() || (!isStreaming && !steerInputActive && hasAttachments));
+    && (!!activeTextareaValue.trim() || (!steerInputActive && hasAttachments));
   const enhancedContainerClass = isDraggingFiles
     ? `${containerClass} ring-2 ring-primary/50 border-primary/60`
     : containerClass;
@@ -2678,7 +2781,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             onClick={handleAddFile}
             onMouseEnter={handleCloseSkillsPopover}
             onFocus={handleCloseSkillsPopover}
-            disabled={disabled || isStreaming || isAddingFile || voiceInputLocksEditing}
+            disabled={disabled || isAddingFile || voiceInputLocksEditing}
             className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50"
             role="menuitem"
           >
@@ -2892,6 +2995,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     }
     setValue(steer.text);
     dispatch(setDraftPrompt({ sessionId: draftKey, draft: steer.text }));
+    dispatch(setDraftAttachments({ draftKey, attachments: steer.attachments ?? [] }));
+    dispatch(setDraftSelectedTextSnippets({ draftKey, snippets: steer.selectedTextSnippets ?? [] }));
     requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
@@ -2931,9 +3036,10 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
   const renderSteerQueueItem = (steer: CoworkPendingSteer, source: 'pending' | 'rejected') => {
     const isRejected = source === 'rejected';
+    const displayText = steer.text || steer.attachments?.map(attachment => attachment.name).join(', ') || '';
     const title = isRejected && steer.error
       ? `${i18nService.t('coworkSteerRejected')}: ${steer.error}`
-      : `${i18nService.t('coworkSteerQueued')}: ${steer.text}`;
+      : `${i18nService.t('coworkSteerQueued')}: ${displayText}`;
     return (
       <div
         key={steer.id}
@@ -2951,7 +3057,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           {isRejected ? i18nService.t('coworkSteerRejected') : i18nService.t('coworkSteerQueued')}
         </span>
         <span className="min-w-0 flex-1 truncate">
-          {steer.text}
+          {displayText}
         </span>
         <div className="ml-auto flex shrink-0 items-center gap-1">
           {!isRejected && (
@@ -3624,7 +3730,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg text-secondary hover:bg-surface-raised hover:text-foreground transition-colors"
                   title={i18nService.t('coworkAddFile')}
                   aria-label={i18nService.t('coworkAddFile')}
-                  disabled={disabled || isStreaming || isAddingFile || voiceInputLocksEditing}
+                  disabled={disabled || isAddingFile || voiceInputLocksEditing}
                 >
                   <PaperClipIcon className="h-5 w-5" />
                 </button>

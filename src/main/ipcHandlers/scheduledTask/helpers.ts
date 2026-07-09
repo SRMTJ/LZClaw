@@ -239,7 +239,7 @@ export function resolveConversationAgentIdFromMappings(
  * targets. Input must be sorted by lastActiveAt DESC (listSessionMappings
  * order); the first (most recent) row per peer wins.
  */
-export function dedupeConversationMappings<T extends { imConversationId: string }>(
+export function dedupeConversationMappings<T extends { imConversationId: string; agentId?: string }>(
   mappings: readonly T[],
 ): T[] {
   const seen = new Set<string>();
@@ -247,7 +247,7 @@ export function dedupeConversationMappings<T extends { imConversationId: string 
   for (const mapping of mappings) {
     const parsed = parseImConversationId(mapping.imConversationId);
     if (parsed.peerId.toLowerCase().endsWith(':heartbeat')) continue;
-    const key = `${parsed.peerKind ?? ''}:${parsed.peerId.toLowerCase()}`;
+    const key = `${mapping.agentId ?? ''}:${parsed.peerKind ?? ''}:${parsed.peerId.toLowerCase()}`;
     if (seen.has(key)) continue;
     seen.add(key);
     result.push(mapping);

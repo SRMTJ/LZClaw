@@ -425,7 +425,7 @@ test('channel sync backfills the real OpenClaw session key for existing mappings
   const sessionKey = 'agent:main:feishu:dm:ou_123';
 
   expect(sync.resolveOrCreateSession(sessionKey)).toBe('cowork-1');
-  expect(updateSessionOpenClawSessionKey).toHaveBeenCalledWith('dm:ou_123', 'feishu', sessionKey);
+  expect(updateSessionOpenClawSessionKey).toHaveBeenCalledWith('dm:ou_123', 'feishu', sessionKey, 'main');
 });
 
 test('channel sync corrects existing mapping cwd from the current bound agent', () => {
@@ -484,6 +484,137 @@ test('channel sync corrects existing mapping cwd from the current bound agent', 
     { cwd: '/repo/writer' },
     { touchUpdatedAt: false },
   );
+});
+
+test('channel sync creates separate local sessions for the same group under different agents', () => {
+  let nextId = 0;
+  const mappings: Array<{
+    imConversationId: string;
+    platform: 'feishu';
+    coworkSessionId: string;
+    agentId: string;
+    openClawSessionKey?: string;
+    createdAt: number;
+    lastActiveAt: number;
+  }> = [
+    {
+      imConversationId: 'group:oc_sanitized',
+      platform: 'feishu',
+      coworkSessionId: 'cowork-main',
+      agentId: 'main',
+      openClawSessionKey: 'agent:main:feishu:group:oc_sanitized',
+      createdAt: 1,
+      lastActiveAt: 1,
+    },
+  ];
+  const createSession = vi.fn(((
+    title: string,
+    cwd: string,
+    systemPrompt: string,
+    executionMode: 'local',
+    activeSkillIds: string[],
+    agentId: string,
+  ) => ({
+    id: `cowork-${++nextId}`,
+    title,
+    claudeSessionId: null,
+    status: 'idle' as const,
+    pinned: false,
+    cwd,
+    systemPrompt,
+    modelOverride: '',
+    executionMode,
+    activeSkillIds,
+    agentId,
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1,
+  })));
+  const sync = new OpenClawChannelSessionSync({
+    coworkStore: {
+      getSession: (id: string) => (
+        id === 'cowork-main'
+          ? {
+            id,
+            title: '[Feishu] group:oc_sanitized',
+            claudeSessionId: null,
+            status: 'idle',
+            pinned: false,
+            cwd: '/repo/main',
+            systemPrompt: '',
+            modelOverride: '',
+            executionMode: 'local',
+            activeSkillIds: [],
+            agentId: 'main',
+            messages: [],
+            createdAt: 1,
+            updatedAt: 1,
+          }
+          : null
+      ),
+      createSession,
+    },
+    imStore: {
+      getIMSettings: () => ({
+        skillsEnabled: true,
+        platformAgentBindings: {
+          feishu: 'main',
+        },
+      }),
+      getSessionMappingByOpenClawSessionKey: (sessionKey: string) =>
+        mappings.find(mapping => mapping.openClawSessionKey === sessionKey) ?? null,
+      getSessionMapping: (conversationId: string, platform: 'feishu', agentId?: string) =>
+        mappings.find(mapping =>
+          mapping.imConversationId === conversationId
+          && mapping.platform === platform
+          && (!agentId || mapping.agentId === agentId),
+        ) ?? null,
+      updateSessionLastActive: () => {},
+      deleteSessionMapping: () => {},
+      createSessionMapping: (
+        imConversationId: string,
+        platform: 'feishu',
+        coworkSessionId: string,
+        agentId: string,
+        openClawSessionKey: string,
+      ) => {
+        mappings.push({
+          imConversationId,
+          platform,
+          coworkSessionId,
+          agentId,
+          openClawSessionKey,
+          createdAt: 1,
+          lastActiveAt: 1,
+        });
+      },
+    },
+    getDefaultCwd: (agentId?: string) => `/repo/${agentId || 'main'}`,
+  });
+
+  expect(sync.isCurrentBindingKey('agent:agent-2:feishu:group:oc_sanitized')).toBe(true);
+  expect(sync.resolveOrCreateSession('agent:agent-2:feishu:group:oc_sanitized')).toBe('cowork-1');
+
+  expect(createSession).toHaveBeenCalledWith(
+    expect.any(String),
+    '/repo/agent-2',
+    '',
+    'local',
+    [],
+    'agent-2',
+  );
+  expect(mappings).toEqual([
+    expect.objectContaining({
+      coworkSessionId: 'cowork-main',
+      agentId: 'main',
+      openClawSessionKey: 'agent:main:feishu:group:oc_sanitized',
+    }),
+    expect.objectContaining({
+      coworkSessionId: 'cowork-1',
+      agentId: 'agent-2',
+      openClawSessionKey: 'agent:agent-2:feishu:group:oc_sanitized',
+    }),
+  ]);
 });
 
 // --- buildChannelDisplayName ---

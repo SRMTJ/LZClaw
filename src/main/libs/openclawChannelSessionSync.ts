@@ -394,6 +394,48 @@ export class OpenClawChannelSessionSync {
     );
   }
 
+  private resolveAgentIdForSessionKey(sessionKey: string, platform: Platform): string {
+    const keyAgentId = extractAgentIdFromKey(sessionKey);
+    if (keyAgentId) return keyAgentId;
+
+    const accountId = extractAccountIdFromKey(sessionKey);
+    const imSettings = this.imStore.getIMSettings();
+    return resolveAgentBinding(imSettings.platformAgentBindings, platform, accountId);
+  }
+
+  private getMappingForSessionKey(
+    sessionKey: string,
+    parsed: { platform: Platform; conversationId: string },
+    agentId: string,
+  ) {
+    const exactMapping = this.imStore.getSessionMappingByOpenClawSessionKey?.(sessionKey) ?? null;
+    if (exactMapping) return exactMapping;
+    return this.imStore.getSessionMapping(parsed.conversationId, parsed.platform, agentId);
+  }
+
+  private createChannelSession(
+    parsed: { platform: Platform; conversationId: string },
+    agentId: string,
+  ): CoworkSession {
+    const titlePrefix = getChannelTitlePrefix(parsed.platform);
+    const title = `${titlePrefix} ${buildChannelDisplayName(parsed.conversationId)}`;
+    const cwd = this.getDefaultCwd(agentId);
+    console.log(
+      '[ChannelSessionSync] creating new cowork session: title=',
+      title,
+      'cwd=',
+      cwd,
+      'agentId=',
+      agentId,
+    );
+
+    const session = this.coworkStore.createSession(title, cwd, '', 'local', [], agentId);
+    console.log(
+      `[ChannelSessionSync] Created session for ${parsed.platform} conversation ${parsed.conversationId}: ${session.id}`,
+    );
+    return session;
+  }
+
   /**
    * Check if a gateway session key belongs to the agent currently bound to its platform.
    * When users switch agent bindings, the gateway retains old sessions under the previous
@@ -404,8 +446,9 @@ export class OpenClawChannelSessionSync {
     if (!parsed) return true; // Not a channel key — let other logic handle it
     const keyAgentId = extractAgentIdFromKey(sessionKey);
     if (!keyAgentId) return true; // Legacy key without agentId — allow
-    const imSettings = this.imStore.getIMSettings();
     const accountId = extractAccountIdFromKey(sessionKey);
+    if (!accountId) return true; // Account-less group keys are already scoped by agentId.
+    const imSettings = this.imStore.getIMSettings();
     const currentAgentId = resolveAgentBinding(
       imSettings.platformAgentBindings,
       parsed.platform,
@@ -458,8 +501,16 @@ export class OpenClawChannelSessionSync {
       parsed.conversationId,
     );
 
+    const agentId = this.resolveAgentIdForSessionKey(sessionKey, parsed.platform);
+
     // 4. Check persistent mapping in im_session_mappings
-    const existingMapping = this.imStore.getSessionMapping(parsed.conversationId, parsed.platform);
+    let existingMapping = this.getMappingForSessionKey(sessionKey, parsed, agentId);
+    if (!existingMapping) {
+      const legacyMapping = this.imStore.getSessionMapping(parsed.conversationId, parsed.platform);
+      if (legacyMapping?.agentId === agentId) {
+        existingMapping = legacyMapping;
+      }
+    }
     console.log(
       '[ChannelSessionSync] existing mapping:',
       existingMapping
@@ -470,16 +521,7 @@ export class OpenClawChannelSessionSync {
       // Verify the Cowork session still exists
       const session = this.coworkStore.getSession(existingMapping.coworkSessionId);
       if (session) {
-        // Check if the agent binding has changed since this mapping was created.
-        // When platformAgentBindings changes, the mapping's agentId becomes stale.
-        // Create a new session for the new agent and update the mapping.
-        const imSettings = this.imStore.getIMSettings();
-        const accountId = extractAccountIdFromKey(sessionKey);
-        const currentAgentId = resolveAgentBinding(
-          imSettings.platformAgentBindings,
-          parsed.platform,
-          accountId,
-        );
+        const currentAgentId = agentId;
         if (existingMapping.agentId !== currentAgentId) {
           console.log(
             '[ChannelSessionSync] agent binding changed:',
@@ -506,6 +548,7 @@ export class OpenClawChannelSessionSync {
             newSession.id,
             currentAgentId,
             sessionKey,
+            existingMapping.agentId,
           );
           this.syncedSessionKeys.set(sessionKey, newSession.id);
           // Mark so pollChannelSessions skips full history sync for this session —
@@ -520,37 +563,27 @@ export class OpenClawChannelSessionSync {
         );
         this.syncedSessionKeys.set(sessionKey, existingMapping.coworkSessionId);
         if (existingMapping.openClawSessionKey !== sessionKey) {
-          this.imStore.updateSessionOpenClawSessionKey(parsed.conversationId, parsed.platform, sessionKey);
+          this.imStore.updateSessionOpenClawSessionKey(
+            parsed.conversationId,
+            parsed.platform,
+            sessionKey,
+            existingMapping.agentId,
+          );
         }
-        this.imStore.updateSessionLastActive(parsed.conversationId, parsed.platform);
+        this.imStore.updateSessionLastActive(
+          parsed.conversationId,
+          parsed.platform,
+          existingMapping.agentId,
+        );
         return existingMapping.coworkSessionId;
       }
       // Session was deleted, remove stale mapping
       console.log('[ChannelSessionSync] cowork session deleted, removing stale mapping');
-      this.imStore.deleteSessionMapping(parsed.conversationId, parsed.platform);
+      this.imStore.deleteSessionMapping(parsed.conversationId, parsed.platform, existingMapping.agentId);
     }
 
     // 5. Create new Cowork session
-    const titlePrefix = getChannelTitlePrefix(parsed.platform);
-    const title = `${titlePrefix} ${buildChannelDisplayName(parsed.conversationId)}`;
-    // Look up the per-platform agent binding so the session is filed under the correct agent.
-    const imSettings = this.imStore.getIMSettings();
-    const accountId = extractAccountIdFromKey(sessionKey);
-    const agentId = resolveAgentBinding(imSettings.platformAgentBindings, parsed.platform, accountId);
-    const cwd = this.getDefaultCwd(agentId);
-    console.log(
-      '[ChannelSessionSync] creating new cowork session: title=',
-      title,
-      'cwd=',
-      cwd,
-      'agentId=',
-      agentId,
-    );
-
-    const session = this.coworkStore.createSession(title, cwd, '', 'local', [], agentId);
-    console.log(
-      `[ChannelSessionSync] Created session for ${parsed.platform} conversation ${parsed.conversationId}: ${session.id}`,
-    );
+    const session = this.createChannelSession(parsed, agentId);
 
     // 6. Persist mapping
     this.imStore.createSessionMapping(parsed.conversationId, parsed.platform, session.id, agentId, sessionKey);
@@ -593,20 +626,33 @@ export class OpenClawChannelSessionSync {
       return null;
     }
 
+    const agentId = this.resolveAgentIdForSessionKey(sessionKey, parsed.platform);
+
     // Check persistent mapping
-    const existingMapping = this.imStore.getSessionMapping(parsed.conversationId, parsed.platform);
+    let existingMapping = this.getMappingForSessionKey(sessionKey, parsed, agentId);
+    if (!existingMapping) {
+      const legacyMapping = this.imStore.getSessionMapping(parsed.conversationId, parsed.platform);
+      if (legacyMapping?.agentId === agentId) {
+        existingMapping = legacyMapping;
+      }
+    }
     if (existingMapping) {
       const session = this.coworkStore.getSession(existingMapping.coworkSessionId);
       if (session) {
         this.updateLocalSessionCwdIfNeeded(session, existingMapping.agentId);
         this.syncedSessionKeys.set(sessionKey, existingMapping.coworkSessionId);
         if (existingMapping.openClawSessionKey !== sessionKey) {
-          this.imStore.updateSessionOpenClawSessionKey(parsed.conversationId, parsed.platform, sessionKey);
+          this.imStore.updateSessionOpenClawSessionKey(
+            parsed.conversationId,
+            parsed.platform,
+            sessionKey,
+            existingMapping.agentId,
+          );
         }
         return existingMapping.coworkSessionId;
       }
       // Stale mapping, clean up
-      this.imStore.deleteSessionMapping(parsed.conversationId, parsed.platform);
+      this.imStore.deleteSessionMapping(parsed.conversationId, parsed.platform, existingMapping.agentId);
     }
 
     return null;

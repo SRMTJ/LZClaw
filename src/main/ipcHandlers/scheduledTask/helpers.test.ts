@@ -184,4 +184,16 @@ describe('dedupeConversationMappings', () => {
     ]);
     expect(result).toHaveLength(3);
   });
+
+  test('keeps the same peer when mappings belong to different agents', () => {
+    const result = dedupeConversationMappings([
+      { imConversationId: `group:${LOWER_PEER}`, agentId: 'main' },
+      { imConversationId: `group:${LOWER_PEER}`, agentId: 'agent-2' },
+      { imConversationId: `group:${LOWER_PEER}`, agentId: 'agent-2' },
+    ]);
+    expect(result).toEqual([
+      { imConversationId: `group:${LOWER_PEER}`, agentId: 'main' },
+      { imConversationId: `group:${LOWER_PEER}`, agentId: 'agent-2' },
+    ]);
+  });
 });
