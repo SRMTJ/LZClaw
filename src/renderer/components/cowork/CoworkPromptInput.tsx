@@ -2380,6 +2380,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
   const handleTogglePlanMode = useCallback(() => {
     const nextMode = isPlanMode ? CoworkCollaborationMode.Default : CoworkCollaborationMode.Plan;
+    handleCloseSkillsPopover();
+    setShowAddMenu(false);
     logPromptModelSelection('debug', `plan mode ${nextMode === CoworkCollaborationMode.Plan ? 'enabled' : 'disabled'} for draft ${draftKey}`);
     reportPromptControl(nextMode === CoworkCollaborationMode.Plan ? 'plan_mode_enabled' : 'plan_mode_disabled', {
       entry: LogReporterEntry.PromptToolsMenu,
@@ -2404,7 +2406,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         entry: LogReporterEntry.PromptToolsMenu,
       });
     }
-  }, [dispatch, draftKey, goalInputActive, isPlanMode, planConfirmation?.messageId, planConfirmation?.state, reportPromptControl, resetGoalInput]);
+  }, [dispatch, draftKey, goalInputActive, handleCloseSkillsPopover, isPlanMode, planConfirmation?.messageId, planConfirmation?.state, reportPromptControl, resetGoalInput]);
 
   const handleEnableGoalInput = useCallback((mode: GoalInputMode = 'start', initialValue?: string) => {
     if (disabled || voiceInputLocksEditing || !onGoalCommand) return;
