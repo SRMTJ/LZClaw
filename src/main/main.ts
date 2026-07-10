@@ -5071,6 +5071,20 @@ if (!gotTheLock) {
       ) {
         return 'Casdoor 应用 client_id 无效，请检查 AIZhongtai 的 Casdoor 配置。';
       }
+      if (normalizedCode === 'CONFLICT') {
+        if (
+          lowerMessage.includes('department has child departments') ||
+          normalizedMessage.includes('存在下级节点')
+        ) {
+          return '该组织节点存在下级节点，请先删除或迁移下级节点。';
+        }
+        if (
+          lowerMessage.includes('department has assigned employees') ||
+          normalizedMessage.includes('已有员工归属')
+        ) {
+          return '该组织节点已有员工归属，请先调整员工部门后再删除。';
+        }
+      }
       return byCode[normalizedCode];
     }
 
