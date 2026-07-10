@@ -1,4 +1,6 @@
-import { parseImConversationId, PlatformRegistry } from '../../../shared/platform';
+import { ImPeerKind, parseImConversationId, PlatformRegistry } from '../../../shared/platform';
+import type { Platform } from '../../im/types';
+import { resolveAgentBinding } from '../../libs/openclawChannelSessionSync';
 
 export interface ScheduledTaskHelperDeps {
   getIMGatewayManager: () => {
@@ -144,6 +146,15 @@ function asNonEmptyString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
+function isAccountlessGroupOrChannel(
+  parsed: ReturnType<typeof parseImConversationId>,
+): boolean {
+  return !parsed.accountId && (
+    parsed.peerKind === ImPeerKind.Group ||
+    parsed.peerKind === ImPeerKind.Channel
+  );
+}
+
 /**
  * Restores the channel-native delivery target from gateway session rows.
  *
@@ -163,7 +174,8 @@ export function resolveImDeliveryHintsFromSessions(params: {
   preferredAccountId?: string;
 }): ImDeliveryHints | null {
   const platform = PlatformRegistry.platformOfChannel(params.channel);
-  const peerLower = params.peerId.trim().toLowerCase();
+  const requestedPeer = parseImConversationId(params.peerId);
+  const peerLower = requestedPeer.peerId.trim().toLowerCase();
   if (!platform || !peerLower) return null;
 
   interface Candidate {
@@ -182,7 +194,8 @@ export function resolveImDeliveryHintsFromSessions(params: {
       asNonEmptyString(session.channel);
     if (!rowChannel || PlatformRegistry.platformOfChannel(rowChannel) !== platform) continue;
     const to = asNonEmptyString(session.lastTo) ?? asNonEmptyString(context?.to);
-    if (!to || to.toLowerCase() !== peerLower) continue;
+    const toPeer = to ? parseImConversationId(to).peerId : '';
+    if (!to || toPeer.toLowerCase() !== peerLower) continue;
     candidates.push({
       to,
       accountId: asNonEmptyString(session.lastAccountId) ?? asNonEmptyString(context?.accountId),
@@ -216,9 +229,31 @@ export function resolveConversationAgentIdFromMappings(
   mappings: ReadonlyArray<{ imConversationId: string; agentId?: string }>,
   to: string,
   preferredAccountId?: string,
+  options?: {
+    platform?: Platform;
+    platformAgentBindings?: Record<string, string>;
+  },
 ): string | null {
   const peer = parseImConversationId(to).peerId.trim().toLowerCase();
   if (!peer) return null;
+
+  const preferredAgentId = preferredAccountId && options?.platform
+    ? resolveAgentBinding(
+      options.platformAgentBindings,
+      options.platform,
+      preferredAccountId,
+    )
+    : null;
+
+  if (preferredAgentId) {
+    for (const mapping of mappings) {
+      const parsed = parseImConversationId(mapping.imConversationId);
+      if (parsed.peerId.trim().toLowerCase() !== peer) continue;
+      if (!isAccountlessGroupOrChannel(parsed)) continue;
+      const agentId = mapping.agentId?.trim();
+      if (agentId === preferredAgentId) return agentId;
+    }
+  }
 
   let firstMatch: string | null = null;
   for (const mapping of mappings) {
@@ -227,6 +262,13 @@ export function resolveConversationAgentIdFromMappings(
     const agentId = mapping.agentId?.trim();
     if (!agentId) continue;
     if (preferredAccountId && parsed.accountId === preferredAccountId) return agentId;
+    if (
+      preferredAgentId &&
+      isAccountlessGroupOrChannel(parsed) &&
+      agentId === preferredAgentId
+    ) {
+      return agentId;
+    }
     firstMatch = firstMatch ?? agentId;
   }
   return firstMatch;
@@ -253,4 +295,62 @@ export function dedupeConversationMappings<T extends { imConversationId: string;
     result.push(mapping);
   }
   return result;
+}
+
+/**
+ * Narrows account-less group mappings for a selected multi-instance bot.
+ *
+ * OpenClaw's canonical group session keys are scoped by agent + channel +
+ * group id, e.g. `agent:<agentId>:feishu:group:<chatId>`. They intentionally
+ * do not include accountId, so persisted group conversation ids cannot be
+ * filtered by account prefix like direct chats. When the scheduled-task form
+ * already selected a bot instance, use that instance's current agent binding
+ * as the best available group ownership signal.
+ */
+export function filterConversationMappingsForSelectedAccount<
+  T extends { imConversationId: string; agentId?: string },
+>(
+  mappings: readonly T[],
+  platform: Platform,
+  accountId: string | undefined,
+  platformAgentBindings: Record<string, string> | undefined,
+): T[] {
+  const selectedAccountId = accountId?.trim();
+  if (!selectedAccountId) return [...mappings];
+  if (!platformAgentBindings) return [...mappings];
+
+  const selectedAgentId = resolveAgentBinding(
+    platformAgentBindings,
+    platform,
+    selectedAccountId,
+  );
+
+  const filtered = mappings.filter((mapping) => {
+    const parsed = parseImConversationId(mapping.imConversationId);
+    if (parsed.accountId) return true;
+    if (
+      parsed.peerKind !== ImPeerKind.Group &&
+      parsed.peerKind !== ImPeerKind.Channel
+    ) {
+      return true;
+    }
+    const mappingAgentId = mapping.agentId?.trim();
+    return !mappingAgentId || mappingAgentId === selectedAgentId;
+  });
+
+  const accountlessGroupPeers = new Set(
+    filtered
+      .map((mapping) => parseImConversationId(mapping.imConversationId))
+      .filter(isAccountlessGroupOrChannel)
+      .map(parsed => parsed.peerId.trim().toLowerCase())
+      .filter(Boolean),
+  );
+
+  if (accountlessGroupPeers.size === 0) return filtered;
+
+  return filtered.filter((mapping) => {
+    const parsed = parseImConversationId(mapping.imConversationId);
+    if (!parsed.accountId || parsed.peerKind !== ImPeerKind.Direct) return true;
+    return !accountlessGroupPeers.has(parsed.peerId.trim().toLowerCase());
+  });
 }

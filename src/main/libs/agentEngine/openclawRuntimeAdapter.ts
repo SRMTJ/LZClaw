@@ -6032,11 +6032,18 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private scheduleImConversationSyncAfterCronDelivery(payload: unknown): void {
     const target = extractCronDeliveredTarget(payload);
     if (!target || !this.channelSessionSync) return;
-    const conversation = this.channelSessionSync.resolveConversationByDeliveryTarget(
-      target.channel,
-      target.to,
-      target.accountId,
-    );
+    let conversation: { sessionId: string; sessionKey: string } | null;
+    try {
+      conversation = this.channelSessionSync.resolveOrCreateConversationForDeliveryMirror(
+        target.channel,
+        target.to,
+        target.accountId,
+        target.agentId,
+      );
+    } catch (error) {
+      console.warn('[ChannelSync] failed to resolve IM conversation after cron delivery:', error);
+      return;
+    }
     if (!conversation) {
       console.debug(
         '[ChannelSync] no local conversation mapped for cron delivery target:',
@@ -6062,6 +6069,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           console.log(
             '[ChannelSync] synced IM conversation after cron delivery.',
             `Session ${conversation.sessionId}.`,
+            `SessionKey ${conversation.sessionKey}.`,
             `Channel ${target.channel}.`,
           );
         })

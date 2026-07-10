@@ -155,6 +155,7 @@ import {
   getCronJobService,
   initCronJobServiceManager,
   initScheduledTaskHelpers,
+  migrateScheduledTaskAnnounceJobs,
   registerScheduledTaskHandlers,
 } from './ipcHandlers/scheduledTask';
 import { registerSessionDiagnosticsHandlers } from './ipcHandlers/sessionDiagnostics';
@@ -7806,7 +7807,7 @@ if (!gotTheLock) {
       getConfig: () => getIMGatewayManager().getConfig() as unknown as Record<string, unknown>,
     }),
   });
-  registerScheduledTaskHandlers({
+  const scheduledTaskHandlerDeps = {
     getCronJobService,
     getIMGatewayManager: () => ({
       getIMStore: () => ({
@@ -7814,10 +7815,11 @@ if (!gotTheLock) {
           getIMGatewayManager()
             .getIMStore()
             .getSessionMapping(conversationId, platform as Platform),
-        listSessionMappings: (platform: string, agentId?: string) =>
+        getIMSettings: () => getIMGatewayManager().getIMStore().getIMSettings(),
+        listSessionMappings: (platform: string, accountId?: string) =>
           getIMGatewayManager()
             .getIMStore()
-            .listSessionMappings(platform as Platform, agentId)
+            .listSessionMappings(platform as Platform, accountId)
             .map(mapping => ({
               ...mapping,
               lastActiveAt: String(mapping.lastActiveAt),
@@ -7837,7 +7839,8 @@ if (!gotTheLock) {
     getOpenClawRuntimeAdapter: () => openClawRuntimeAdapter,
     getCoworkSessionTitle: (sessionId: string) =>
       getCoworkStore().getSession(sessionId, 0)?.title ?? null,
-  });
+  };
+  registerScheduledTaskHandlers(scheduledTaskHandlerDeps);
 
   registerNimQrLoginHandlers({
     startNimQrLogin,
@@ -10946,6 +10949,9 @@ if (!gotTheLock) {
         } catch (err) {
           console.warn('[Main] CronJobService not available after OpenClaw startup:', err);
         }
+        void migrateScheduledTaskAnnounceJobs(scheduledTaskHandlerDeps).catch(err => {
+          console.warn('[Main] Scheduled task IM announce job migration failed:', err);
+        });
       })
       .catch(error => {
         console.error('[OpenClaw] Failed to auto-start gateway on app startup:', error);
