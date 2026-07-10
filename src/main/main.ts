@@ -5073,6 +5073,18 @@ if (!gotTheLock) {
       }
       if (normalizedCode === 'CONFLICT') {
         if (
+          lowerMessage.includes('department name already exists') ||
+          normalizedMessage.includes('组织节点名称已存在')
+        ) {
+          return '组织节点名称已存在，请更换名称后重试。';
+        }
+        if (
+          lowerMessage.includes('department code already exists') ||
+          normalizedMessage.includes('组织节点编码已存在')
+        ) {
+          return '组织节点编码已存在，请更换编码后重试。';
+        }
+        if (
           lowerMessage.includes('department has child departments') ||
           normalizedMessage.includes('存在下级节点')
         ) {
