@@ -4059,6 +4059,12 @@ if (!gotTheLock) {
     body: JSON.stringify(withKeyfromBody(body)),
   });
 
+  const workstationDeleteOptions = (): RequestInit => ({
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(withKeyfromBody({})),
+  });
+
   const extractSessionIdFromKey = (sessionKey: string): string | null =>
     parseManagedSessionKey(sessionKey)?.sessionId ?? null;
 
@@ -5485,7 +5491,7 @@ if (!gotTheLock) {
     if (!id) return { success: false, error: 'department id is required' };
     return fetchWorkstationData(
       `/api/workstation/org/departments/${encodeURIComponent(id)}`,
-      { method: 'DELETE' },
+      workstationDeleteOptions(),
     );
   });
 

@@ -403,7 +403,7 @@ const DepartmentConfirmModal: React.FC<DepartmentConfirmModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-[9999] flex items-center justify-center"
+      className="non-draggable fixed inset-0 z-[9999] flex items-center justify-center"
       onClick={isWorking ? undefined : onCancel}
     >
       <div className="absolute inset-0 bg-black/40 dark:bg-black/60" />
@@ -537,7 +537,6 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
     saveSuccess: i18nService.t('businessCenterOrgSaveSuccess'),
     createSuccess: i18nService.t('businessCenterOrgCreateSuccess'),
     saveFailed: i18nService.t('businessCenterOrgSaveFailed'),
-    deleted: i18nService.t('businessCenterOrgDeleted'),
     deleteFailed: i18nService.t('businessCenterOrgDeleteFailed'),
     managerLoadFailed: i18nService.t('businessCenterOrgManagerLoadFailed'),
   }), []);
@@ -835,7 +834,6 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
       try {
         await businessCenterService.deleteDepartment(department.id);
         await refreshOrganizationData();
-        showToast(orgText.deleted);
         setDepartmentConfirm(null);
       } catch (error) {
         showToast(error instanceof Error ? error.message : orgText.deleteFailed);
@@ -1161,7 +1159,7 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
                     </td>
                     <td className="px-4 py-3 text-[#4d5f7a]">{formatBusinessDateTime(department.createdAt)}</td>
                     <td className="px-4 py-3">
-                      <div className="flex items-center justify-end gap-3">
+                      <div className="non-draggable flex items-center justify-end gap-3">
                         <button
                           type="button"
                           disabled={!canManageOrg}
@@ -1172,7 +1170,7 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
                         </button>
                         <button
                           type="button"
-                          disabled={!canManageOrg}
+                          disabled={!canManageOrg || isDepartmentActionRunning}
                           onClick={() => void handleSetDepartmentStatus(department, isDisabled ? 'active' : 'disabled')}
                           className="text-xs font-semibold text-blue-600 transition-colors hover:text-blue-700 disabled:cursor-not-allowed disabled:text-[#94a3b8]"
                         >

@@ -1768,7 +1768,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
     businessCenterOrgSaveSuccess: '组织节点已保存',
     businessCenterOrgCreateSuccess: '组织节点已新增',
     businessCenterOrgSaveFailed: '保存组织节点失败',
-    businessCenterOrgDeleted: '组织节点已删除',
     businessCenterOrgDeleteFailed: '删除组织节点失败',
     businessCenterOrgManagerLoadFailed: '加载负责人列表失败',
     mcpDescription: '配置和管理 MCP（Model Context Protocol）服务器，为您的智能体扩展工具能力',
@@ -4747,7 +4746,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
     businessCenterOrgSaveSuccess: 'Organization node saved',
     businessCenterOrgCreateSuccess: 'Organization node added',
     businessCenterOrgSaveFailed: 'Failed to save organization node',
-    businessCenterOrgDeleted: 'Organization node deleted',
     businessCenterOrgDeleteFailed: 'Failed to delete organization node',
     businessCenterOrgManagerLoadFailed: 'Failed to load manager list',
     mcpDescription:
