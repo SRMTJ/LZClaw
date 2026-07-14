@@ -51,7 +51,7 @@ import { parseChannelSessionKey } from './openclawChannelSessionSync';
 import { OpenClawConfigImpact } from './openclawConfigImpact';
 import type { OpenClawEngineManager } from './openclawEngineManager';
 import { repairHeartbeatFile, stripProactiveHeartbeatSection } from './openclawHeartbeatRepair';
-import { getMainAgentWorkspacePath, readBootstrapFile } from './openclawMemoryFile';
+import { getMainAgentWorkspacePath } from './openclawMemoryFile';
 import { resolveOpenClawCatalogModelMaxTokens } from './openclawModelCatalog';
 
 const gwDiagTs = (): string => {
@@ -96,6 +96,7 @@ export const OPENCLAW_AGENT_TIMEOUT_SECONDS = 3600;
 export const OPENCLAW_HEARTBEAT_EVERY_ENABLED = '1h';
 export const OPENCLAW_HEARTBEAT_EVERY_DISABLED = '0m';
 const DINGTALK_OPENCLAW_CHANNEL = 'dingtalk-connector';
+const OPENCLAW_MEMORY_CORE_PLUGIN_ID = 'memory-core';
 export const OPENCLAW_BINDING_ANY_ACCOUNT_ID = '*';
 const OPENCLAW_DEFAULT_MODEL_MAX_TOKENS = 8192;
 const CHROME_PROXY_SERVER_ARG_PREFIX = '--proxy-server=';
@@ -1957,30 +1958,35 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
           workspace: path.resolve(mainWorkspacePath),
           mediaMaxMb: 30,
           ...(taskWorkingDirectory ? { cwd: path.resolve(taskWorkingDirectory) } : {}),
-          ...(coworkConfig.embeddingEnabled ? {
-            memorySearch: {
-              enabled: true,
-              provider: (['openai', 'gemini', 'voyage', 'mistral', 'ollama'].includes(coworkConfig.embeddingProvider)
+          memorySearch: {
+            enabled: true,
+            provider: coworkConfig.embeddingEnabled
+              ? (['openai', 'gemini', 'voyage', 'mistral', 'ollama'].includes(coworkConfig.embeddingProvider)
                 ? coworkConfig.embeddingProvider
-                : 'openai'),
-              ...(coworkConfig.embeddingModel ? { model: coworkConfig.embeddingModel } : {}),
+                : 'openai')
+              : 'none',
+            ...(coworkConfig.embeddingEnabled && coworkConfig.embeddingModel ? { model: coworkConfig.embeddingModel } : {}),
+            ...(coworkConfig.embeddingEnabled ? {
               remote: {
                 ...(coworkConfig.embeddingRemoteBaseUrl ? { baseUrl: coworkConfig.embeddingRemoteBaseUrl } : {}),
                 ...(coworkConfig.embeddingRemoteApiKey ? { apiKey: coworkConfig.embeddingRemoteApiKey } : {}),
-              },
-              store: {
-                // Use trigram tokenizer for FTS5 — unicode61 (the openclaw default)
-                // cannot tokenize CJK characters, so Chinese/Japanese/Korean memory
-                // content is invisible to keyword search.
-                fts: { tokenizer: 'trigram' },
               },
               query: {
                 hybrid: {
                   vectorWeight: coworkConfig.embeddingVectorWeight ?? 0.7,
                 },
               },
+            } : {
+              fallback: 'none',
+            }),
+            store: {
+              // Use trigram tokenizer for FTS5 — unicode61 (the openclaw default)
+              // cannot tokenize CJK characters, so Chinese/Japanese/Korean memory
+              // content is invisible to keyword search.
+              fts: { tokenizer: 'trigram' },
+              ...(!coworkConfig.embeddingEnabled ? { vector: { enabled: false } } : {}),
             },
-          } : {}),
+          },
           heartbeat: {
             every: coworkConfig.openClawHeartbeatEnabled === false
               ? OPENCLAW_HEARTBEAT_EVERY_DISABLED
@@ -2111,6 +2117,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
           ...existingAllow,
           BUNDLED_BROWSER_PLUGIN_ID,
           ...(diagnosticsOtelEnabled ? [DIAGNOSTICS_OTEL_PLUGIN_ID] : []),
+          OPENCLAW_MEMORY_CORE_PLUGIN_ID,
           // A non-empty plugins.allow is a strict allowlist in OpenClaw
           // (manifest-owner-policy "not-in-allowlist"), so runtime-bundled
           // plugins we rely on must be listed here explicitly or they never
@@ -2146,6 +2153,10 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
                 // a removed plugin causes "Config invalid: plugin not found" errors.
                 allow: trustedPluginAllow,
                 deny: [],
+                slots: {
+                  ...((existingPlugins as Record<string, unknown>).slots as Record<string, unknown> | undefined),
+                  memory: OPENCLAW_MEMORY_CORE_PLUGIN_ID,
+                },
                 entries: pluginEntries,
               },
             }
@@ -2196,11 +2207,12 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
     if (managedConfig.plugins) {
       const plugins = managedConfig.plugins as Record<string, unknown>;
       const entries = plugins.entries as Record<string, Record<string, unknown>>;
-      const existingMemoryCore = entries['memory-core'] ?? {};
+      const existingMemoryCore = entries[OPENCLAW_MEMORY_CORE_PLUGIN_ID] ?? {};
       const existingMemoryCoreConfig = (existingMemoryCore as Record<string, unknown>).config as Record<string, unknown> | undefined;
       if (coworkConfig.dreamingEnabled) {
-        entries['memory-core'] = {
+        entries[OPENCLAW_MEMORY_CORE_PLUGIN_ID] = {
           ...existingMemoryCore,
+          enabled: true,
           config: {
             ...existingMemoryCoreConfig,
             dreaming: {
@@ -2209,12 +2221,16 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
             },
           },
         };
-      } else if (existingMemoryCoreConfig?.dreaming) {
-        // Remove dreaming config when disabled
-        const { dreaming: _, ...restConfig } = existingMemoryCoreConfig;
-        entries['memory-core'] = {
+      } else {
+        entries[OPENCLAW_MEMORY_CORE_PLUGIN_ID] = {
           ...existingMemoryCore,
-          config: Object.keys(restConfig).length > 0 ? restConfig : undefined,
+          enabled: true,
+          config: {
+            ...existingMemoryCoreConfig,
+            dreaming: {
+              enabled: false,
+            },
+          },
         };
       }
     }
@@ -3029,6 +3045,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
         workingDirectory: '',
         icon: '',
         skillIds: [],
+        subagentAllowAgentIds: [],
         enabled: true,
         pinned: false,
         pinOrder: null,
@@ -3427,7 +3444,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
   }
 
   /**
-   * Sync workspace files (SOUL.md, IDENTITY.md, USER.md, AGENTS.md) for each non-main agent.
+   * Sync workspace files (SOUL.md, IDENTITY.md, AGENTS.md) for each non-main agent.
    * The main agent's workspace is synced by `syncAgentsMd`. Non-main agents
    * get their own workspace directories under the openclaw state directory.
    */
@@ -3436,8 +3453,6 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
     // Use the openclaw state directory as base, matching OpenClaw's own fallback
     // logic: {STATE_DIR}/workspace-{agentId}/
     const stateDir = this.engineManager.getStateDir();
-    const userContent = readBootstrapFile(mainWorkspaceDir, 'USER.md');
-
     try {
       if (repairHeartbeatFile(mainWorkspaceDir)) {
         console.log('[OpenClawConfigSync] Repaired legacy HEARTBEAT.md in main workspace');
@@ -3469,10 +3484,6 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
         const identityPath = path.join(agentWorkspace, 'IDENTITY.md');
         const identityContent = (agent.identity || '').trim();
         this.syncFileIfChanged(identityPath, identityContent ? `${identityContent}\n` : '');
-
-        // Sync USER.md — shared user profile from the main Agent settings
-        const userPath = path.join(agentWorkspace, 'USER.md');
-        this.syncFileIfChanged(userPath, userContent);
 
         // Sync AGENTS.md for this agent (reuse same logic as main agent)
         this.syncAgentsMd(agentWorkspace, {
