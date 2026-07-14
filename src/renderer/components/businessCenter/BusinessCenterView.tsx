@@ -11,9 +11,7 @@ import {
   EllipsisHorizontalIcon,
   ExclamationTriangleIcon,
   HomeIcon,
-  KeyIcon,
   MagnifyingGlassIcon,
-  NoSymbolIcon,
   PlusIcon,
   QuestionMarkCircleIcon,
   ShieldCheckIcon,
@@ -31,12 +29,14 @@ import {
   type BusinessDepartment,
   type BusinessDepartmentStatus,
   type BusinessEmployee,
+  type BusinessEmployeeSummary,
 } from '../../services/businessCenter';
 import { i18nService } from '../../services/i18n';
 import type { RootState } from '../../store';
 import ComposeIcon from '../icons/ComposeIcon';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import WindowTitleBar from '../window/WindowTitleBar';
+import EmployeeManagementView from './EmployeeManagementView';
 
 interface BusinessCenterViewProps {
   isSidebarCollapsed?: boolean;
@@ -71,8 +71,6 @@ interface DepartmentConfirmState {
   action: DepartmentConfirmAction;
   department: BusinessDepartment;
 }
-
-const EMPLOYEE_PAGE_SIZE = 20;
 
 const createEmptyDepartmentForm = (): DepartmentFormState => ({
   name: '',
@@ -163,19 +161,6 @@ const formatCompactNumber = (value?: number | null): string => {
   return String(value);
 };
 
-const roleLabel = (role?: string): string => {
-  switch (role) {
-    case 'owner':
-      return '企业主';
-    case 'admin':
-      return '管理员';
-    default:
-      return '员工';
-  }
-};
-
-const statusLabel = (status?: string): string => status === 'disabled' ? '已停用' : '启用中';
-
 const statusClass = (status?: string): string =>
   status === 'disabled'
     ? 'border-border bg-surface-raised text-secondary'
@@ -184,9 +169,6 @@ const statusClass = (status?: string): string =>
 const departmentCodeLabel = (department: BusinessDepartment): string => department.code || '-';
 const departmentEmployeeCount = (department: BusinessDepartment): number =>
   Number.isFinite(department.employeeCount) ? department.employeeCount : 0;
-const employeeDepartmentNames = (employee: BusinessEmployee): string[] =>
-  Array.isArray(employee.departmentNames) ? employee.departmentNames : [];
-
 const buildDepartmentTree = (departments: BusinessDepartment[]): DepartmentTreeNode[] => {
   const nodes = new Map<string, DepartmentTreeNode>();
   departments.forEach((department) => {
@@ -461,13 +443,9 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
   const [activeTab, setActiveTab] = useState<BusinessTab>('overview');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [departments, setDepartments] = useState<BusinessDepartment[]>([]);
-  const [employees, setEmployees] = useState<BusinessEmployee[]>([]);
   const [managerEmployees, setManagerEmployees] = useState<BusinessEmployee[]>([]);
   const [employeeTotal, setEmployeeTotal] = useState(0);
-  const [employeePage, setEmployeePage] = useState(1);
-  const [employeePageCount, setEmployeePageCount] = useState(0);
   const [isOrgLoading, setIsOrgLoading] = useState(false);
-  const [isEmployeeLoading, setIsEmployeeLoading] = useState(false);
   const [orgSearch, setOrgSearch] = useState('');
   const [orgStatusFilter, setOrgStatusFilter] = useState<DepartmentStatusFilter>('all');
   const [expandedDepartmentIds, setExpandedDepartmentIds] = useState<Set<string>>(() => new Set());
@@ -479,16 +457,6 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
   const [departmentForm, setDepartmentForm] = useState<DepartmentFormState>(() => createEmptyDepartmentForm());
   const [isDepartmentSaving, setIsDepartmentSaving] = useState(false);
   const [isDepartmentActionRunning, setIsDepartmentActionRunning] = useState(false);
-  const [employeeForm, setEmployeeForm] = useState({
-    username: '',
-    password: '',
-    name: '',
-    phone: '',
-    email: '',
-    role: 'employee',
-    departmentId: '',
-  });
-
   const isMac = window.electron.platform === 'darwin';
   const displayName = user?.nickname?.trim()
     || profileSummary?.nickname?.trim()
@@ -620,32 +588,9 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
     }
     try {
       const result = await businessCenterService.getEmployees({ page: 1, pageSize: 1 });
-      setEmployeeTotal(result.total);
-      setEmployeePageCount(result.pages);
+      setEmployeeTotal(result.summary?.total ?? result.total);
     } catch (error) {
       showToast(error instanceof Error ? error.message : '加载员工统计失败');
-    }
-  }, [canManageOrg]);
-
-  const loadEmployees = useCallback(async (page = 1) => {
-    if (!canManageOrg) {
-      setEmployees([]);
-      setEmployeeTotal(0);
-      setEmployeePage(1);
-      setEmployeePageCount(0);
-      return;
-    }
-    setIsEmployeeLoading(true);
-    try {
-      const result = await businessCenterService.getEmployees({ page, pageSize: EMPLOYEE_PAGE_SIZE });
-      setEmployees(result.items);
-      setEmployeeTotal(result.total);
-      setEmployeePage(result.page);
-      setEmployeePageCount(result.pages);
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : '加载员工失败');
-    } finally {
-      setIsEmployeeLoading(false);
     }
   }, [canManageOrg]);
 
@@ -674,12 +619,11 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
     }
     if (activeTab === 'employees') {
       void loadDepartments();
-      void loadEmployees(employeePage);
     }
     if (activeTab === 'overview') {
       void loadEmployeeSummary();
     }
-  }, [activeTab, canManageOrg, employeePage, loadDepartments, loadEmployees, loadEmployeeSummary, loadManagerEmployees]);
+  }, [activeTab, canManageOrg, loadDepartments, loadEmployeeSummary, loadManagerEmployees]);
 
   useEffect(() => {
     if (departments.length === 0) {
@@ -707,9 +651,6 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
       ];
       if (canManageOrg && activeTab === 'organization') {
         refreshTasks.push(loadDepartments(), loadEmployeeSummary(), loadManagerEmployees());
-      }
-      if (canManageOrg && activeTab === 'employees') {
-        refreshTasks.push(loadDepartments(), loadEmployees(employeePage));
       }
       if (canManageOrg && activeTab === 'overview') {
         refreshTasks.push(loadEmployeeSummary());
@@ -856,68 +797,6 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
     }
   };
 
-  const handleCreateEmployee = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!employeeForm.username.trim() || !employeeForm.name.trim() || !employeeForm.password) {
-      showToast('请填写账号、姓名和初始密码');
-      return;
-    }
-    try {
-      await businessCenterService.createEmployee({
-        username: employeeForm.username.trim(),
-        password: employeeForm.password,
-        name: employeeForm.name.trim(),
-        phone: employeeForm.phone.trim(),
-        email: employeeForm.email.trim(),
-        role: employeeForm.role,
-        departmentIds: employeeForm.departmentId ? [employeeForm.departmentId] : [],
-      });
-      setEmployeeForm({
-        username: '',
-        password: '',
-        name: '',
-        phone: '',
-        email: '',
-        role: 'employee',
-        departmentId: '',
-      });
-      await Promise.all([
-        loadEmployees(employeePage),
-        loadEmployeeSummary(),
-        loadManagerEmployees(),
-      ]);
-      showToast('员工已新增');
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : '新增员工失败');
-    }
-  };
-
-  const handleDisableEmployee = async (employee: BusinessEmployee) => {
-    if (!window.confirm(`确定禁用「${employee.name || employee.username}」吗？`)) return;
-    try {
-      await businessCenterService.disableEmployee(employee.id);
-      await Promise.all([
-        loadEmployees(employeePage),
-        loadEmployeeSummary(),
-        loadManagerEmployees(),
-      ]);
-      showToast('员工已禁用');
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : '禁用员工失败');
-    }
-  };
-
-  const handleResetEmployeePassword = async (employee: BusinessEmployee) => {
-    const password = window.prompt(`请输入「${employee.name || employee.username}」的新密码`);
-    if (!password) return;
-    try {
-      await businessCenterService.resetEmployeePassword(employee.id, password);
-      showToast('密码已重置');
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : '重置密码失败');
-    }
-  };
-
   const overviewContent = (
     <>
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -1045,7 +924,7 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
       <section className="rounded-lg border border-[#e6ebf2] bg-white p-4 shadow-[0_8px_24px_rgba(15,35,80,0.04)]">
         <h2 className="mb-4 text-base font-bold text-[#0d1730]">平台使用情况</h2>
         <div className="grid divide-y divide-[#e6ebf2] overflow-hidden rounded-lg border border-[#e6ebf2] md:grid-cols-2 md:divide-x md:divide-y-0 xl:grid-cols-4">
-          <UsageItem icon={UsersIcon} label="企业成员" value={String(employeeTotal || employees.length || 128)} detail="较昨日 +2 人 ↑" tone="cyan" />
+          <UsageItem icon={UsersIcon} label="企业成员" value={String(employeeTotal)} detail="当前企业" tone="cyan" />
           <UsageItem icon={CubeIcon} label="应用调用总数" value="28.6K" detail="较昨日 +12.4%" tone="green" />
           <UsageItem icon={BoltIcon} label="Token 日均消耗" value="16.3K" detail="较上周 +8.7%" tone="amber" />
           <UsageItem icon={CircleStackIcon} label="存量 Token 预计可用" value="51 天" detail="按当前消耗速度估算" tone="violet" />
@@ -1340,178 +1219,16 @@ const BusinessCenterView: React.FC<BusinessCenterViewProps> = ({
     </>
   );
 
-  const employeesContent = (
-    <section className="grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
-      <form onSubmit={handleCreateEmployee} className="rounded-lg border border-border bg-surface p-4 shadow-subtle">
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <div>
-            <h2 className="text-base font-semibold text-foreground">新增员工</h2>
-            <p className="mt-1 text-xs text-secondary">创建或复用全局 Casdoor 用户，再绑定当前企业。</p>
-          </div>
-          <UsersIcon className="h-5 w-5 text-primary" />
-        </div>
-        <fieldset disabled={!canManageOrg} className="grid gap-3 disabled:opacity-60">
-          <input
-            value={employeeForm.username}
-            onChange={(event) => setEmployeeForm((prev) => ({ ...prev, username: event.target.value }))}
-            className="h-9 rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-primary"
-            placeholder="账号 / 手机号"
-          />
-          <input
-            value={employeeForm.name}
-            onChange={(event) => setEmployeeForm((prev) => ({ ...prev, name: event.target.value }))}
-            className="h-9 rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-primary"
-            placeholder="姓名"
-          />
-          <input
-            type="password"
-            value={employeeForm.password}
-            onChange={(event) => setEmployeeForm((prev) => ({ ...prev, password: event.target.value }))}
-            className="h-9 rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-primary"
-            placeholder="初始密码"
-          />
-          <div className="grid grid-cols-2 gap-2">
-            <input
-              value={employeeForm.phone}
-              onChange={(event) => setEmployeeForm((prev) => ({ ...prev, phone: event.target.value }))}
-              className="h-9 rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-primary"
-              placeholder="手机号"
-            />
-            <select
-              value={employeeForm.role}
-              onChange={(event) => setEmployeeForm((prev) => ({ ...prev, role: event.target.value }))}
-              className="h-9 rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-primary"
-            >
-              <option value="employee">员工</option>
-              <option value="admin">管理员</option>
-            </select>
-          </div>
-          <input
-            value={employeeForm.email}
-            onChange={(event) => setEmployeeForm((prev) => ({ ...prev, email: event.target.value }))}
-            className="h-9 rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-primary"
-            placeholder="邮箱"
-          />
-          <select
-            value={employeeForm.departmentId}
-            onChange={(event) => setEmployeeForm((prev) => ({ ...prev, departmentId: event.target.value }))}
-            className="h-9 rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-primary"
-          >
-            <option value="">不分配部门</option>
-            {activeDepartments.map((department) => (
-              <option key={department.id} value={department.id}>{department.name}</option>
-            ))}
-          </select>
-          <button
-            type="submit"
-            className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-          >
-            <PlusIcon className="h-4 w-4" />
-            新增员工
-          </button>
-        </fieldset>
-        {!canManageOrg && <p className="mt-3 text-xs text-secondary">当前角色仅可查看员工列表。</p>}
-      </form>
+  const handleEmployeeSummaryChange = useCallback((nextSummary: BusinessEmployeeSummary) => {
+    setEmployeeTotal(nextSummary.total);
+  }, []);
 
-      <section className="rounded-lg border border-border bg-surface shadow-subtle">
-        <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
-          <div className="min-w-0">
-            <h2 className="truncate text-base font-semibold text-foreground">员工管理</h2>
-            <p className="mt-1 text-xs text-secondary">共 {employeeTotal || employees.length} 名企业成员</p>
-          </div>
-          <button
-            type="button"
-            onClick={() => void loadEmployees(employeePage)}
-            className="inline-flex h-8 shrink-0 items-center gap-2 rounded-md border border-border px-3 text-sm text-foreground transition-colors hover:bg-surface-raised"
-          >
-            <ArrowPathIcon className={`h-4 w-4 ${isEmployeeLoading ? 'animate-spin' : ''}`} />
-            刷新
-          </button>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] border-collapse text-left text-sm">
-            <thead>
-              <tr className="border-b border-border bg-surface-raised/40 text-xs text-secondary">
-                <th className="px-4 py-2.5 font-medium">员工</th>
-                <th className="px-4 py-2.5 font-medium">账号</th>
-                <th className="px-4 py-2.5 font-medium">部门</th>
-                <th className="px-4 py-2.5 font-medium">角色</th>
-                <th className="px-4 py-2.5 font-medium">状态</th>
-                <th className="px-4 py-2.5 font-medium">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {employees.map((employee) => (
-                <tr key={employee.id} className="border-b border-border/60 text-foreground last:border-b-0 hover:bg-surface-raised/40">
-                  <td className="px-4 py-3">
-                    <div className="font-medium">{employee.name || employee.username}</div>
-                    <div className="mt-0.5 text-xs text-secondary">{employee.phone || employee.email || '未填写联系方式'}</div>
-                  </td>
-                  <td className="px-4 py-3 text-secondary">{employee.username}</td>
-                  <td className="px-4 py-3 text-secondary">{employeeDepartmentNames(employee).length > 0 ? employeeDepartmentNames(employee).join(' / ') : '未分配'}</td>
-                  <td className="px-4 py-3">{roleLabel(employee.role)}</td>
-                  <td className="px-4 py-3">
-                    <span className={`inline-flex rounded-md border px-2 py-0.5 text-xs font-medium ${statusClass(employee.status)}`}>
-                      {statusLabel(employee.status)}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        disabled={!canManageOrg || employee.status === 'disabled'}
-                        onClick={() => handleResetEmployeePassword(employee)}
-                        className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs text-foreground transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        <KeyIcon className="h-4 w-4" />
-                        重置
-                      </button>
-                      <button
-                        type="button"
-                        disabled={!canManageOrg || employee.status === 'disabled' || employee.role === 'owner'}
-                        onClick={() => handleDisableEmployee(employee)}
-                        className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs text-secondary transition-colors hover:border-red-500/30 hover:bg-red-500/10 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        <NoSymbolIcon className="h-4 w-4" />
-                        禁用
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {!isEmployeeLoading && employees.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="px-4 py-10 text-center text-sm text-secondary">暂无员工</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-        {employeePageCount > 1 && (
-          <div className="flex items-center justify-between gap-3 border-t border-border px-4 py-3 text-sm text-secondary">
-            <span>第 {employeePage} / {employeePageCount} 页</span>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                disabled={employeePage <= 1 || isEmployeeLoading}
-                onClick={() => void loadEmployees(employeePage - 1)}
-                className="inline-flex h-8 items-center rounded-md border border-border px-3 text-foreground transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                上一页
-              </button>
-              <button
-                type="button"
-                disabled={employeePage >= employeePageCount || isEmployeeLoading}
-                onClick={() => void loadEmployees(employeePage + 1)}
-                className="inline-flex h-8 items-center rounded-md border border-border px-3 text-foreground transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                下一页
-              </button>
-            </div>
-          </div>
-        )}
-      </section>
-    </section>
+  const employeesContent = (
+    <EmployeeManagementView
+      departments={departments}
+      currentRole={currentRole}
+      onSummaryChange={handleEmployeeSummaryChange}
+    />
   );
 
   if (!canManageOrg) {

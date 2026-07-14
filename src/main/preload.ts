@@ -12,6 +12,7 @@ import {
 } from '../shared/asr/constants';
 import { AuthIpcChannel } from '../shared/auth/constants';
 import { BrowserIpc, type BrowserRuntimeProfile } from '../shared/browserWebAccess/constants';
+import { BusinessCenterIpc } from '../shared/businessCenter/constants';
 import { ClipboardIpc } from '../shared/clipboard/constants';
 import { CoworkIpcChannel } from '../shared/cowork/constants';
 import { DataMigrationIpc } from '../shared/dataMigration/constants';
@@ -1037,23 +1038,29 @@ contextBridge.exposeInMainWorld('electron', {
     },
   },
   businessCenter: {
-    getDepartments: () => ipcRenderer.invoke('businessCenter:getDepartments'),
+    getDepartments: () => ipcRenderer.invoke(BusinessCenterIpc.GetDepartments),
     createDepartment: (payload: Record<string, unknown>) =>
-      ipcRenderer.invoke('businessCenter:createDepartment', payload),
+      ipcRenderer.invoke(BusinessCenterIpc.CreateDepartment, payload),
     updateDepartment: (id: string, payload: Record<string, unknown>) =>
-      ipcRenderer.invoke('businessCenter:updateDepartment', { id, data: payload }),
+      ipcRenderer.invoke(BusinessCenterIpc.UpdateDepartment, { id, data: payload }),
     deleteDepartment: (id: string) =>
-      ipcRenderer.invoke('businessCenter:deleteDepartment', { id }),
+      ipcRenderer.invoke(BusinessCenterIpc.DeleteDepartment, { id }),
     getEmployees: (query?: Record<string, unknown>) =>
-      ipcRenderer.invoke('businessCenter:getEmployees', query ?? {}),
+      ipcRenderer.invoke(BusinessCenterIpc.GetEmployees, query ?? {}),
+    getEmployee: (id: string) =>
+      ipcRenderer.invoke(BusinessCenterIpc.GetEmployee, { id }),
     createEmployee: (payload: Record<string, unknown>) =>
-      ipcRenderer.invoke('businessCenter:createEmployee', payload),
+      ipcRenderer.invoke(BusinessCenterIpc.CreateEmployee, payload),
     updateEmployee: (id: string, payload: Record<string, unknown>) =>
-      ipcRenderer.invoke('businessCenter:updateEmployee', { id, data: payload }),
+      ipcRenderer.invoke(BusinessCenterIpc.UpdateEmployee, { id, data: payload }),
     disableEmployee: (id: string) =>
-      ipcRenderer.invoke('businessCenter:disableEmployee', { id }),
-    resetEmployeePassword: (id: string, password: string) =>
-      ipcRenderer.invoke('businessCenter:resetEmployeePassword', { id, password }),
+      ipcRenderer.invoke(BusinessCenterIpc.DisableEmployee, { id }),
+    resetEmployeePassword: (id: string, payload: Record<string, unknown>) =>
+      ipcRenderer.invoke(BusinessCenterIpc.ResetEmployeePassword, { id, data: payload }),
+    getAvailableApplications: () =>
+      ipcRenderer.invoke(BusinessCenterIpc.GetAvailableApplications),
+    setEmployeeApplications: (id: string, applicationIds: string[]) =>
+      ipcRenderer.invoke(BusinessCenterIpc.SetEmployeeApplications, { id, applicationIds }),
   },
   media: {
     getModels: (type: 'image' | 'video') =>

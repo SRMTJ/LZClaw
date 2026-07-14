@@ -464,8 +464,9 @@ interface BusinessEmployeeData {
   name: string;
   phone?: string;
   email?: string;
-  role: string;
-  status: string;
+  role: 'owner' | 'admin' | 'employee';
+  status: 'active' | 'disabled';
+  forcePasswordChange: boolean;
   identityProvider: string;
   casdoorOrgName?: string;
   casdoorUserId?: string;
@@ -473,6 +474,9 @@ interface BusinessEmployeeData {
   departmentIds: string[];
   departmentNames: string[];
   primaryDepartmentId?: string;
+  applicationIds: string[];
+  applicationNames: string[];
+  applicationCount: number;
   lastLoginAt?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -484,6 +488,20 @@ interface BusinessEmployeeListData {
   page: number;
   pageSize: number;
   pages: number;
+  summary: {
+    total: number;
+    active: number;
+    disabled: number;
+    addedThisMonth: number;
+  };
+}
+
+interface BusinessApplicationData {
+  id: string;
+  name: string;
+  code: string;
+  type: string;
+  status: string;
 }
 
 interface BusinessCenterIpcResult<T = unknown> {
@@ -1640,10 +1658,13 @@ interface IElectronAPI {
     updateDepartment: (id: string, payload: Record<string, unknown>) => Promise<BusinessCenterIpcResult<BusinessDepartmentData>>;
     deleteDepartment: (id: string) => Promise<BusinessCenterIpcResult<BusinessDepartmentData>>;
     getEmployees: (query?: Record<string, unknown>) => Promise<BusinessCenterIpcResult<BusinessEmployeeListData>>;
+    getEmployee: (id: string) => Promise<BusinessCenterIpcResult<BusinessEmployeeData>>;
     createEmployee: (payload: Record<string, unknown>) => Promise<BusinessCenterIpcResult<BusinessEmployeeData>>;
     updateEmployee: (id: string, payload: Record<string, unknown>) => Promise<BusinessCenterIpcResult<BusinessEmployeeData>>;
     disableEmployee: (id: string) => Promise<BusinessCenterIpcResult<BusinessEmployeeData>>;
-    resetEmployeePassword: (id: string, password: string) => Promise<BusinessCenterIpcResult<{ ok: boolean }>>;
+    resetEmployeePassword: (id: string, payload: Record<string, unknown>) => Promise<BusinessCenterIpcResult<{ ok: boolean }>>;
+    getAvailableApplications: () => Promise<BusinessCenterIpcResult<BusinessApplicationData[]>>;
+    setEmployeeApplications: (id: string, applicationIds: string[]) => Promise<BusinessCenterIpcResult<BusinessEmployeeData>>;
   };
   media: {
     getModels: (type: 'image' | 'video') => Promise<{ success: boolean; models?: Array<{ modelId: string; displayName: string; provider: string; mediaType: string; generationTimeout: number; pricing: Record<string, unknown> }>; error?: string }>;

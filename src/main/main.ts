@@ -50,6 +50,7 @@ import {
   type BrowserWebAccessConfig,
   normalizeBrowserWebAccessConfig,
 } from '../shared/browserWebAccess/constants';
+import { BusinessCenterIpc } from '../shared/businessCenter/constants';
 import { ClipboardIpc } from '../shared/clipboard/constants';
 import {
   COWORK_MESSAGE_PAGE_SIZE,
@@ -4059,6 +4060,12 @@ if (!gotTheLock) {
     body: JSON.stringify(withKeyfromBody(body)),
   });
 
+  const workstationPutOptions = (body: Record<string, unknown>): RequestInit => ({
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(withKeyfromBody(body)),
+  });
+
   const workstationDeleteOptions = (): RequestInit => ({
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
@@ -5489,18 +5496,18 @@ if (!gotTheLock) {
     }
   });
 
-  ipcMain.handle('businessCenter:getDepartments', async () =>
+  ipcMain.handle(BusinessCenterIpc.GetDepartments, async () =>
     fetchWorkstationData('/api/workstation/org/departments')
   );
 
-  ipcMain.handle('businessCenter:createDepartment', async (_event, payload: Record<string, unknown> = {}) =>
+  ipcMain.handle(BusinessCenterIpc.CreateDepartment, async (_event, payload: Record<string, unknown> = {}) =>
     fetchWorkstationData(
       '/api/workstation/org/departments',
       workstationMutationOptions(payload),
     )
   );
 
-  ipcMain.handle('businessCenter:updateDepartment', async (_event, payload: {
+  ipcMain.handle(BusinessCenterIpc.UpdateDepartment, async (_event, payload: {
     id?: string;
     data?: Record<string, unknown>;
   } = {}) => {
@@ -5512,7 +5519,7 @@ if (!gotTheLock) {
     );
   });
 
-  ipcMain.handle('businessCenter:deleteDepartment', async (_event, payload: { id?: string } = {}) => {
+  ipcMain.handle(BusinessCenterIpc.DeleteDepartment, async (_event, payload: { id?: string } = {}) => {
     const id = typeof payload.id === 'string' ? payload.id.trim() : '';
     if (!id) return { success: false, error: 'department id is required' };
     return fetchWorkstationData(
@@ -5521,18 +5528,24 @@ if (!gotTheLock) {
     );
   });
 
-  ipcMain.handle('businessCenter:getEmployees', async (_event, query: Record<string, unknown> = {}) =>
+  ipcMain.handle(BusinessCenterIpc.GetEmployees, async (_event, query: Record<string, unknown> = {}) =>
     fetchWorkstationData('/api/workstation/employees', undefined, query)
   );
 
-  ipcMain.handle('businessCenter:createEmployee', async (_event, payload: Record<string, unknown> = {}) =>
+  ipcMain.handle(BusinessCenterIpc.GetEmployee, async (_event, payload: { id?: string } = {}) => {
+    const id = typeof payload.id === 'string' ? payload.id.trim() : '';
+    if (!id) return { success: false, error: 'employee id is required' };
+    return fetchWorkstationData(`/api/workstation/employees/${encodeURIComponent(id)}`);
+  });
+
+  ipcMain.handle(BusinessCenterIpc.CreateEmployee, async (_event, payload: Record<string, unknown> = {}) =>
     fetchWorkstationData(
       '/api/workstation/employees',
       workstationMutationOptions(payload),
     )
   );
 
-  ipcMain.handle('businessCenter:updateEmployee', async (_event, payload: {
+  ipcMain.handle(BusinessCenterIpc.UpdateEmployee, async (_event, payload: {
     id?: string;
     data?: Record<string, unknown>;
   } = {}) => {
@@ -5544,7 +5557,7 @@ if (!gotTheLock) {
     );
   });
 
-  ipcMain.handle('businessCenter:disableEmployee', async (_event, payload: { id?: string } = {}) => {
+  ipcMain.handle(BusinessCenterIpc.DisableEmployee, async (_event, payload: { id?: string } = {}) => {
     const id = typeof payload.id === 'string' ? payload.id.trim() : '';
     if (!id) return { success: false, error: 'employee id is required' };
     return fetchWorkstationData(
@@ -5553,15 +5566,31 @@ if (!gotTheLock) {
     );
   });
 
-  ipcMain.handle('businessCenter:resetEmployeePassword', async (_event, payload: {
+  ipcMain.handle(BusinessCenterIpc.ResetEmployeePassword, async (_event, payload: {
     id?: string;
-    password?: string;
+    data?: Record<string, unknown>;
   } = {}) => {
     const id = typeof payload.id === 'string' ? payload.id.trim() : '';
     if (!id) return { success: false, error: 'employee id is required' };
     return fetchWorkstationData(
       `/api/workstation/employees/${encodeURIComponent(id)}/reset-password`,
-      workstationMutationOptions({ password: payload.password ?? '' }),
+      workstationMutationOptions(payload.data ?? {}),
+    );
+  });
+
+  ipcMain.handle(BusinessCenterIpc.GetAvailableApplications, async () =>
+    fetchWorkstationData('/api/workstation/applications/available')
+  );
+
+  ipcMain.handle(BusinessCenterIpc.SetEmployeeApplications, async (_event, payload: {
+    id?: string;
+    applicationIds?: string[];
+  } = {}) => {
+    const id = typeof payload.id === 'string' ? payload.id.trim() : '';
+    if (!id) return { success: false, error: 'employee id is required' };
+    return fetchWorkstationData(
+      `/api/workstation/employees/${encodeURIComponent(id)}/applications`,
+      workstationPutOptions({ applicationIds: payload.applicationIds ?? [] }),
     );
   });
 
