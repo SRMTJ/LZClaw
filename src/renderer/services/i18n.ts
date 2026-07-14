@@ -343,6 +343,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     authLogout: '退出登录',
     authLoginRequired: '请先登录后再开始对话。',
     authLoginRequiredBtn: '登录',
+    authSkipLogin: '跳过登录',
+    authSkipLoginHint: '跳过后可使用本地功能，企业功能仍需登录',
     authQuotaExhausted:
       '今日免费额度已用完。您可以登录 LobsterAI Portal 购买套餐或积分包继续使用，或在设置中配置自己的 API Key。',
     authTopUpLink: '充值',
@@ -3386,6 +3388,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     authLogout: 'Log Out',
     authLoginRequired: 'Please log in to start a conversation.',
     authLoginRequiredBtn: 'Log In',
+    authSkipLogin: 'Skip sign-in',
+    authSkipLoginHint: 'Continue with local features. Enterprise features still require sign-in.',
     authQuotaExhausted:
       'Daily free quota exhausted. Visit LobsterAI Portal to purchase a plan or credits, or configure your own API Key in Settings.',
     authTopUpLink: 'Top Up',

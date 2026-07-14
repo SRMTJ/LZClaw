@@ -1,5 +1,6 @@
 import {
   ArrowPathIcon,
+  ArrowRightIcon,
   BuildingOffice2Icon,
   ChatBubbleLeftRightIcon,
   CheckCircleIcon,
@@ -126,8 +127,9 @@ const resolveOnboardingEnabled = (enterpriseConfig: EnterpriseConfig, storedValu
 
 const LoginRequiredScreen: React.FC<{
   onPasswordLogin: (account: string, password: string) => Promise<void>;
+  onSkipLogin: () => void;
   hasImmersiveTitleBar?: boolean;
-}> = ({ onPasswordLogin, hasImmersiveTitleBar = false }) => {
+}> = ({ onPasswordLogin, onSkipLogin, hasImmersiveTitleBar = false }) => {
   const [account, setAccount] = useState('');
   const [password, setPassword] = useState('');
   const [submittingMode, setSubmittingMode] = useState<'password' | null>(null);
@@ -257,6 +259,16 @@ const LoginRequiredScreen: React.FC<{
                 {submittingMode === 'password' && <ArrowPathIcon className="h-4 w-4 animate-spin" />}
                 {submittingMode === 'password' ? '正在登录' : '登录'}
               </button>
+              <button
+                type="button"
+                disabled={isSubmitting}
+                onClick={onSkipLogin}
+                title={i18nService.t('authSkipLoginHint')}
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-lg text-sm font-semibold text-[#9fb8cc] transition-colors hover:bg-[#0a2940]/66 hover:text-[#dff9ff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5ce7ff]/70 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {i18nService.t('authSkipLogin')}
+                <ArrowRightIcon className="h-4 w-4" />
+              </button>
             </form>
 
             <div className="mt-5 flex items-center gap-2 rounded-lg border border-[#69e6ff]/18 bg-[#03111f]/58 px-4 py-3 text-[#cde8f5] shadow-[inset_0_1px_0_rgba(125,233,255,0.08)]">
@@ -298,6 +310,7 @@ const App: React.FC = () => {
   const [isUpdateCardExpanded, setIsUpdateCardExpanded] = useState(false);
   const [privacyAgreed, setPrivacyAgreed] = useState<boolean | null>(null);
   const [showWelcome, setShowWelcome] = useState(false);
+  const [hasSkippedLogin, setHasSkippedLogin] = useState(false);
   const [enterpriseConfig, setEnterpriseConfig] = useState<EnterpriseConfig>(null);
   const toastTimerRef = useRef<number | null>(null);
   const hasInitialized = useRef(false);
@@ -733,6 +746,11 @@ const App: React.FC = () => {
 
   const handlePasswordLogin = useCallback(async (account: string, password: string) => {
     await authService.loginWithPassword(account, password);
+  }, []);
+
+  const handleSkipLogin = useCallback(() => {
+    setHasSkippedLogin(true);
+    setMainView('cowork');
   }, []);
 
   const runUpdateCheck = useCallback(async () => {
@@ -1378,7 +1396,7 @@ const App: React.FC = () => {
     );
   }
 
-  if (!authIsLoggedIn) {
+  if (!authIsLoggedIn && !hasSkippedLogin) {
     return (
       <div className="relative h-screen overflow-hidden flex flex-col bg-[#020714]">
         {toastMessage && (
@@ -1394,6 +1412,7 @@ const App: React.FC = () => {
         ) : (
           <LoginRequiredScreen
             onPasswordLogin={handlePasswordLogin}
+            onSkipLogin={handleSkipLogin}
             hasImmersiveTitleBar={isWindows}
           />
         )}
