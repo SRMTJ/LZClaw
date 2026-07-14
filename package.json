@@ -89,7 +89,7 @@
     "test:sqlite-backup:seed": "node tests/sqlite-backup/generate-large-db.cjs",
     "preview": "vite preview",
     "compile:electron": "tsc --project electron-tsconfig.json",
-    "precompile:electron": "electron-builder install-app-deps",
+    "precompile:electron": "node scripts/install-electron-app-deps.cjs",
     "build:skill:web-search": "npm install --prefix SKILLs/web-search && npx tsc -p SKILLs/web-search/tsconfig.json && node -e \"const fs=require('fs');['.connection','.server.log','.server.pid'].forEach(f=>{try{fs.unlinkSync('SKILLs/web-search/'+f)}catch(e){}});\"",
     "build:skill:tech-news": "node scripts/build-skill-tech-news.js",
     "build:skill:email": "cd SKILLs/imap-smtp-email && npm install --production",
@@ -97,7 +97,7 @@
     "start:electron": "cross-env NODE_ENV=development ELECTRON_START_URL=http://localhost:5175 electron .",
     "electron:dev": "rimraf dist-electron && npm run compile:electron && concurrently \"vite --port 5175\" \"wait-on -v -t 120000 -d 20000 http://localhost:5175 dist-electron/.electron-ready && npm run start:electron\"",
     "electron:dev:openclaw": "npm run openclaw:runtime:host && npm run electron:dev",
-    "postinstall": "patch-package && electron-builder install-app-deps",
+    "postinstall": "patch-package && node scripts/install-electron-app-deps.cjs",
     "pack": "npm run setup:python-runtime && npm run build && npm run compile:electron && npm run build:skills && electron-builder --dir --config scripts/electron-builder-config.cjs",
     "dist": "npm run setup:python-runtime && npm run build && npm run compile:electron && npm run build:skills && electron-builder --config scripts/electron-builder-config.cjs",
     "dist:mac": "electron-builder --mac --config scripts/electron-builder-config.cjs",
@@ -260,5 +260,13 @@
     "vite-plugin-glsl": "^1.3.1",
     "vitest": "^4.1.0",
     "wait-on": "^7.2.0"
+  },
+  "allowScripts": {
+    "better-sqlite3@12.11.1": true,
+    "bufferutil@4.1.0": true,
+    "electron@40.2.1": true,
+    "esbuild@0.21.5": true,
+    "protobufjs@7.6.4": true,
+    "utf-8-validate@6.0.6": true
   }
 }
