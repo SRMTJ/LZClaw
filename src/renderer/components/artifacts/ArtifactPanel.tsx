@@ -1171,6 +1171,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   const nodeDeploymentLookupDialogTimerRef = useRef<number | undefined>(undefined);
   const nodeDeploymentAnalysisRunIdRef = useRef(0);
   const nodeDeploymentActionRunIdRef = useRef(0);
+  const nodeDeploymentPersistenceOperationRunIdRef = useRef(0);
 
   const previewableArtifacts = artifacts.filter(a => PREVIEWABLE_ARTIFACT_TYPES.has(a.type));
   const artifactsById = useMemo(
@@ -1566,6 +1567,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
         window.clearTimeout(nodeDeploymentLookupDialogTimerRef.current);
       }
       nodeDeploymentActionRunIdRef.current += 1;
+      nodeDeploymentPersistenceOperationRunIdRef.current += 1;
       document.body.style.cursor = previousBodyCursor.current;
       document.body.classList.remove('select-none');
     };
@@ -2928,6 +2930,22 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
 
   const closeNodeDeploymentDialog = useCallback(() => {
     setIsNodeDeploymentDialogOpen(false);
+    nodeDeploymentPersistenceOperationRunIdRef.current += 1;
+    const deploymentId = nodeDeploymentDialog?.deployment?.deploymentId;
+    if (deploymentId) {
+      setNodeDeploymentPersistenceOperations(previous => {
+        const operation = previous[deploymentId];
+        if (
+          !operation ||
+          operation.phase === NodeDeploymentPersistenceOperationPhase.Running
+        ) {
+          return previous;
+        }
+        const next = { ...previous };
+        delete next[deploymentId];
+        return next;
+      });
+    }
     if (nodeDeploymentDialog?.kind !== NodeDeploymentDialogKind.Loading) return;
     nodeDeploymentActionRunIdRef.current += 1;
     clearNodeDeploymentLookupDialogTimer();
@@ -2937,6 +2955,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     );
   }, [
     clearNodeDeploymentLookupDialogTimer,
+    nodeDeploymentDialog?.deployment?.deploymentId,
     nodeDeploymentDialog?.kind,
   ]);
 
@@ -3286,6 +3305,15 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     }));
   }, []);
 
+  const clearNodeDeploymentPersistenceOperation = useCallback((deploymentId: string) => {
+    setNodeDeploymentPersistenceOperations(previous => {
+      if (!previous[deploymentId]) return previous;
+      const next = { ...previous };
+      delete next[deploymentId];
+      return next;
+    });
+  }, []);
+
   const downloadNodeDeploymentPersistenceArchive = useCallback(async () => {
     const currentDialog = nodeDeploymentDialog;
     const deployment = currentDialog?.deployment;
@@ -3300,6 +3328,8 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     }
     const deploymentId = deployment.deploymentId;
     const startedAt = Date.now();
+    const operationRunId = nodeDeploymentPersistenceOperationRunIdRef.current + 1;
+    nodeDeploymentPersistenceOperationRunIdRef.current = operationRunId;
     storeNodeDeploymentPersistenceOperation({
       deploymentId,
       action: NodeDeploymentPersistenceOperationAction.Download,
@@ -3322,6 +3352,10 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
             : result?.error || t('nodeDeploymentPersistenceDownloadFailed'),
         );
       }
+      if (nodeDeploymentPersistenceOperationRunIdRef.current !== operationRunId) {
+        clearNodeDeploymentPersistenceOperation(deploymentId);
+        return;
+      }
       storeNodeDeploymentPersistenceOperation({
         deploymentId,
         action: NodeDeploymentPersistenceOperationAction.Download,
@@ -3331,6 +3365,10 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
         empty: result.empty,
       });
     } catch (error) {
+      if (nodeDeploymentPersistenceOperationRunIdRef.current !== operationRunId) {
+        clearNodeDeploymentPersistenceOperation(deploymentId);
+        return;
+      }
       storeNodeDeploymentPersistenceOperation({
         deploymentId,
         action: NodeDeploymentPersistenceOperationAction.Download,
@@ -3340,6 +3378,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
       });
     }
   }, [
+    clearNodeDeploymentPersistenceOperation,
     nodeDeploymentDialog,
     nodeDeploymentPersistenceOperations,
     storeNodeDeploymentPersistenceOperation,
@@ -5016,7 +5055,7 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
                         {nodeDeploymentDialog.deployment &&
                           isNodeDeploymentPersistenceEnabled && (
                             <label
-                              className="mt-2.5 flex cursor-pointer items-start justify-between gap-3 border-t border-border pt-2.5 text-red-600 transition-colors dark:text-red-300"
+                              className="mt-2.5 flex cursor-pointer items-start justify-between gap-3 border-t border-border pt-2.5 text-foreground transition-colors"
                             >
                               <span className="min-w-0">
                                 <span className="block font-medium">
@@ -5067,35 +5106,15 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
                             )}
                           </div>
                           )}
-                        {nodeDeploymentPersistenceOperation && (
-                          <NodeDeploymentPersistenceOperationStatus
-                            key={`${nodeDeploymentPersistenceOperation.deploymentId}:${nodeDeploymentPersistenceOperation.action}:${nodeDeploymentPersistenceOperation.startedAt}`}
-                            operation={nodeDeploymentPersistenceOperation}
-                            onRetry={retryNodeDeploymentPersistenceOperation}
-                          />
-                        )}
-                        {downloadedNodeDeploymentPersistenceArchivePath && (
-                          <div className="mt-2 rounded-md border border-primary/30 bg-primary/5 px-2 py-2">
-                            <div className="break-all text-secondary">
-                              {t('nodeDeploymentPersistenceDownloadComplete')
-                                .replace(
-                                  '{path}',
-                                  downloadedNodeDeploymentPersistenceArchivePath,
-                                )}
-                            </div>
-                            <div className="mt-2">
-                              <button
-                                type="button"
-                                onClick={() => void revealNodeDeploymentPersistenceArchive(
-                                  downloadedNodeDeploymentPersistenceArchivePath,
-                                )}
-                                className="inline-flex h-7 items-center rounded-md border border-border px-2 text-xs text-secondary transition-colors hover:bg-background hover:text-foreground"
-                              >
-                                {t('nodeDeploymentPersistenceShowInFolder')}
-                              </button>
-                            </div>
-                          </div>
-                        )}
+                        {nodeDeploymentPersistenceOperation &&
+                          nodeDeploymentPersistenceOperation.phase !==
+                            NodeDeploymentPersistenceOperationPhase.Succeeded && (
+                            <NodeDeploymentPersistenceOperationStatus
+                              key={`${nodeDeploymentPersistenceOperation.deploymentId}:${nodeDeploymentPersistenceOperation.action}:${nodeDeploymentPersistenceOperation.startedAt}`}
+                              operation={nodeDeploymentPersistenceOperation}
+                              onRetry={retryNodeDeploymentPersistenceOperation}
+                            />
+                          )}
                       </div>
                     )}
 
