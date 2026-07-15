@@ -69,6 +69,12 @@
         "npm": "@openclaw/diagnostics-otel",
         "version": "2026.6.1",
         "runtimeOrigin": "state-npm"
+      },
+      {
+        "id": "cognee-openclaw",
+        "npm": "@cognee/cognee-openclaw",
+        "version": "2026.6.11",
+        "installMode": "direct-extract"
       }
     ]
   },

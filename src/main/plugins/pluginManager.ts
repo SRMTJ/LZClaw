@@ -10,6 +10,16 @@ import {
   findThirdPartyExtensionsDir,
   listBundledOpenClawExtensionManifests,
 } from '../libs/openclawLocalExtensions';
+import {
+  COGNEE_FALLBACK_SCHEMA,
+  COGNEE_PLUGIN_ID,
+  COGNEE_PLUGIN_PACKAGE,
+  COGNEE_PLUGIN_VERSION,
+  ensureCogneePluginRegistration,
+  getSanitizedCogneeConfig,
+  saveCogneePluginConfig,
+} from './cogneeIntegration';
+import type { PluginCredentialStore } from './pluginCredentialStore';
 
 export interface PluginInstallParams {
   source: PluginSource;
@@ -212,11 +222,12 @@ function generateHintsFromSchema(
 export class PluginManager {
   private store: CoworkStore;
 
-  constructor(store: CoworkStore) {
+  constructor(store: CoworkStore, private readonly credentialStore?: PluginCredentialStore) {
     this.store = store;
   }
 
   async listPlugins(): Promise<PluginListItem[]> {
+    ensureCogneePluginRegistration(this.store);
     const hiddenIds = getHiddenPluginIds();
     const userPlugins = this.store.listUserPlugins();
     const dirsToSearch = [
@@ -251,12 +262,14 @@ export class PluginManager {
 
       items.push({
         pluginId: plugin.pluginId,
-        version,
-        description,
-        source: plugin.source,
+        version: plugin.pluginId === COGNEE_PLUGIN_ID ? COGNEE_PLUGIN_VERSION : version,
+        description: plugin.pluginId === COGNEE_PLUGIN_ID
+          ? (description || 'Cognee 长期记忆（LZClaw 托管版本）')
+          : description,
+        source: plugin.pluginId === COGNEE_PLUGIN_ID ? 'bundled' : plugin.source,
         enabled: plugin.enabled,
-        canUninstall: true,
-        hasConfig,
+        canUninstall: plugin.pluginId !== COGNEE_PLUGIN_ID,
+        hasConfig: plugin.pluginId === COGNEE_PLUGIN_ID || hasConfig,
       });
     }
 
@@ -264,6 +277,12 @@ export class PluginManager {
   }
 
   async installPlugin(params: PluginInstallParams, onLog?: PluginInstallLogCallback): Promise<PluginInstallResult> {
+    if (params.spec === COGNEE_PLUGIN_PACKAGE) {
+      return {
+        ok: false,
+        error: `Cognee 是 LZClaw 托管插件，版本固定为 ${COGNEE_PLUGIN_VERSION}，无需手动安装或更新`,
+      };
+    }
     const extensionsDir = getExtensionsDir();
     if (!extensionsDir) {
       return { ok: false, error: 'Extensions directory not found' };
@@ -380,6 +399,9 @@ export class PluginManager {
   }
 
   async uninstallPlugin(pluginId: string): Promise<{ ok: boolean; error?: string }> {
+    if (pluginId === COGNEE_PLUGIN_ID) {
+      return { ok: false, error: 'Cognee 是 LZClaw 托管插件，只能禁用，不能卸载' };
+    }
     const extensionsDir = getExtensionsDir();
     if (!extensionsDir) {
       return { ok: false, error: 'Extensions directory not found' };
@@ -437,20 +459,60 @@ export class PluginManager {
       // Auto-generate uiHints from configSchema properties when not provided
       const mergedHints = generateHintsFromSchema(manifest.configSchema!, uiHints);
 
+      if (pluginId === COGNEE_PLUGIN_ID) {
+        const fallbackProperties = COGNEE_FALLBACK_SCHEMA.configSchema.properties;
+        return {
+          configSchema: {
+            ...manifest.configSchema!,
+            properties: {
+              ...(schemaProps as Record<string, unknown>),
+              credentialMode: fallbackProperties.credentialMode,
+            },
+          },
+          uiHints: {
+            ...mergedHints,
+            credentialMode: COGNEE_FALLBACK_SCHEMA.uiHints.credentialMode,
+            apiKey: {
+              ...mergedHints.apiKey,
+              sensitive: true,
+              help: '使用系统安全凭据存储加密；留空保留已保存值。',
+            },
+            password: {
+              ...mergedHints.password,
+              sensitive: true,
+              help: '使用系统安全凭据存储加密；留空保留已保存值。',
+            },
+          },
+        };
+      }
+
       return {
         configSchema: manifest.configSchema!,
         uiHints: mergedHints,
       };
     }
 
+    if (pluginId === COGNEE_PLUGIN_ID) {
+      return COGNEE_FALLBACK_SCHEMA;
+    }
     return null;
   }
 
   getPluginConfig(pluginId: string): Record<string, unknown> | null {
+    if (pluginId === COGNEE_PLUGIN_ID && this.credentialStore) {
+      return getSanitizedCogneeConfig(this.store, this.credentialStore);
+    }
     return this.store.getUserPluginConfig(pluginId);
   }
 
   savePluginConfig(pluginId: string, config: Record<string, unknown>): void {
+    if (pluginId === COGNEE_PLUGIN_ID) {
+      if (!this.credentialStore) {
+        throw new Error('Cognee 安全凭据存储未初始化');
+      }
+      saveCogneePluginConfig(this.store, this.credentialStore, config);
+      return;
+    }
     this.store.setUserPluginConfig(pluginId, config);
   }
 
@@ -719,6 +781,7 @@ export class PluginManager {
   async checkPluginUpdates(pluginIds?: string[]): Promise<PluginUpdateInfo[]> {
     const userPlugins = this.store.listUserPlugins();
     const candidates = userPlugins.filter(p => {
+      if (p.pluginId === COGNEE_PLUGIN_ID) return false;
       if (p.source !== 'npm' && p.source !== 'clawhub') return false;
       if (pluginIds && pluginIds.length > 0 && !pluginIds.includes(p.pluginId)) return false;
       return true;
@@ -912,12 +975,14 @@ function getHiddenPluginIds(): Set<string> {
 
   // Preinstalled (IM channel) plugins from package.json
   for (const id of readPreinstalledPluginIdsFromPackageJson()) {
-    hidden.add(id);
+    // Cognee is preinstalled to pin a runtime-compatible build, but remains a
+    // user-facing managed integration with its own enable/config controls.
+    if (id !== COGNEE_PLUGIN_ID) hidden.add(id);
   }
 
   // Bundled extensions shipped with the runtime
   for (const manifest of listBundledOpenClawExtensionManifests()) {
-    hidden.add(manifest.pluginId);
+    if (manifest.pluginId !== COGNEE_PLUGIN_ID) hidden.add(manifest.pluginId);
   }
 
   // Hardcoded internal plugins

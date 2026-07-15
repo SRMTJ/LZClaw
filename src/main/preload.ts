@@ -801,6 +801,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('plugins:set-enabled', pluginId, enabled),
     getConfigSchema: (pluginId: string) =>
       ipcRenderer.invoke('plugins:get-config-schema', pluginId),
+    testConnection: (pluginId: string, config: Record<string, unknown>) =>
+      ipcRenderer.invoke('plugins:test-connection', pluginId, config),
     saveConfig: (pluginId: string, config: Record<string, unknown>) =>
       ipcRenderer.invoke('plugins:save-config', pluginId, config),
     batchSave: (changes: {

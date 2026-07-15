@@ -1,0 +1,2048 @@
+# Vibe Coding review bundle diff v1
+# base-head: 003ca191db8488b7428281e4ab1a987bda5713f7
+# files: docs/server-integration/2026-07-14-cognee-openclaw-memory.md, docs/vibe-coding/changes/2026/07/2026-07-14-1145-fudanda-cognee-openclaw-memory.md, docs/vibe-coding/changes/2026/07/2026-07-14-1535-fudanda-cognee-agent-end-capture.md, package.json, scripts/ensure-openclaw-plugins.cjs, scripts/openclaw-plugin-patches/cognee.cjs, scripts/openclaw-plugin-patches/index.cjs, src/main/ipcHandlers/plugins/handlers.ts, src/main/libs/openclawConfigSync.runtime.test.ts, src/main/libs/openclawConfigSync.ts, src/main/main.ts, src/main/plugins/cogneeIntegration.test.ts, src/main/plugins/cogneeIntegration.ts, src/main/plugins/electronPluginCredentialStore.ts, src/main/plugins/pluginCredentialStore.test.ts, src/main/plugins/pluginCredentialStore.ts, src/main/plugins/pluginManager.test.ts, src/main/plugins/pluginManager.ts, src/main/preload.ts, src/renderer/components/plugins/PluginConfigPage.tsx, src/renderer/services/i18n.ts, src/renderer/types/electron.d.ts, tests/openclaw-plugin-patches-cognee.test.ts
+
+## STAGED
+(none)
+
+## UNSTAGED
+warning: in the working copy of 'package.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'scripts/ensure-openclaw-plugins.cjs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'scripts/openclaw-plugin-patches/index.cjs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/main/ipcHandlers/plugins/handlers.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/main/libs/openclawConfigSync.runtime.test.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/main/libs/openclawConfigSync.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/main/main.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/main/plugins/pluginManager.test.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/main/plugins/pluginManager.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/main/preload.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/renderer/components/plugins/PluginConfigPage.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/renderer/services/i18n.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/renderer/types/electron.d.ts', LF will be replaced by CRLF the next time Git touches it
+diff --git a/package.json b/package.json
+index 45b5330b..f12bd510 100644
+--- a/package.json
++++ b/package.json
+@@ -69,6 +69,12 @@
+         "npm": "@openclaw/diagnostics-otel",
+         "version": "2026.6.1",
+         "runtimeOrigin": "state-npm"
++      },
++      {
++        "id": "cognee-openclaw",
++        "npm": "@cognee/cognee-openclaw",
++        "version": "2026.6.11",
++        "installMode": "direct-extract"
+       }
+     ]
+   },
+diff --git a/scripts/ensure-openclaw-plugins.cjs b/scripts/ensure-openclaw-plugins.cjs
+index 85be9dc9..66b99d37 100644
+--- a/scripts/ensure-openclaw-plugins.cjs
++++ b/scripts/ensure-openclaw-plugins.cjs
+@@ -433,6 +433,44 @@ function npmPack(packSpec, registry, outputDir) {
+   return path.join(outputDir, tgzName);
+ }
+ 
++/**
++ * Extract a pinned npm plugin that has no production dependencies.
++ *
++ * OpenClaw 2026.6 invokes npm with --allow-scripts for unsafe-install mode.
++ * npm 11 rejects that flag in the isolated project created by OpenClaw. For
++ * audited, dependency-free plugins we can safely use npm pack (which verifies
++ * registry integrity) and extract the already-built package directly.
++ */
++function extractDependencyFreePlugin(tgzPath, outputDir, plugin) {
++  const extractDir = path.join(outputDir, 'direct-extract');
++  ensureDir(extractDir);
++  require('tar').x({ file: tgzPath, cwd: extractDir, sync: true });
++
++  const packageDir = path.join(extractDir, 'package');
++  const packageJsonPath = path.join(packageDir, 'package.json');
++  const manifestPath = path.join(packageDir, 'openclaw.plugin.json');
++  if (!fs.existsSync(packageJsonPath) || !fs.existsSync(manifestPath)) {
++    throw new Error(`Direct-extract plugin ${plugin.id} is missing package.json or openclaw.plugin.json`);
++  }
++
++  const packageJson = readJsonFile(packageJsonPath);
++  const manifest = readJsonFile(manifestPath);
++  const runtimeDependencies = {
++    ...(packageJson?.dependencies || {}),
++    ...(packageJson?.optionalDependencies || {}),
++  };
++  if (Object.keys(runtimeDependencies).length > 0) {
++    throw new Error(`Direct-extract plugin ${plugin.id} unexpectedly declares runtime dependencies`);
++  }
++  if (packageJson?.version !== plugin.version) {
++    throw new Error(`Direct-extract plugin ${plugin.id} version mismatch: ${packageJson?.version || 'unknown'}`);
++  }
++  if (manifest?.id !== plugin.id) {
++    throw new Error(`Direct-extract plugin manifest id mismatch: ${manifest?.id || 'unknown'}`);
++  }
++  return packageDir;
++}
++
+ function gitCloneAndPack(spec, version, outputDir) {
+   const parsed = parseGitSpec(spec, version);
+   if (!parsed) {
+@@ -685,23 +723,32 @@ function main() {
+           installSpec = prepareOpenClawNimPackage(installSpec, stagingDir, { log });
+         }
+ 
+-        runOpenClawCli(
+-          ['plugins', 'install', installSpec, '--force', '--dangerously-force-unsafe-install'],
+-          {
+-            env: {
+-              OPENCLAW_STATE_DIR: stagingDir,
+-              // Prevent npm from auto-installing peerDependencies (npm v7+).
+-              // Channel plugins declare openclaw as a peerDep, but the host
+-              // gateway already provides the SDK at runtime.  Without this,
+-              // npm installs the full openclaw SDK + transitive deps (~738 MB)
+-              // into each plugin's node_modules.
+-              npm_config_legacy_peer_deps: 'true',
+-            },
+-            stdio: 'inherit',
+-          }
+-        );
++        let installedDir;
++        if (plugin.installMode === 'direct-extract') {
++          log('  Using audited dependency-free direct extraction.');
++          const packedPlugin = fs.existsSync(installSpec)
++            ? installSpec
++            : npmPack(source.pinnedDisplaySpec, plugin.registry, stagingDir);
++          installedDir = extractDependencyFreePlugin(packedPlugin, stagingDir, plugin);
++        } else {
++          runOpenClawCli(
++            ['plugins', 'install', installSpec, '--force', '--dangerously-force-unsafe-install'],
++            {
++              env: {
++                OPENCLAW_STATE_DIR: stagingDir,
++                // Prevent npm from auto-installing peerDependencies (npm v7+).
++                // Channel plugins declare openclaw as a peerDep, but the host
++                // gateway already provides the SDK at runtime.  Without this,
++                // npm installs the full openclaw SDK + transitive deps (~738 MB)
++                // into each plugin's node_modules.
++                npm_config_legacy_peer_deps: 'true',
++              },
++              stdio: 'inherit',
++            }
++          );
++          installedDir = findInstalledPluginDir(stagingDir, plugin);
++        }
+ 
+-        const installedDir = findInstalledPluginDir(stagingDir, plugin);
+         if (!installedDir) {
+           throw new Error('No plugin found in staging directory after install');
+         }
+diff --git a/scripts/openclaw-plugin-patches/index.cjs b/scripts/openclaw-plugin-patches/index.cjs
+index 91b52549..fa1cf7ec 100644
+--- a/scripts/openclaw-plugin-patches/index.cjs
++++ b/scripts/openclaw-plugin-patches/index.cjs
+@@ -1,10 +1,12 @@
+ 'use strict';
+ 
+ const { patchDingtalk } = require('./dingtalk.cjs');
++const { patchCognee } = require('./cognee.cjs');
+ const { patchLark } = require('./lark.cjs');
+ const { patchWeixin } = require('./weixin.cjs');
+ 
+ function applyOpenClawPluginPatches(context) {
++  patchCognee(context);
+   patchWeixin(context);
+   patchLark(context);
+   patchDingtalk(context);
+diff --git a/src/main/ipcHandlers/plugins/handlers.ts b/src/main/ipcHandlers/plugins/handlers.ts
+index 5bcdfcc5..8116fb0c 100644
+--- a/src/main/ipcHandlers/plugins/handlers.ts
++++ b/src/main/ipcHandlers/plugins/handlers.ts
+@@ -6,9 +6,12 @@ import {
+   OpenClawConfigImpact,
+   OpenClawPluginChangeAction,
+ } from '../../libs/openclawConfigImpact';
++import { COGNEE_PLUGIN_ID, testCogneeConnection } from '../../plugins/cogneeIntegration';
++import type { PluginCredentialStore } from '../../plugins/pluginCredentialStore';
+ 
+ export interface PluginHandlerDeps {
+   getCoworkStore: () => CoworkStore;
++  getPluginCredentialStore: () => PluginCredentialStore;
+   syncOpenClawConfig: (options: {
+     reason: string;
+     restartGatewayIfRunning?: boolean;
+@@ -16,12 +19,12 @@ export interface PluginHandlerDeps {
+ }
+ 
+ export function registerPluginHandlers(deps: PluginHandlerDeps): void {
+-  const { getCoworkStore, syncOpenClawConfig } = deps;
++  const { getCoworkStore, getPluginCredentialStore, syncOpenClawConfig } = deps;
+ 
+   ipcMain.handle('plugins:list', async () => {
+     try {
+       const { PluginManager } = await import('../../plugins/pluginManager');
+-      const manager = new PluginManager(getCoworkStore());
++      const manager = new PluginManager(getCoworkStore(), getPluginCredentialStore());
+       return { success: true, plugins: await manager.listPlugins() };
+     } catch (error) {
+       return { success: false, error: error instanceof Error ? error.message : 'Failed to list plugins' };
+@@ -31,7 +34,7 @@ export function registerPluginHandlers(deps: PluginHandlerDeps): void {
+   ipcMain.handle('plugins:sync', async () => {
+     try {
+       const { PluginManager } = await import('../../plugins/pluginManager');
+-      const manager = new PluginManager(getCoworkStore());
++      const manager = new PluginManager(getCoworkStore(), getPluginCredentialStore());
+       const result = await manager.syncPluginsFromOpenClaw();
+       return result;
+     } catch (error) {
+@@ -43,7 +46,7 @@ export function registerPluginHandlers(deps: PluginHandlerDeps): void {
+   ipcMain.handle('plugins:detect', async () => {
+     try {
+       const { PluginManager } = await import('../../plugins/pluginManager');
+-      const manager = new PluginManager(getCoworkStore());
++      const manager = new PluginManager(getCoworkStore(), getPluginCredentialStore());
+       const result = manager.detectPluginsFromOpenClaw();
+       return result;
+     } catch (error) {
+@@ -60,7 +63,7 @@ export function registerPluginHandlers(deps: PluginHandlerDeps): void {
+   }) => {
+     try {
+       const { PluginManager } = await import('../../plugins/pluginManager');
+-      const manager = new PluginManager(getCoworkStore());
++      const manager = new PluginManager(getCoworkStore(), getPluginCredentialStore());
+       const sender = event.sender;
+       const sendLog = (line: string) => {
+         try { sender.send('plugins:install-log', line); } catch { /* window closed */ }
+@@ -84,7 +87,7 @@ export function registerPluginHandlers(deps: PluginHandlerDeps): void {
+   ipcMain.handle('plugins:uninstall', async (_event, pluginId: string) => {
+     try {
+       const { PluginManager } = await import('../../plugins/pluginManager');
+-      const manager = new PluginManager(getCoworkStore());
++      const manager = new PluginManager(getCoworkStore(), getPluginCredentialStore());
+       const result = await manager.uninstallPlugin(pluginId);
+       if (result.ok) {
+         const impactDecision = classifyPluginConfigChange(OpenClawPluginChangeAction.Uninstall);
+@@ -102,7 +105,7 @@ export function registerPluginHandlers(deps: PluginHandlerDeps): void {
+   ipcMain.handle('plugins:set-enabled', async (_event, pluginId: string, enabled: boolean) => {
+     try {
+       const { PluginManager } = await import('../../plugins/pluginManager');
+-      const manager = new PluginManager(getCoworkStore());
++      const manager = new PluginManager(getCoworkStore(), getPluginCredentialStore());
+       manager.setPluginEnabled(pluginId, enabled);
+       const impactDecision = classifyPluginConfigChange(OpenClawPluginChangeAction.Toggle);
+       await syncOpenClawConfig({
+@@ -118,10 +121,13 @@ export function registerPluginHandlers(deps: PluginHandlerDeps): void {
+   ipcMain.handle('plugins:get-config-schema', async (_event, pluginId: string) => {
+     try {
+       const { PluginManager } = await import('../../plugins/pluginManager');
+-      const manager = new PluginManager(getCoworkStore());
++      const manager = new PluginManager(getCoworkStore(), getPluginCredentialStore());
+       const schema = manager.getPluginConfigSchema(pluginId);
+       const config = manager.getPluginConfig(pluginId);
+-      return { success: true, schema, config };
++      const secretStatus = pluginId === COGNEE_PLUGIN_ID
++        ? getPluginCredentialStore().getPluginCredentialStatus(pluginId)
++        : undefined;
++      return { success: true, schema, config, secretStatus };
+     } catch (error) {
+       return { success: false, error: error instanceof Error ? error.message : 'Failed to get config schema' };
+     }
+@@ -130,7 +136,7 @@ export function registerPluginHandlers(deps: PluginHandlerDeps): void {
+   ipcMain.handle('plugins:save-config', async (_event, pluginId: string, config: Record<string, unknown>) => {
+     try {
+       const { PluginManager } = await import('../../plugins/pluginManager');
+-      const manager = new PluginManager(getCoworkStore());
++      const manager = new PluginManager(getCoworkStore(), getPluginCredentialStore());
+       manager.savePluginConfig(pluginId, config);
+       const impactDecision = classifyPluginConfigChange(OpenClawPluginChangeAction.Config);
+       await syncOpenClawConfig({
+@@ -149,7 +155,7 @@ export function registerPluginHandlers(deps: PluginHandlerDeps): void {
+   }) => {
+     try {
+       const { PluginManager } = await import('../../plugins/pluginManager');
+-      const manager = new PluginManager(getCoworkStore());
++      const manager = new PluginManager(getCoworkStore(), getPluginCredentialStore());
+       for (const { pluginId, enabled } of changes.toggles ?? []) {
+         manager.setPluginEnabled(pluginId, enabled);
+       }
+@@ -172,7 +178,7 @@ export function registerPluginHandlers(deps: PluginHandlerDeps): void {
+   ipcMain.handle('plugins:check-updates', async (_event, pluginIds?: string[]) => {
+     try {
+       const { PluginManager } = await import('../../plugins/pluginManager');
+-      const manager = new PluginManager(getCoworkStore());
++      const manager = new PluginManager(getCoworkStore(), getPluginCredentialStore());
+       const updates = await manager.checkPluginUpdates(pluginIds);
+       return { success: true, updates };
+     } catch (error) {
+@@ -183,7 +189,7 @@ export function registerPluginHandlers(deps: PluginHandlerDeps): void {
+   ipcMain.handle('plugins:update', async (event, pluginId: string) => {
+     try {
+       const { PluginManager } = await import('../../plugins/pluginManager');
+-      const manager = new PluginManager(getCoworkStore());
++      const manager = new PluginManager(getCoworkStore(), getPluginCredentialStore());
+ 
+       // Find plugin info to determine source/spec/registry
+       const plugins = getCoworkStore().listUserPlugins();
+@@ -227,4 +233,31 @@ export function registerPluginHandlers(deps: PluginHandlerDeps): void {
+       return { ok: false, error: error instanceof Error ? error.message : 'Failed to update plugin' };
+     }
+   });
++
++  ipcMain.handle('plugins:test-connection', async (
++    _event,
++    pluginId: string,
++    draftConfig: Record<string, unknown>,
++  ) => {
++    if (pluginId !== COGNEE_PLUGIN_ID) {
++      return { ok: false, reachable: false, authenticated: false, message: '该插件不支持连接测试' };
++    }
++    try {
++      const { PluginManager } = await import('../../plugins/pluginManager');
++      const credentialStore = getPluginCredentialStore();
++      const manager = new PluginManager(getCoworkStore(), credentialStore);
++      const savedConfig = manager.getPluginConfig(pluginId) ?? {};
++      return await testCogneeConnection(
++        { ...savedConfig, ...draftConfig },
++        credentialStore.getPluginCredentials(pluginId),
++      );
++    } catch (error) {
++      return {
++        ok: false,
++        reachable: false,
++        authenticated: false,
++        message: error instanceof Error ? error.message : 'Cognee 连接测试失败',
++      };
++    }
++  });
+ }
+diff --git a/src/main/libs/openclawConfigSync.runtime.test.ts b/src/main/libs/openclawConfigSync.runtime.test.ts
+index 2d067e2a..6b169466 100644
+--- a/src/main/libs/openclawConfigSync.runtime.test.ts
++++ b/src/main/libs/openclawConfigSync.runtime.test.ts
+@@ -1385,6 +1385,47 @@ describe('OpenClawConfigSync runtime config output', () => {
+     });
+   });
+ 
++  test('selects Cognee as the sole memory slot and keeps credentials out of openclaw.json', async () => {
++    const sync = await createSync({
++      getUserPlugins: () => [{
++        pluginId: 'cognee-openclaw',
++        enabled: true,
++        config: {
++          mode: 'local',
++          baseUrl: 'http://127.0.0.1:8000',
++          username: 'admin@example.com',
++          datasetName: 'lzclaw',
++          agentDatasetPrefix: 'lzclaw-agent',
++        },
++      }],
++      getUserPluginCredentials: (pluginId: string) => pluginId === 'cognee-openclaw'
++        ? { password: 'super-secret-password' }
++        : {},
++    });
++
++    const result = sync.sync('cognee-memory-slot');
++    expect(result.ok).toBe(true);
++
++    const configText = fs.readFileSync(configPath, 'utf8');
++    const config = JSON.parse(configText);
++    expect(config.plugins.slots.memory).toBe('cognee-openclaw');
++    expect(config.plugins.entries['cognee-openclaw']).toEqual({
++      enabled: true,
++      hooks: { allowConversationAccess: true },
++      config: expect.objectContaining({
++        baseUrl: 'http://127.0.0.1:8000',
++        username: 'admin@example.com',
++        password: '${COGNEE_PASSWORD}',
++        datasetName: 'lzclaw',
++        agentDatasetPrefix: 'lzclaw-agent',
++      }),
++    });
++    expect(config.plugins.entries['memory-core'].enabled).toBe(false);
++    expect(config.plugins.entries['memory-lancedb'].enabled).toBe(false);
++    expect(configText).not.toContain('super-secret-password');
++    expect(sync.collectSecretEnvVars().COGNEE_PASSWORD).toBe('super-secret-password');
++  });
++
+   test('maps OpenAI OAuth mode to the ChatGPT Responses provider', async () => {
+     const { AuthType, OpenClawApi, OpenClawProviderId, ProviderName } = await import('../../shared/providers');
+     const { buildProviderSelection } = await import('./openclawConfigSync');
+diff --git a/src/main/libs/openclawConfigSync.ts b/src/main/libs/openclawConfigSync.ts
+index ec3cc746..161ea430 100644
+--- a/src/main/libs/openclawConfigSync.ts
++++ b/src/main/libs/openclawConfigSync.ts
+@@ -29,6 +29,12 @@ import type { DiscordInstanceConfig, IMSettings, TelegramInstanceConfig } from '
+ import type { DingTalkInstanceConfig, EmailMultiInstanceConfig, FeishuInstanceConfig, NeteaseBeeChanConfig, NimInstanceConfig, PopoInstanceConfig, QQInstanceConfig, WecomInstanceConfig, WeixinOpenClawConfig } from '../im/types';
+ import { OpenClawSessionKeepAlive } from '../openclawSessionPolicy/constants';
+ import { buildOpenClawSessionConfig } from '../openclawSessionPolicy/store';
++import {
++  buildCogneeOpenClawConfig,
++  COGNEE_API_KEY_ENV,
++  COGNEE_PASSWORD_ENV,
++  COGNEE_PLUGIN_ID,
++} from '../plugins/cogneeIntegration';
+ import {
+   getAllServerModelMetadata,
+   resolveAllEnabledProviderConfigs,
+@@ -1465,6 +1471,7 @@ type OpenClawConfigSyncDeps = {
+   getSkillsList?: () => Array<{ id: string; enabled: boolean }>;
+   getAgents?: () => Agent[];
+   getUserPlugins?: () => Array<{ pluginId: string; enabled: boolean; config?: Record<string, unknown> }>;
++  getUserPluginCredentials?: (pluginId: string) => Record<string, string>;
+   canUseMediaGeneration?: () => boolean;
+ };
+ 
+@@ -1494,6 +1501,7 @@ export class OpenClawConfigSync {
+   private readonly getSkillsList?: () => Array<{ id: string; enabled: boolean }>;
+   private readonly getAgents?: () => Agent[];
+   private readonly getUserPlugins: () => Array<{ pluginId: string; enabled: boolean; config?: Record<string, unknown> }>;
++  private readonly getUserPluginCredentials: (pluginId: string) => Record<string, string>;
+   private readonly canUseMediaGeneration: () => boolean;
+   private previousBindingsJson?: string;
+   private currentBindingsObj: { bindings?: Array<Record<string, unknown>> } = {};
+@@ -1524,6 +1532,7 @@ export class OpenClawConfigSync {
+     this.getSkillsList = deps.getSkillsList;
+     this.getAgents = deps.getAgents;
+     this.getUserPlugins = deps.getUserPlugins ?? (() => []);
++    this.getUserPluginCredentials = deps.getUserPluginCredentials ?? (() => ({}));
+     this.canUseMediaGeneration = deps.canUseMediaGeneration ?? (() => false);
+   }
+ 
+@@ -1814,6 +1823,9 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
+     ensureDir(mainWorkspacePath);
+ 
+     const preinstalledPlugins = readPreinstalledPlugins();
++    const userPlugins = this.getUserPlugins();
++    const cogneePlugin = userPlugins.find(plugin => plugin.pluginId === COGNEE_PLUGIN_ID);
++    const cogneeEnabled = cogneePlugin?.enabled === true;
+     const hasPreinstalledPlugin = (...ids: string[]) => (
+       preinstalledPlugins.some((plugin) => pluginMatches(plugin, ...ids))
+     );
+@@ -2053,8 +2065,6 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
+         );
+         const qqbotPluginEnabled = qqInstances.some(i => i.enabled && i.appId);
+         const discordPluginEnabled = discordInstances.some(i => i.enabled && i.botToken);
+-        const userPlugins = this.getUserPlugins();
+-
+         const pluginEntries: Record<string, unknown> = {
+           // Preserve ALL existing plugin entries so runtime auto-injected
+           // plugins (moonshot, minimax, volcengine, browser, etc.) survive
+@@ -2081,6 +2091,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
+                 if (pluginMatches(plugin, 'openclaw-weixin')) return true; // Always keep enabled for QR login discovery
+                 if (pluginMatches(plugin, 'clawemail-email', EMAIL_PLUGIN_ID)) return !!emailConfig?.instances.some(i => i.enabled && i.email);
+                 if (pluginMatches(plugin, DIAGNOSTICS_OTEL_PLUGIN_ID)) return diagnosticsOtelEnabled;
++                if (pluginMatches(plugin, COGNEE_PLUGIN_ID)) return cogneeEnabled;
+                 return true; // other plugins stay enabled
+               })();
+               return [plugin.pluginId, { enabled: pluginEnabled }];
+@@ -2099,11 +2110,24 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
+           ...(hasXaiPlugin ? { xai: { enabled: true } } : {}),
+           // User-installed plugins: merge enabled state and config from user_plugins table
+           ...Object.fromEntries(
+-            userPlugins.map(p => [p.pluginId, {
+-              enabled: p.enabled,
+-              ...(p.config && Object.keys(p.config).length > 0 ? { config: p.config } : {}),
+-            }]),
++            userPlugins.map(p => {
++              if (p.pluginId === COGNEE_PLUGIN_ID) {
++                return [p.pluginId, {
++                  enabled: p.enabled,
++                  hooks: { allowConversationAccess: true },
++                  config: buildCogneeOpenClawConfig(p.config),
++                }];
++              }
++              return [p.pluginId, {
++                enabled: p.enabled,
++                ...(p.config && Object.keys(p.config).length > 0 ? { config: p.config } : {}),
++              }];
++            }),
+           ),
++          ...(cogneeEnabled ? {
++            [OPENCLAW_MEMORY_CORE_PLUGIN_ID]: { enabled: false },
++            'memory-lancedb': { enabled: false },
++          } : {}),
+           // Disable acpx (ACP agent runtime) — LobsterAI does not use ACP and
+           // the embedded probe adds ~11s to gateway startup while it waits for
+           // a process that always fails.  See openclaw/openclaw#62588.
+@@ -2155,7 +2179,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
+                 deny: [],
+                 slots: {
+                   ...((existingPlugins as Record<string, unknown>).slots as Record<string, unknown> | undefined),
+-                  memory: OPENCLAW_MEMORY_CORE_PLUGIN_ID,
++                  memory: cogneeEnabled ? COGNEE_PLUGIN_ID : OPENCLAW_MEMORY_CORE_PLUGIN_ID,
+                 },
+                 entries: pluginEntries,
+               },
+@@ -2209,7 +2233,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
+       const entries = plugins.entries as Record<string, Record<string, unknown>>;
+       const existingMemoryCore = entries[OPENCLAW_MEMORY_CORE_PLUGIN_ID] ?? {};
+       const existingMemoryCoreConfig = (existingMemoryCore as Record<string, unknown>).config as Record<string, unknown> | undefined;
+-      if (coworkConfig.dreamingEnabled) {
++      if (coworkConfig.dreamingEnabled && !cogneeEnabled) {
+         entries[OPENCLAW_MEMORY_CORE_PLUGIN_ID] = {
+           ...existingMemoryCore,
+           enabled: true,
+@@ -2224,7 +2248,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
+       } else {
+         entries[OPENCLAW_MEMORY_CORE_PLUGIN_ID] = {
+           ...existingMemoryCore,
+-          enabled: true,
++          enabled: !cogneeEnabled,
+           config: {
+             ...existingMemoryCoreConfig,
+             dreaming: {
+@@ -2836,6 +2860,12 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
+     // Used by the ask-user-question plugin.
+     env.LOBSTER_MCP_BRIDGE_SECRET = this.getMcpBridgeSecret?.() || 'unconfigured';
+ 
++    // Cognee credentials are decrypted from Electron safeStorage only for the
++    // gateway process environment. openclaw.json contains placeholders only.
++    const cogneeCredentials = this.getUserPluginCredentials(COGNEE_PLUGIN_ID);
++    env[COGNEE_PASSWORD_ENV] = cogneeCredentials.password || 'unconfigured';
++    env[COGNEE_API_KEY_ENV] = cogneeCredentials.apiKey || 'unconfigured';
++
+     // Telegram — per-instance secrets (must match sync() indexing: enabled instances only)
+     const tgInstances = this.getTelegramInstances();
+     const enabledTelegram = tgInstances.filter(i => i.enabled && i.botToken);
+diff --git a/src/main/main.ts b/src/main/main.ts
+index c9209cef..f0ed8f0b 100644
+--- a/src/main/main.ts
++++ b/src/main/main.ts
+@@ -341,6 +341,13 @@ import {
+   saveOpenClawSessionPolicyConfig,
+ } from './openclawSessionPolicy/store';
+ import { registerVoiceInputPermissionHandler } from './permissions/voiceInputPermission';
++import {
++  COGNEE_PLUGIN_ID,
++  ensureCogneePluginRegistration,
++  getSanitizedCogneeConfig,
++} from './plugins/cogneeIntegration';
++import { createElectronPluginCredentialStore } from './plugins/electronPluginCredentialStore';
++import type { PluginCredentialStore } from './plugins/pluginCredentialStore';
+ import { isHiddenUserPluginId } from './plugins/pluginManager';
+ import { SkillManager } from './skills/skillManager';
+ import { getSkillServiceManager } from './skills/skillServices';
+@@ -1525,6 +1532,7 @@ let storeInitPromise: Promise<SqliteStore> | null = null;
+ let sqliteBackupManager: SqliteBackupManager | null = null;
+ let openClawEngineManager: OpenClawEngineManager | null = null;
+ let openClawConfigSync: OpenClawConfigSync | null = null;
++let pluginCredentialStore: PluginCredentialStore | null = null;
+ let openClawBootstrapPromise: Promise<OpenClawEngineStatus> | null = null;
+ let cachedSubscriptionStatus: string = AuthSubscriptionStatus.Free;
+ let cachedMediaGenerationEntitled = false;
+@@ -1826,6 +1834,13 @@ const resolveCoworkAgentEngine = (): CoworkAgentEngine => {
+   return 'openclaw';
+ };
+ 
++const getPluginCredentialStore = (): PluginCredentialStore => {
++  if (!pluginCredentialStore) {
++    pluginCredentialStore = createElectronPluginCredentialStore();
++  }
++  return pluginCredentialStore;
++};
++
+ const getOpenClawConfigSync = (): OpenClawConfigSync => {
+   if (!openClawConfigSync) {
+     openClawConfigSync = new OpenClawConfigSync({
+@@ -1932,11 +1947,18 @@ const getOpenClawConfigSync = (): OpenClawConfigSync => {
+       getMediaCallbackUrl: () => getMcpRuntime().getMediaCallbackUrl(),
+       getMcpBridgeSecret: () => getMcpRuntime().getBridgeSecret(),
+       getAgents: () => getCoworkStore().listAgents(),
+-      getUserPlugins: () =>
+-        getCoworkStore()
++      getUserPlugins: () => {
++        const coworkStore = getCoworkStore();
++        ensureCogneePluginRegistration(coworkStore);
++        getSanitizedCogneeConfig(coworkStore, getPluginCredentialStore());
++        return coworkStore
+           .listUserPlugins()
+           .filter(p => !isHiddenUserPluginId(p.pluginId))
+-          .map(p => ({ pluginId: p.pluginId, enabled: p.enabled, config: p.config })),
++          .map(p => ({ pluginId: p.pluginId, enabled: p.enabled, config: p.config }));
++      },
++      getUserPluginCredentials: pluginId => pluginId === COGNEE_PLUGIN_ID
++        ? getPluginCredentialStore().getPluginCredentials(pluginId)
++        : {},
+       canUseMediaGeneration: () => cachedMediaGenerationEntitled,
+     });
+   }
+@@ -8330,7 +8352,7 @@ if (!gotTheLock) {
+ 
+   // ==================== Plugin Management IPC Handlers ====================
+ 
+-  registerPluginHandlers({ getCoworkStore, syncOpenClawConfig });
++  registerPluginHandlers({ getCoworkStore, getPluginCredentialStore, syncOpenClawConfig });
+ 
+   // ==================== Scheduled Task IPC Handlers (OpenClaw) ====================
+ 
+diff --git a/src/main/plugins/pluginManager.test.ts b/src/main/plugins/pluginManager.test.ts
+index 068ae3b5..51f6c2a9 100644
+--- a/src/main/plugins/pluginManager.test.ts
++++ b/src/main/plugins/pluginManager.test.ts
+@@ -36,3 +36,7 @@ test('resolveNpmCommand delegates to shared npm runtime resolution', () => {
+ test('hides OpenClaw built-in xai provider plugin from user plugin sync', () => {
+   expect(isHiddenUserPluginId('xai')).toBe(true);
+ });
++
++test('keeps the managed Cognee runtime plugin visible for user configuration', () => {
++  expect(isHiddenUserPluginId('cognee-openclaw')).toBe(false);
++});
+diff --git a/src/main/plugins/pluginManager.ts b/src/main/plugins/pluginManager.ts
+index c00f094b..80198572 100644
+--- a/src/main/plugins/pluginManager.ts
++++ b/src/main/plugins/pluginManager.ts
+@@ -10,6 +10,16 @@ import {
+   findThirdPartyExtensionsDir,
+   listBundledOpenClawExtensionManifests,
+ } from '../libs/openclawLocalExtensions';
++import {
++  COGNEE_FALLBACK_SCHEMA,
++  COGNEE_PLUGIN_ID,
++  COGNEE_PLUGIN_PACKAGE,
++  COGNEE_PLUGIN_VERSION,
++  ensureCogneePluginRegistration,
++  getSanitizedCogneeConfig,
++  saveCogneePluginConfig,
++} from './cogneeIntegration';
++import type { PluginCredentialStore } from './pluginCredentialStore';
+ 
+ export interface PluginInstallParams {
+   source: PluginSource;
+@@ -212,11 +222,12 @@ function generateHintsFromSchema(
+ export class PluginManager {
+   private store: CoworkStore;
+ 
+-  constructor(store: CoworkStore) {
++  constructor(store: CoworkStore, private readonly credentialStore?: PluginCredentialStore) {
+     this.store = store;
+   }
+ 
+   async listPlugins(): Promise<PluginListItem[]> {
++    ensureCogneePluginRegistration(this.store);
+     const hiddenIds = getHiddenPluginIds();
+     const userPlugins = this.store.listUserPlugins();
+     const dirsToSearch = [
+@@ -251,12 +262,14 @@ export class PluginManager {
+ 
+       items.push({
+         pluginId: plugin.pluginId,
+-        version,
+-        description,
+-        source: plugin.source,
++        version: plugin.pluginId === COGNEE_PLUGIN_ID ? COGNEE_PLUGIN_VERSION : version,
++        description: plugin.pluginId === COGNEE_PLUGIN_ID
++          ? (description || 'Cognee 长期记忆（LZClaw 托管版本）')
++          : description,
++        source: plugin.pluginId === COGNEE_PLUGIN_ID ? 'bundled' : plugin.source,
+         enabled: plugin.enabled,
+-        canUninstall: true,
+-        hasConfig,
++        canUninstall: plugin.pluginId !== COGNEE_PLUGIN_ID,
++        hasConfig: plugin.pluginId === COGNEE_PLUGIN_ID || hasConfig,
+       });
+     }
+ 
+@@ -264,6 +277,12 @@ export class PluginManager {
+   }
+ 
+   async installPlugin(params: PluginInstallParams, onLog?: PluginInstallLogCallback): Promise<PluginInstallResult> {
++    if (params.spec === COGNEE_PLUGIN_PACKAGE) {
++      return {
++        ok: false,
++        error: `Cognee 是 LZClaw 托管插件，版本固定为 ${COGNEE_PLUGIN_VERSION}，无需手动安装或更新`,
++      };
++    }
+     const extensionsDir = getExtensionsDir();
+     if (!extensionsDir) {
+       return { ok: false, error: 'Extensions directory not found' };
+@@ -380,6 +399,9 @@ export class PluginManager {
+   }
+ 
+   async uninstallPlugin(pluginId: string): Promise<{ ok: boolean; error?: string }> {
++    if (pluginId === COGNEE_PLUGIN_ID) {
++      return { ok: false, error: 'Cognee 是 LZClaw 托管插件，只能禁用，不能卸载' };
++    }
+     const extensionsDir = getExtensionsDir();
+     if (!extensionsDir) {
+       return { ok: false, error: 'Extensions directory not found' };
+@@ -437,20 +459,60 @@ export class PluginManager {
+       // Auto-generate uiHints from configSchema properties when not provided
+       const mergedHints = generateHintsFromSchema(manifest.configSchema!, uiHints);
+ 
++      if (pluginId === COGNEE_PLUGIN_ID) {
++        const fallbackProperties = COGNEE_FALLBACK_SCHEMA.configSchema.properties;
++        return {
++          configSchema: {
++            ...manifest.configSchema!,
++            properties: {
++              ...(schemaProps as Record<string, unknown>),
++              credentialMode: fallbackProperties.credentialMode,
++            },
++          },
++          uiHints: {
++            ...mergedHints,
++            credentialMode: COGNEE_FALLBACK_SCHEMA.uiHints.credentialMode,
++            apiKey: {
++              ...mergedHints.apiKey,
++              sensitive: true,
++              help: '使用系统安全凭据存储加密；留空保留已保存值。',
++            },
++            password: {
++              ...mergedHints.password,
++              sensitive: true,
++              help: '使用系统安全凭据存储加密；留空保留已保存值。',
++            },
++          },
++        };
++      }
++
+       return {
+         configSchema: manifest.configSchema!,
+         uiHints: mergedHints,
+       };
+     }
+ 
++    if (pluginId === COGNEE_PLUGIN_ID) {
++      return COGNEE_FALLBACK_SCHEMA;
++    }
+     return null;
+   }
+ 
+   getPluginConfig(pluginId: string): Record<string, unknown> | null {
++    if (pluginId === COGNEE_PLUGIN_ID && this.credentialStore) {
++      return getSanitizedCogneeConfig(this.store, this.credentialStore);
++    }
+     return this.store.getUserPluginConfig(pluginId);
+   }
+ 
+   savePluginConfig(pluginId: string, config: Record<string, unknown>): void {
++    if (pluginId === COGNEE_PLUGIN_ID) {
++      if (!this.credentialStore) {
++        throw new Error('Cognee 安全凭据存储未初始化');
++      }
++      saveCogneePluginConfig(this.store, this.credentialStore, config);
++      return;
++    }
+     this.store.setUserPluginConfig(pluginId, config);
+   }
+ 
+@@ -719,6 +781,7 @@ export class PluginManager {
+   async checkPluginUpdates(pluginIds?: string[]): Promise<PluginUpdateInfo[]> {
+     const userPlugins = this.store.listUserPlugins();
+     const candidates = userPlugins.filter(p => {
++      if (p.pluginId === COGNEE_PLUGIN_ID) return false;
+       if (p.source !== 'npm' && p.source !== 'clawhub') return false;
+       if (pluginIds && pluginIds.length > 0 && !pluginIds.includes(p.pluginId)) return false;
+       return true;
+@@ -912,12 +975,14 @@ function getHiddenPluginIds(): Set<string> {
+ 
+   // Preinstalled (IM channel) plugins from package.json
+   for (const id of readPreinstalledPluginIdsFromPackageJson()) {
+-    hidden.add(id);
++    // Cognee is preinstalled to pin a runtime-compatible build, but remains a
++    // user-facing managed integration with its own enable/config controls.
++    if (id !== COGNEE_PLUGIN_ID) hidden.add(id);
+   }
+ 
+   // Bundled extensions shipped with the runtime
+   for (const manifest of listBundledOpenClawExtensionManifests()) {
+-    hidden.add(manifest.pluginId);
++    if (manifest.pluginId !== COGNEE_PLUGIN_ID) hidden.add(manifest.pluginId);
+   }
+ 
+   // Hardcoded internal plugins
+diff --git a/src/main/preload.ts b/src/main/preload.ts
+index 036ee833..3b2ce8ae 100644
+--- a/src/main/preload.ts
++++ b/src/main/preload.ts
+@@ -801,6 +801,8 @@ contextBridge.exposeInMainWorld('electron', {
+       ipcRenderer.invoke('plugins:set-enabled', pluginId, enabled),
+     getConfigSchema: (pluginId: string) =>
+       ipcRenderer.invoke('plugins:get-config-schema', pluginId),
++    testConnection: (pluginId: string, config: Record<string, unknown>) =>
++      ipcRenderer.invoke('plugins:test-connection', pluginId, config),
+     saveConfig: (pluginId: string, config: Record<string, unknown>) =>
+       ipcRenderer.invoke('plugins:save-config', pluginId, config),
+     batchSave: (changes: {
+diff --git a/src/renderer/components/plugins/PluginConfigPage.tsx b/src/renderer/components/plugins/PluginConfigPage.tsx
+index 56fde74b..4be1293f 100644
+--- a/src/renderer/components/plugins/PluginConfigPage.tsx
++++ b/src/renderer/components/plugins/PluginConfigPage.tsx
+@@ -55,6 +55,14 @@ export default function PluginConfigPage({ pluginId, onBack, initialConfig, onCo
+   const [schema, setSchema] = useState<ConfigSchemaData | null>(null);
+   const [configValue, setConfigValue] = useState<Record<string, unknown>>(initialConfig ?? {});
+   const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
++  const [secretStatus, setSecretStatus] = useState<Record<string, boolean>>({});
++  const [testingConnection, setTestingConnection] = useState(false);
++  const [connectionResult, setConnectionResult] = useState<{
++    ok: boolean;
++    message: string;
++    version?: string;
++    user?: string;
++  } | null>(null);
+ 
+   const loadSchema = useCallback(async () => {
+     setLoading(true);
+@@ -64,6 +72,7 @@ export default function PluginConfigPage({ pluginId, onBack, initialConfig, onCo
+       if (result?.success && result.schema) {
+         setSchema(result.schema);
+         const loadedConfig = result.config ?? {};
++        setSecretStatus(result.secretStatus ?? {});
+         // If parent already has a pending config for this plugin, use that instead
+         if (!initialConfig) {
+           setConfigValue(loadedConfig);
+@@ -93,6 +102,19 @@ export default function PluginConfigPage({ pluginId, onBack, initialConfig, onCo
+     setShowSecrets(prev => ({ ...prev, [path]: !prev[path] }));
+   };
+ 
++  const handleTestConnection = async () => {
++    setTestingConnection(true);
++    setConnectionResult(null);
++    try {
++      const result = await window.electron?.plugins.testConnection(pluginId, configValue);
++      setConnectionResult(result ?? { ok: false, message: i18nService.t('pluginsCogneeTestFailed') });
++    } catch {
++      setConnectionResult({ ok: false, message: i18nService.t('pluginsCogneeTestFailed') });
++    } finally {
++      setTestingConnection(false);
++    }
++  };
++
+   return (
+     <div className="space-y-6 px-1">
+       {/* Header */}
+@@ -124,15 +146,65 @@ export default function PluginConfigPage({ pluginId, onBack, initialConfig, onCo
+           {i18nService.t('pluginsConfigNoSchema')}
+         </div>
+       ) : (
+-        <div className="rounded-lg border border-border p-4">
+-          <SchemaForm
+-            schema={schema.configSchema}
+-            hints={schema.uiHints as Record<string, import('../im/SchemaForm').UiHint>}
+-            value={configValue}
+-            onChange={handleChange}
+-            showSecrets={showSecrets}
+-            onToggleSecret={handleToggleSecret}
+-          />
++        <div className="space-y-4">
++          {pluginId === 'cognee-openclaw' && (
++            <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-xs text-secondary">
++              <p>{i18nService.t('pluginsCogneeCredentialSecureHint')}</p>
++              {(secretStatus.apiKey || secretStatus.password) && (
++                <p className="mt-1 font-medium text-primary">
++                  {i18nService.t('pluginsCogneeCredentialStored')}
++                  {secretStatus.apiKey ? ' API Key' : ''}
++                  {secretStatus.password ? ' Password' : ''}
++                </p>
++              )}
++            </div>
++          )}
++
++          <div className="rounded-lg border border-border p-4">
++            <SchemaForm
++              schema={schema.configSchema}
++              hints={schema.uiHints as Record<string, import('../im/SchemaForm').UiHint>}
++              value={configValue}
++              onChange={handleChange}
++              showSecrets={showSecrets}
++              onToggleSecret={handleToggleSecret}
++              includePath={(path) => {
++                if (pluginId !== 'cognee-openclaw') return true;
++                const credentialMode = configValue.credentialMode === 'apiKey' ? 'apiKey' : 'password';
++                if (credentialMode === 'apiKey') return path !== 'username' && path !== 'password';
++                return path !== 'apiKey';
++              }}
++            />
++          </div>
++
++          {pluginId === 'cognee-openclaw' && (
++            <div className="space-y-2">
++              <button
++                type="button"
++                onClick={handleTestConnection}
++                disabled={testingConnection}
++                className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-opacity disabled:opacity-50"
++              >
++                {testingConnection
++                  ? i18nService.t('pluginsCogneeTesting')
++                  : i18nService.t('pluginsCogneeTestConnection')}
++              </button>
++              {connectionResult && (
++                <div className={`rounded-lg border p-3 text-sm ${
++                  connectionResult.ok
++                    ? 'border-green-500/30 bg-green-500/10 text-green-700 dark:text-green-300'
++                    : 'border-destructive/30 bg-destructive/10 text-destructive'
++                }`}>
++                  <p>{connectionResult.message}</p>
++                  {connectionResult.ok && (connectionResult.version || connectionResult.user) && (
++                    <p className="mt-1 text-xs opacity-80">
++                      {[connectionResult.version, connectionResult.user].filter(Boolean).join(' · ')}
++                    </p>
++                  )}
++                </div>
++              )}
++            </div>
++          )}
+         </div>
+       )}
+     </div>
+diff --git a/src/renderer/services/i18n.ts b/src/renderer/services/i18n.ts
+index 639d349d..efd348e2 100644
+--- a/src/renderer/services/i18n.ts
++++ b/src/renderer/services/i18n.ts
+@@ -2073,6 +2073,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
+     pluginsConfigBack: '返回',
+     pluginsConfigNoSchema: '此插件没有可配置项',
+     pluginsConfigLoadError: '加载配置失败',
++    pluginsCogneeCredentialSecureHint: '密码和 API Key 使用操作系统安全凭据存储加密；留空会保留已保存的凭据。',
++    pluginsCogneeCredentialStored: '已安全保存：',
++    pluginsCogneeTestConnection: '测试 Cognee 连接',
++    pluginsCogneeTesting: '正在测试连接...',
++    pluginsCogneeTestFailed: 'Cognee 连接测试失败',
+     pluginsSourceOpenclaw: 'OpenClaw',
+     pluginsSyncTitle: '发现新插件',
+     pluginsSyncDesc: '从 OpenClaw 发现并同步插件到管理列表。',
+@@ -5186,6 +5191,11 @@ const translations: Record<LanguageType, Record<string, string>> = {
+     pluginsConfigBack: 'Back',
+     pluginsConfigNoSchema: 'This plugin has no configurable settings',
+     pluginsConfigLoadError: 'Failed to load config',
++    pluginsCogneeCredentialSecureHint: 'Passwords and API keys are encrypted by the operating system. Leave them blank to keep saved credentials.',
++    pluginsCogneeCredentialStored: 'Securely stored:',
++    pluginsCogneeTestConnection: 'Test Cognee connection',
++    pluginsCogneeTesting: 'Testing connection...',
++    pluginsCogneeTestFailed: 'Cognee connection test failed',
+     pluginsSourceOpenclaw: 'OpenClaw',
+     pluginsSyncTitle: 'New Plugins Detected',
+     pluginsSyncDesc: 'Discover and sync plugins from OpenClaw.',
+diff --git a/src/renderer/types/electron.d.ts b/src/renderer/types/electron.d.ts
+index 50af971a..e0fa97c3 100644
+--- a/src/renderer/types/electron.d.ts
++++ b/src/renderer/types/electron.d.ts
+@@ -1323,8 +1323,20 @@ interface IElectronAPI {
+         >;
+       } | null;
+       config?: Record<string, unknown> | null;
++      secretStatus?: Record<string, boolean>;
+       error?: string;
+     }>;
++    testConnection: (
++      pluginId: string,
++      config: Record<string, unknown>,
++    ) => Promise<{
++      ok: boolean;
++      reachable: boolean;
++      authenticated: boolean;
++      message: string;
++      version?: string;
++      user?: string;
++    }>;
+     saveConfig: (
+       pluginId: string,
+       config: Record<string, unknown>,
+
+## UNTRACKED
+warning: in the working copy of 'docs/server-integration/2026-07-14-cognee-openclaw-memory.md', LF will be replaced by CRLF the next time Git touches it
+diff --git a/docs/server-integration/2026-07-14-cognee-openclaw-memory.md b/docs/server-integration/2026-07-14-cognee-openclaw-memory.md
+new file mode 100644
+index 00000000..d58399a2
+--- /dev/null
++++ b/docs/server-integration/2026-07-14-cognee-openclaw-memory.md
+@@ -0,0 +1,85 @@
++# Cognee OpenClaw 记忆接入
++
++LZClaw 通过官方 `@cognee/cognee-openclaw` 插件接入自托管 Cognee。当前固定插件版本为 `2026.6.11`，对应仓库固定的 OpenClaw `v2026.6.1`；不要在插件设置中升级到 npm latest。
++
++## 用户配置入口
++
++在“设置 → 插件”中找到 `cognee-openclaw`：
++
++1. 打开插件配置，填写 Cognee API 地址。Docker 在本机运行时默认使用 `http://127.0.0.1:8000`。
++2. 选择“用户名 + 密码”或 API Key 认证方式并填写对应凭据。密码/API Key 留空时保留已安全保存的值。
++3. 先点击“测试 Cognee 连接”。测试会依次检查 `/health`、登录/API Key 和 `/api/v1/auth/me`，不是只检查端口是否可访问。
++4. 保存配置并启用插件。配置同步会重启正在运行的 OpenClaw gateway。
++
++默认非敏感配置采用：
++
++- 数据集：`lzclaw`。
++- 智能体数据集前缀：`lzclaw-agent`。
++- 默认写入和召回作用域：`agent`。
++- 自动召回、启动索引、会话记忆、会话结束持久化和 Cognify：启用。
++- 搜索模式：`FEELING_LUCKY`。
++
++## OpenClaw 配置契约
++
++启用 Cognee 时，配置同步器会生成以下关键状态：
++
++```yaml
++plugins:
++  slots:
++    memory: cognee-openclaw
++  entries:
++    memory-core:
++      enabled: false
++    memory-lancedb:
++      enabled: false
++    cognee-openclaw:
++      enabled: true
++      hooks:
++        allowConversationAccess: true
++      config:
++        baseUrl: http://127.0.0.1:8000
++        password: ${COGNEE_PASSWORD}
++```
++
++`allowConversationAccess` 是 Cognee 监听 `agent_end` 并同步会话文件所必需的 OpenClaw 权限。禁用 Cognee 后，记忆槽恢复为 `memory-core`。
++
++## 对话完成写入
++
++LZClaw 在固定版 Cognee 插件上维护一层可重复应用的运行时补丁。每次 OpenClaw 成功触发 `agent_end` 且 `enableSessions` 已启用时，补丁会：
++
++1. 从事件消息中找到本轮最后一条用户消息及其后的可见助手回答。
++2. 移除 LZClaw 注入的托管上下文，只保留 `[Current user request]` 后的真实用户输入。
++3. 忽略 `thinking`、`reasoning` 和工具调用块，不把内部推理或工具参数写入记忆。
++4. 调用 Cognee `POST /api/v1/remember/entry`，写入 `qa` 类型的 `question`、`answer`、`dataset_name` 和 `session_id`。
++5. 多作用域模式下写入当前智能体的数据集，例如 `lzclaw-agent-main`；同一进程内按会话和消息身份去重。
++
++该补丁源文件位于 `scripts/openclaw-plugin-patches/cognee.cjs`，并由 `npm run openclaw:plugins` 在每次重新生成 OpenClaw runtime 后自动应用。禁止直接把生成目录中的修改作为唯一实现来源。
++
++写入采用零 HTTP 重试，因为 Cognee 当前接口没有接收 LZClaw 幂等键；这样可避免超时后重试产生重复记录。网络或 Cognee 故障时会记录不含对话正文的 warning，并允许同一进程内后续事件再次尝试，但当前没有持久化 outbox，失败期间的本轮记录可能缺失。
++
++## 凭据安全
++
++- Renderer 只通过 preload IPC 提交凭据。
++- 主进程使用 Electron `safeStorage`（Windows 上为系统凭据加密能力）加密密码/API Key。
++- 密文保存在应用 userData 下的 `secure/plugin-credentials.json`。
++- `user_plugins.config` 只保存非敏感配置；`openclaw.json` 只保存 `${COGNEE_PASSWORD}` 或 `${COGNEE_API_KEY}` 占位符。
++- gateway 启动前，主进程才把解密后的凭据注入子进程环境变量。
++- 系统加密能力不可用时拒绝保存，不允许回退到明文。
++
++## 运行时打包
++
++`package.json` 的 `openclaw.plugins` 固定声明 Cognee `2026.6.11`。该版本没有生产依赖，构建脚本使用 `npm pack` 完整性校验后直接解包，并额外校验：
++
++- 包版本必须等于固定版本。
++- `openclaw.plugin.json` 的 ID 必须为 `cognee-openclaw`。
++- 不允许出现 `dependencies` 或 `optionalDependencies`；一旦上游新增运行时依赖，构建立即失败，必须重新评估安装方式。
++
++这是为规避 OpenClaw 2026.6 安装器与 npm 11 `--allow-scripts` 的兼容问题，不是通用的插件安装降级策略。
++
++## 已知限制
++
++- 连接测试不执行写入、Cognify 或召回，避免测试按钮污染正式记忆数据。
++- Cognee 当前若尚未配置可用 LLM/Embedding，健康检查和认证仍可成功，但实际记忆处理会失败；配置 LLM 后再做端到端记忆验收。
++- 本接入默认做 agent 级隔离。企业、租户、用户级数据集前缀需要结合 SaaS 身份映射另行配置和验证。
++- 对话完成写入会把用户问题和助手最终回答发送给 Cognee。SaaS 上线前必须补齐租户/用户身份映射、访问授权、保留期限、删除流程和用户告知，不能把记忆库直接当作审计后台使用。
++- `agent_end` 写入当前仅做进程内去重，没有跨重启持久化幂等和失败补偿队列；需要“绝不漏、绝不重”的审计需求时，应另建事件表/outbox 和审计存储。
+
+warning: in the working copy of 'docs/vibe-coding/changes/2026/07/2026-07-14-1145-fudanda-cognee-openclaw-memory.md', LF will be replaced by CRLF the next time Git touches it
+diff --git a/docs/vibe-coding/changes/2026/07/2026-07-14-1145-fudanda-cognee-openclaw-memory.md b/docs/vibe-coding/changes/2026/07/2026-07-14-1145-fudanda-cognee-openclaw-memory.md
+new file mode 100644
+index 00000000..2606648e
+--- /dev/null
++++ b/docs/vibe-coding/changes/2026/07/2026-07-14-1145-fudanda-cognee-openclaw-memory.md
+@@ -0,0 +1,40 @@
++# Cognee OpenClaw 正式记忆接入
++
++任务：LZClaw 固定版本接入 Cognee，补齐配置同步、安全凭据入口和连接测试
++作者：fudanda <314553951@qq.com>
++时间：2026-07-14 11:45 Asia/Shanghai
++AI 协助：Codex 参与插件兼容性核验、主进程安全存储、OpenClaw 配置同步、设置页、连接测试和自动化验证。
++Token 消耗：未记录（当前规则不使用 Codex goal 统计）
++Review：未评审（待独立 Review/提交任务）
++
++## 为什么改
++
++LZClaw 原有通用插件链路会把插件密码直接写入 SQLite，而且配置同步固定选择 `memory-core`，无法安全、稳定地把 Cognee 作为正式记忆后端。Cognee npm latest 与当前固定 OpenClaw 版本也不兼容，不能使用浮动版本安装。
++
++## 改了什么
++
++- 固定 `@cognee/cognee-openclaw@2026.6.11`，禁止用户卸载或自动升级托管插件。
++- 构建脚本增加仅适用于无生产依赖固定包的受限直接解包路径，校验版本、manifest ID 和运行时依赖。
++- 插件设置页增加 Cognee 默认配置、安全凭据状态和保存前连接测试。
++- 密码/API Key 使用 Electron `safeStorage` 加密保存；SQLite 和 `openclaw.json` 不保留明文。
++- 启用 Cognee 时同步唯一记忆槽、`allowConversationAccess` hook，并禁用 `memory-core`、`memory-lancedb`；禁用后恢复原记忆槽。
++- gateway 通过环境变量获取解密后的凭据。
++- 新增凭据存储、连接测试和 OpenClaw 配置输出测试，并同步模块文档。
++
++## 验证
++
++- `npm view @cognee/cognee-openclaw@2026.6.11 version peerDependencies`：确认固定版本与 OpenClaw `>=2026.4.1` 兼容。
++- `npm run openclaw:plugins`：通过；Cognee `2026.6.11` 已缓存并安装到当前运行时，包版本、manifest ID 和零运行时依赖校验通过。可选 POPO 私有源出现 `ECONNRESET` 警告，但按 optional 规则跳过且脚本最终成功。
++- `npx vitest run src/main/plugins/pluginManager.test.ts src/main/plugins/pluginCredentialStore.test.ts src/main/plugins/cogneeIntegration.test.ts src/main/libs/openclawConfigSync.runtime.test.ts`：通过，4 个文件、57 个测试。
++- `$env:NPM_CONFIG_USERCONFIG='NUL'; npm test`：通过，194 个测试文件、2065 个测试通过、1 个跳过；仅对本次命令绕过本机 npm 11 的 `allow-scripts` 用户配置，未修改全局配置。
++- `npm run compile:electron`：通过。
++- `npm run build`：通过。
++- 本机 `http://127.0.0.1:8000` 真实连接测试：健康检查、用户名密码登录和 `/api/v1/auth/me` 均通过，Cognee 返回 `1.3.0-local`。
++- `npm run electron:dev` 运行时验收：配置同步成功；Cognee 未启用状态包含 `allowConversationAccess`、默认非敏感配置和 `${COGNEE_PASSWORD}` 占位符；OpenClaw `2026.6.1` gateway 启动并进入 `ready`，随后已停止开发进程。
++
++## 风险
++
++- 尚未在 Electron 设置页人工输入并保存凭据；启用后的记忆槽切换由自动化测试覆盖，未用真实用户配置启动一次 Cognee 插件。
++- 本机 Cognee 尚未配置真实 LLM Key；连接认证通过不代表记忆写入、Cognify、召回已可用。
++- 安全凭据和记忆后端切换属于安全/运行方式变更，合并前需要独立 AI Review 和人工验证。
++- 按仓库规则，用户测试确认前不执行本地 commit。
+
+warning: in the working copy of 'docs/vibe-coding/changes/2026/07/2026-07-14-1535-fudanda-cognee-agent-end-capture.md', LF will be replaced by CRLF the next time Git touches it
+diff --git a/docs/vibe-coding/changes/2026/07/2026-07-14-1535-fudanda-cognee-agent-end-capture.md b/docs/vibe-coding/changes/2026/07/2026-07-14-1535-fudanda-cognee-agent-end-capture.md
+new file mode 100644
+index 00000000..98d7fc58
+--- /dev/null
++++ b/docs/vibe-coding/changes/2026/07/2026-07-14-1535-fudanda-cognee-agent-end-capture.md
+@@ -0,0 +1,40 @@
++# Cognee agent_end 对话写入
++
++任务：补上 LZClaw `agent_end` 调用 Cognee `/api/v1/remember/entry` 的逻辑
++作者：fudanda <314553951@qq.com>
++时间：2026-07-14 15:35 Asia/Shanghai
++AI 协助：Codex 参与运行时事件契约核验、固定插件补丁、消息内容过滤、测试和真实链路验收。
++Token 消耗：未记录（当前规则不使用 Codex goal 统计）
++Review：未评审（待独立 Review/提交任务）
++
++## 为什么改
++
++原 Cognee OpenClaw 插件的 `agent_end` 主要同步工作区记忆文件，不会把 LZClaw 当前聊天问答写入 Cognee Sessions，因此用户完成新对话后 Cognee 页面没有对应内容。
++
++## 改了什么
++
++- 给固定版 Cognee HTTP client 增加 `rememberEntry()`，调用本地 `/api/v1/remember/entry` 并写入 `qa` 记录。
++- 在成功的 `agent_end` 上提取最后一轮用户问题和最终可见助手回答，写入当前会话与 agent 数据集。
++- 去掉 LZClaw 托管提示前缀，过滤 thinking、reasoning 和工具调用内容。
++- 增加进程内重复事件去重；接口调用关闭自动重试，避免非幂等接口因超时重试产生重复数据。
++- 将修改做成 `scripts/openclaw-plugin-patches/cognee.cjs` 的源码受控补丁，并接入插件重建流程。
++- 增加提取、过滤、缺失回答和补丁幂等测试，同步 Cognee 接入文档。
++
++## 验证
++
++- `node node_modules/vitest/vitest.mjs run tests/openclaw-plugin-patches-cognee.test.ts src/main/plugins/cogneeIntegration.test.ts src/main/plugins/pluginCredentialStore.test.ts src/main/libs/openclawConfigSync.runtime.test.ts`：通过，4 个文件、57 个测试。
++- `node node_modules/typescript/bin/tsc --project electron-tsconfig.json --noEmit`：通过。
++- `node --check scripts/openclaw-plugin-patches/cognee.cjs`：通过。
++- `node node_modules/vitest/vitest.mjs run`：尝试执行全量测试，但当前 `better-sqlite3` 是 Electron ABI 143，命令行 Node 需要 ABI 137，110 项 SQLite 相关测试在加载原生模块时失败；这是当前运行环境的 native module ABI 状态，不是本次 Cognee 代码断言失败。为避免破坏正在运行的 Electron，未擅自重编译依赖。
++- `npm run openclaw:plugins`：退出码 0；重建后日志确认自动增加 `rememberEntry()` 和 `agent_end` 捕获。可选 POPO 源出现 `ECONNRESET`，按 optional 规则跳过，不影响 Cognee。
++- 重启 OpenClaw gateway 后发起真实会话 `3c408178-6c56-4a27-bd5a-219221ed48d9`，助手回答“记忆写入成功”；gateway 日志确认写入 `lzclaw-agent-main`，Cognee 返回 entry `d13fa666-84e9-4f81-979a-eb2c4364ced9`。
++- Cognee 容器访问日志确认 `POST /api/v1/remember/entry` 返回 200；只读查询 `cache_qa_entries` 确认问题、答案、session 和 context 各字段正确，且本次测试只有一条记录。
++- `git diff --check`：通过；只有仓库既有 LF/CRLF 提示。
++
++## 风险
++
++- `/api/v1/remember/entry` 当前没有接收 LZClaw 幂等键。本实现优先避免重复，不进行 HTTP 自动重试；Cognee 或网络故障期间可能漏写。
++- 去重集合只存在于 gateway 进程内，重启后相同事件再次投递仍可能重复。需要强一致审计时必须增加持久化 outbox/唯一键，不能仅依赖记忆插件。
++- 当前按 agent 数据集隔离，尚未建立 SaaS tenant/user 到 Cognee dataset/session 的正式身份映射。
++- 聊天正文属于用户数据。生产启用前需要明确授权、访问控制、保留期限和删除机制。
++- 按仓库规则，用户测试确认前不执行本地 commit。
+
+warning: in the working copy of 'scripts/openclaw-plugin-patches/cognee.cjs', LF will be replaced by CRLF the next time Git touches it
+diff --git a/scripts/openclaw-plugin-patches/cognee.cjs b/scripts/openclaw-plugin-patches/cognee.cjs
+new file mode 100644
+index 00000000..fc161f11
+--- /dev/null
++++ b/scripts/openclaw-plugin-patches/cognee.cjs
+@@ -0,0 +1,253 @@
++'use strict';
++
++const fs = require('fs');
++const path = require('path');
++
++const CLIENT_PATCH_MARKER = 'lzclaw_cognee_remember_entry_patch';
++const AGENT_END_PATCH_MARKER = 'lzclaw_cognee_agent_end_capture_patch';
++
++function lzclawAsConversationRecord(value) {
++  return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
++}
++
++function lzclawUnwrapConversationMessage(value) {
++  const record = lzclawAsConversationRecord(value);
++  if (!record) return null;
++  const nested = lzclawAsConversationRecord(record.message);
++  return nested && typeof nested.role === 'string' ? nested : record;
++}
++
++function lzclawExtractVisibleMessageText(message) {
++  const record = lzclawUnwrapConversationMessage(message);
++  if (!record) return '';
++  if (typeof record.content === 'string') return record.content.trim();
++  if (!Array.isArray(record.content)) return '';
++
++  const chunks = [];
++  for (const block of record.content) {
++    if (typeof block === 'string') {
++      if (block.trim()) chunks.push(block.trim());
++      continue;
++    }
++    const blockRecord = lzclawAsConversationRecord(block);
++    if (!blockRecord || blockRecord.type === 'thinking' || blockRecord.type === 'reasoning') {
++      continue;
++    }
++    if (blockRecord.type === 'text' && typeof blockRecord.text === 'string' && blockRecord.text.trim()) {
++      chunks.push(blockRecord.text.trim());
++      continue;
++    }
++    if (
++      blockRecord.type === 'output_text'
++      && typeof blockRecord.output_text === 'string'
++      && blockRecord.output_text.trim()
++    ) {
++      chunks.push(blockRecord.output_text.trim());
++    }
++  }
++  return chunks.join('\n').trim();
++}
++
++function lzclawStripManagedUserContext(text) {
++  const marker = '[Current user request]';
++  const markerIndex = text.lastIndexOf(marker);
++  return (markerIndex >= 0 ? text.slice(markerIndex + marker.length) : text).trim();
++}
++
++function extractLatestCogneeConversationTurn(messages) {
++  if (!Array.isArray(messages) || messages.length === 0) return null;
++
++  let userIndex = -1;
++  let userMessage = null;
++  for (let index = messages.length - 1; index >= 0; index -= 1) {
++    const candidate = lzclawUnwrapConversationMessage(messages[index]);
++    if (candidate?.role === 'user') {
++      userIndex = index;
++      userMessage = candidate;
++      break;
++    }
++  }
++  if (userIndex < 0 || !userMessage) return null;
++
++  const question = lzclawStripManagedUserContext(lzclawExtractVisibleMessageText(userMessage));
++  if (!question) return null;
++
++  const answerChunks = [];
++  let lastAssistantMessage = null;
++  for (let index = userIndex + 1; index < messages.length; index += 1) {
++    const candidate = lzclawUnwrapConversationMessage(messages[index]);
++    if (candidate?.role !== 'assistant') continue;
++    const text = lzclawExtractVisibleMessageText(candidate);
++    if (!text) continue;
++    answerChunks.push(text);
++    lastAssistantMessage = candidate;
++  }
++  const answer = answerChunks.join('\n\n').trim();
++  if (!answer || !lastAssistantMessage) return null;
++
++  const userIdentity = String(
++    userMessage.idempotencyKey
++      ?? userMessage.id
++      ?? userMessage.timestamp
++      ?? question,
++  );
++  const assistantIdentity = String(
++    lastAssistantMessage.responseId
++      ?? lastAssistantMessage.id
++      ?? lastAssistantMessage.timestamp
++      ?? answer,
++  );
++  return { question, answer, userIdentity, assistantIdentity };
++}
++
++function patchCogneeClient(clientPath, clientDeclarationPath, log) {
++  if (!fs.existsSync(clientPath)) {
++    throw new Error(`Cognee client not found: ${clientPath}`);
++  }
++
++  let source = fs.readFileSync(clientPath, 'utf-8');
++  if (!source.includes(CLIENT_PATCH_MARKER)) {
++    const anchor = '    // POST /api/v1/improve — Cognee 1.0.3\'s memory-oriented alias for /memify.';
++    if (!source.includes(anchor)) {
++      throw new Error('Cognee client remember-entry patch anchor not found');
++    }
++    const addition = [
++      `    // ${CLIENT_PATCH_MARKER}`,
++      '    async rememberEntry(params) {',
++      '        const path = this.isCloud ? "/remember/entry" : "/api/v1/remember/entry";',
++      '        return this.fetchAPI(path, {',
++      '            method: "POST",',
++      '            headers: { "Content-Type": "application/json" },',
++      '            body: JSON.stringify({',
++      '                entry: {',
++      '                    type: "qa",',
++      '                    question: params.question,',
++      '                    answer: params.answer,',
++      '                    context: params.context ?? "",',
++      '                },',
++      '                dataset_name: params.datasetName,',
++      '                session_id: params.sessionId,',
++      '            }),',
++      '        }, this.timeoutMs, async (response) => (await response.json()), 0);',
++      '    }',
++      '',
++    ].join('\n');
++    source = source.replace(anchor, `${addition}${anchor}`);
++    fs.writeFileSync(clientPath, source, 'utf-8');
++    log('Patched cognee-openclaw client: added rememberEntry()');
++  }
++
++  if (!fs.existsSync(clientDeclarationPath)) return;
++  let declarations = fs.readFileSync(clientDeclarationPath, 'utf-8');
++  if (declarations.includes('rememberEntry(params:')) return;
++  const declarationAnchor = '    improve(params: {';
++  if (!declarations.includes(declarationAnchor)) {
++    throw new Error('Cognee client declaration patch anchor not found');
++  }
++  const declaration = [
++    '    rememberEntry(params: {',
++    '        question: string;',
++    '        answer: string;',
++    '        context?: string;',
++    '        datasetName: string;',
++    '        sessionId: string;',
++    '    }): Promise<{',
++    '        status?: string;',
++    '        entry_type?: string;',
++    '        entry_id?: string;',
++    '    }>;',
++  ].join('\n');
++  declarations = declarations.replace(declarationAnchor, `${declaration}\n${declarationAnchor}`);
++  fs.writeFileSync(clientDeclarationPath, declarations, 'utf-8');
++}
++
++function patchCogneeAgentEnd(pluginPath, log) {
++  if (!fs.existsSync(pluginPath)) {
++    throw new Error(`Cognee plugin entry not found: ${pluginPath}`);
++  }
++
++  let source = fs.readFileSync(pluginPath, 'utf-8');
++  if (source.includes(AGENT_END_PATCH_MARKER)) return;
++
++  const helperAnchor = 'const autoSyncedWorkspaces = new Set();';
++  if (!source.includes(helperAnchor)) {
++    throw new Error('Cognee agent-end helper patch anchor not found');
++  }
++  const helperSource = [
++    '',
++    `// ${AGENT_END_PATCH_MARKER}`,
++    lzclawAsConversationRecord.toString(),
++    lzclawUnwrapConversationMessage.toString(),
++    lzclawExtractVisibleMessageText.toString(),
++    lzclawStripManagedUserContext.toString(),
++    extractLatestCogneeConversationTurn.toString(),
++    'const lzclawCapturedCogneeTurns = new Set();',
++  ].join('\n');
++  source = source.replace(helperAnchor, `${helperAnchor}${helperSource}`);
++
++  const hookAnchor = [
++    '        // ------------------------------------------------------------------',
++    '        // Post-agent sync + session persistence',
++    '        // ------------------------------------------------------------------',
++  ].join('\n');
++  if (!source.includes(hookAnchor)) {
++    throw new Error('Cognee agent-end hook patch anchor not found');
++  }
++  const hookSource = [
++    '        // Capture the completed user/assistant turn independently from memory-file indexing.',
++    '        // This populates Cognee Sessions via POST /api/v1/remember/entry.',
++    '        if (cfg.enableSessions) {',
++    '            api.on("agent_end", async (event, ctx) => {',
++    '                if (!event.success)',
++    '                    return;',
++    '                const captureSessionId = ctx.sessionId ?? sessionId;',
++    '                if (!captureSessionId)',
++    '                    return;',
++    '                const turn = extractLatestCogneeConversationTurn(event.messages);',
++    '                if (!turn)',
++    '                    return;',
++    '                const turnId = `${captureSessionId}:${turn.userIdentity}:${turn.assistantIdentity}`;',
++    '                if (lzclawCapturedCogneeTurns.has(turnId))',
++    '                    return;',
++    '                lzclawCapturedCogneeTurns.add(turnId);',
++    '                const targetDataset = multiScope',
++    '                    ? datasetNameForScope("agent", cfg, ctx.agentId)',
++    '                    : cfg.datasetName;',
++    '                try {',
++    '                    const result = await client.rememberEntry({',
++    '                        question: turn.question,',
++    '                        answer: turn.answer,',
++    '                        context: JSON.stringify({ source: "lzclaw", turn_id: turnId }),',
++    '                        datasetName: targetDataset,',
++    '                        sessionId: captureSessionId,',
++    '                    });',
++    '                    api.logger.info?.(`cognee-openclaw: captured completed turn for session ${captureSessionId} -> dataset "${targetDataset}" (entry=${result.entry_id ?? "?"})`);',
++    '                }',
++    '                catch (error) {',
++    '                    lzclawCapturedCogneeTurns.delete(turnId);',
++    '                    api.logger.warn?.(`cognee-openclaw: completed-turn capture failed for session ${captureSessionId}: ${error instanceof Error ? error.message : String(error)}`);',
++    '                }',
++    '            });',
++    '        }',
++    '',
++  ].join('\n');
++  source = source.replace(hookAnchor, `${hookSource}${hookAnchor}`);
++  fs.writeFileSync(pluginPath, source, 'utf-8');
++  log('Patched cognee-openclaw plugin: capture completed turns on agent_end');
++}
++
++function patchCognee({ runtimeExtensionsDir, log = () => {} }) {
++  const pluginDir = path.join(runtimeExtensionsDir, 'cognee-openclaw');
++  const distDir = path.join(pluginDir, 'dist', 'src');
++  patchCogneeClient(
++    path.join(distDir, 'client.js'),
++    path.join(distDir, 'client.d.ts'),
++    log,
++  );
++  patchCogneeAgentEnd(path.join(distDir, 'plugin.js'), log);
++}
++
++module.exports = {
++  extractLatestCogneeConversationTurn,
++  patchCognee,
++};
+
+warning: in the working copy of 'src/main/plugins/cogneeIntegration.test.ts', LF will be replaced by CRLF the next time Git touches it
+diff --git a/src/main/plugins/cogneeIntegration.test.ts b/src/main/plugins/cogneeIntegration.test.ts
+new file mode 100644
+index 00000000..a3886190
+--- /dev/null
++++ b/src/main/plugins/cogneeIntegration.test.ts
+@@ -0,0 +1,57 @@
++import { describe, expect, test, vi } from 'vitest';
++
++import {
++  buildCogneeOpenClawConfig,
++  testCogneeConnection,
++} from './cogneeIntegration';
++
++describe('Cognee integration', () => {
++  test('writes environment placeholders instead of plaintext credentials', () => {
++    const config = buildCogneeOpenClawConfig({
++      baseUrl: 'http://127.0.0.1:8000',
++      username: 'admin@example.com',
++      password: 'must-not-survive',
++    });
++
++    expect(config.password).toBe('${COGNEE_PASSWORD}');
++    expect(JSON.stringify(config)).not.toContain('must-not-survive');
++  });
++
++  test('uses only the selected API key credential mode in OpenClaw config', () => {
++    const config = buildCogneeOpenClawConfig({
++      credentialMode: 'apiKey',
++      username: 'unused@example.com',
++      password: 'must-not-survive',
++      apiKey: 'must-not-survive-either',
++    });
++
++    expect(config.apiKey).toBe('${COGNEE_API_KEY}');
++    expect(config).not.toHaveProperty('password');
++    expect(config).not.toHaveProperty('credentialMode');
++    expect(JSON.stringify(config)).not.toContain('must-not-survive');
++  });
++
++  test('validates health, login, and authenticated identity', async () => {
++    const fetchImpl = vi.fn()
++      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'ready', version: '1.3.0-local' }), { status: 200 }))
++      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'token-123' }), { status: 200 }))
++      .mockResolvedValueOnce(new Response(JSON.stringify({ email: 'admin@example.com' }), { status: 200 }));
++
++    const result = await testCogneeConnection({
++      baseUrl: 'http://127.0.0.1:8000',
++      username: 'admin@example.com',
++      password: 'draft-secret',
++    }, {}, fetchImpl);
++
++    expect(result).toEqual({
++      ok: true,
++      reachable: true,
++      authenticated: true,
++      message: 'Cognee 连接和凭据验证成功',
++      version: '1.3.0-local',
++      user: 'admin@example.com',
++    });
++    expect(fetchImpl.mock.calls[1][1].body).toContain('password=draft-secret');
++    expect(fetchImpl.mock.calls[2][1].headers.Authorization).toBe('Bearer token-123');
++  });
++});
+
+warning: in the working copy of 'src/main/plugins/cogneeIntegration.ts', LF will be replaced by CRLF the next time Git touches it
+diff --git a/src/main/plugins/cogneeIntegration.ts b/src/main/plugins/cogneeIntegration.ts
+new file mode 100644
+index 00000000..ca438f8c
+--- /dev/null
++++ b/src/main/plugins/cogneeIntegration.ts
+@@ -0,0 +1,280 @@
++import type { CoworkStore } from '../coworkStore';
++import type { PluginCredentialStore } from './pluginCredentialStore';
++
++export const COGNEE_PLUGIN_ID = 'cognee-openclaw';
++export const COGNEE_PLUGIN_PACKAGE = '@cognee/cognee-openclaw';
++export const COGNEE_PLUGIN_VERSION = '2026.6.11';
++export const COGNEE_API_KEY_ENV = 'COGNEE_API_KEY';
++export const COGNEE_PASSWORD_ENV = 'COGNEE_PASSWORD';
++
++export const DEFAULT_COGNEE_CONFIG: Record<string, unknown> = {
++  mode: 'local',
++  credentialMode: 'password',
++  baseUrl: 'http://127.0.0.1:8000',
++  datasetName: 'lzclaw',
++  agentDatasetPrefix: 'lzclaw-agent',
++  recallScopes: ['agent'],
++  defaultWriteScope: 'agent',
++  enableSessions: true,
++  persistSessionsAfterEnd: true,
++  searchType: 'FEELING_LUCKY',
++  autoRecall: true,
++  autoIndex: true,
++  autoCognify: true,
++};
++
++export const COGNEE_FALLBACK_SCHEMA = {
++  configSchema: {
++    type: 'object',
++    additionalProperties: false,
++    properties: {
++      mode: { type: 'string', enum: ['local', 'cloud'], description: '本地自托管或 Cognee Cloud。' },
++      credentialMode: { type: 'string', enum: ['password', 'apiKey'], description: '选择用户名密码或 API Key 认证。' },
++      baseUrl: { type: 'string', description: 'Cognee API 地址。Docker 本机部署通常为 http://127.0.0.1:8000。' },
++      apiKey: { type: 'string', description: '可选。保存后由系统安全存储加密，不写入 SQLite 或 openclaw.json。' },
++      username: { type: 'string', description: 'Cognee 登录用户名。' },
++      password: { type: 'string', description: '保存后由系统安全存储加密，不写入 SQLite 或 openclaw.json。' },
++      datasetName: { type: 'string', description: '单作用域模式的数据集名称。' },
++      companyDataset: { type: 'string', description: '可选的企业共享数据集。填写后启用多作用域模式。' },
++      userDatasetPrefix: { type: 'string', description: '可选的用户数据集前缀。' },
++      agentDatasetPrefix: { type: 'string', description: '智能体数据集前缀，实际名称会附加 agentId。' },
++      recallScopes: { type: 'array', items: { type: 'string', enum: ['company', 'user', 'agent'] } },
++      defaultWriteScope: { type: 'string', enum: ['company', 'user', 'agent'] },
++      enableSessions: { type: 'boolean' },
++      persistSessionsAfterEnd: { type: 'boolean' },
++      searchType: {
++        type: 'string',
++        enum: [
++          'GRAPH_COMPLETION', 'GRAPH_COMPLETION_COT', 'GRAPH_COMPLETION_CONTEXT_EXTENSION',
++          'GRAPH_SUMMARY_COMPLETION', 'RAG_COMPLETION', 'TRIPLET_COMPLETION', 'CHUNKS',
++          'CHUNKS_LEXICAL', 'SUMMARIES', 'CYPHER', 'NATURAL_LANGUAGE', 'TEMPORAL',
++          'CODING_RULES', 'FEELING_LUCKY',
++        ],
++      },
++      maxResults: { type: 'number' },
++      maxTokens: { type: 'number' },
++      autoRecall: { type: 'boolean' },
++      autoIndex: { type: 'boolean' },
++      autoCognify: { type: 'boolean' },
++      requestTimeoutMs: { type: 'number' },
++    },
++  },
++  uiHints: {
++    mode: { label: '运行模式', order: 1 },
++    credentialMode: { label: '认证方式', order: 2 },
++    baseUrl: { label: 'Cognee API 地址', placeholder: 'http://127.0.0.1:8000', order: 3 },
++    apiKey: { label: 'API Key', sensitive: true, order: 4 },
++    username: { label: '用户名', placeholder: 'admin@example.com', order: 5 },
++    password: { label: '密码', sensitive: true, order: 6 },
++    datasetName: { label: '默认数据集', placeholder: 'lzclaw', order: 10 },
++    companyDataset: { label: '企业共享数据集', order: 11 },
++    userDatasetPrefix: { label: '用户数据集前缀', order: 12 },
++    agentDatasetPrefix: { label: '智能体数据集前缀', placeholder: 'lzclaw-agent', order: 13 },
++    recallScopes: { label: '检索作用域', order: 14 },
++    defaultWriteScope: { label: '默认写入作用域', order: 15 },
++    enableSessions: { label: '启用会话记忆', order: 20 },
++    persistSessionsAfterEnd: { label: '会话结束后持久化', order: 21 },
++    searchType: { label: '搜索模式', order: 22 },
++    maxResults: { label: '最大召回条数', order: 23 },
++    maxTokens: { label: '最大召回 Token', order: 24 },
++    autoRecall: { label: '自动召回', order: 30 },
++    autoIndex: { label: '启动时自动索引', order: 31 },
++    autoCognify: { label: '自动 Cognify', order: 32 },
++    requestTimeoutMs: { label: '请求超时（毫秒）', order: 40 },
++  },
++};
++
++export interface CogneeConnectionTestResult {
++  ok: boolean;
++  reachable: boolean;
++  authenticated: boolean;
++  message: string;
++  version?: string;
++  user?: string;
++}
++
++export function ensureCogneePluginRegistration(store: CoworkStore): void {
++  if (store.getUserPlugin(COGNEE_PLUGIN_ID)) return;
++  store.addUserPlugin({
++    pluginId: COGNEE_PLUGIN_ID,
++    source: 'npm',
++    spec: COGNEE_PLUGIN_PACKAGE,
++    version: COGNEE_PLUGIN_VERSION,
++    enabled: false,
++    installedAt: Date.now(),
++  });
++  store.setUserPluginConfig(COGNEE_PLUGIN_ID, DEFAULT_COGNEE_CONFIG);
++}
++
++export function saveCogneePluginConfig(
++  store: CoworkStore,
++  credentialStore: PluginCredentialStore,
++  config: Record<string, unknown>,
++): Record<string, unknown> {
++  const publicConfig = { ...config };
++  const credentials: Record<string, string> = {};
++  for (const key of ['apiKey', 'password']) {
++    const value = publicConfig[key];
++    if (typeof value === 'string' && value.length > 0) credentials[key] = value;
++    delete publicConfig[key];
++  }
++  credentialStore.setPluginCredentials(COGNEE_PLUGIN_ID, credentials);
++  store.setUserPluginConfig(COGNEE_PLUGIN_ID, publicConfig);
++  return publicConfig;
++}
++
++export function getSanitizedCogneeConfig(
++  store: CoworkStore,
++  credentialStore: PluginCredentialStore,
++): Record<string, unknown> {
++  const config = {
++    ...DEFAULT_COGNEE_CONFIG,
++    ...(store.getUserPluginConfig(COGNEE_PLUGIN_ID) ?? {}),
++  };
++  if (typeof config.apiKey === 'string' || typeof config.password === 'string') {
++    return saveCogneePluginConfig(store, credentialStore, config);
++  }
++  return config;
++}
++
++export function buildCogneeOpenClawConfig(
++  config: Record<string, unknown> | undefined,
++): Record<string, unknown> {
++  const publicConfig = { ...DEFAULT_COGNEE_CONFIG, ...(config ?? {}) };
++  const credentialMode = publicConfig.credentialMode === 'apiKey' ? 'apiKey' : 'password';
++  delete publicConfig.credentialMode;
++  delete publicConfig.apiKey;
++  delete publicConfig.password;
++
++  if (credentialMode === 'apiKey') {
++    publicConfig.apiKey = `\${${COGNEE_API_KEY_ENV}}`;
++  } else {
++    // Explicitly inject a non-default password placeholder. If the user has
++    // not configured a credential yet, the gateway receives "unconfigured"
++    // instead of silently trying Cognee's documented default password.
++    publicConfig.password = `\${${COGNEE_PASSWORD_ENV}}`;
++  }
++  return publicConfig;
++}
++
++function stringValue(value: unknown): string {
++  return typeof value === 'string' ? value.trim() : '';
++}
++
++async function readResponseMessage(response: Response): Promise<string> {
++  try {
++    const body = await response.clone().json() as Record<string, unknown>;
++    return stringValue(body.detail) || stringValue(body.message) || response.statusText;
++  } catch {
++    return response.statusText;
++  }
++}
++
++export async function testCogneeConnection(
++  draftConfig: Record<string, unknown>,
++  storedCredentials: Record<string, string>,
++  fetchImpl: typeof fetch = fetch,
++): Promise<CogneeConnectionTestResult> {
++  const baseUrl = stringValue(draftConfig.baseUrl || DEFAULT_COGNEE_CONFIG.baseUrl).replace(/\/+$/, '');
++  let parsedUrl: URL;
++  try {
++    parsedUrl = new URL(baseUrl);
++    if (!['http:', 'https:'].includes(parsedUrl.protocol)) throw new Error('unsupported protocol');
++  } catch {
++    return { ok: false, reachable: false, authenticated: false, message: 'Cognee API 地址无效' };
++  }
++
++  const credentialMode = draftConfig.credentialMode === 'apiKey' ? 'apiKey' : 'password';
++  const apiKey = credentialMode === 'apiKey'
++    ? (stringValue(draftConfig.apiKey) || storedCredentials.apiKey || '')
++    : '';
++  const username = stringValue(draftConfig.username);
++  const password = credentialMode === 'password'
++    ? (stringValue(draftConfig.password) || storedCredentials.password || '')
++    : '';
++  const timeoutMs = Number(draftConfig.requestTimeoutMs) || 15_000;
++  const controller = new AbortController();
++  const timeout = setTimeout(() => controller.abort(), Math.min(Math.max(timeoutMs, 1_000), 60_000));
++
++  try {
++    const authHeaders: Record<string, string> = {};
++    if (apiKey) {
++      authHeaders.Authorization = `Bearer ${apiKey}`;
++      authHeaders['X-Api-Key'] = apiKey;
++    }
++    const healthResponse = await fetchImpl(`${baseUrl}/health`, {
++      headers: authHeaders,
++      signal: controller.signal,
++    });
++    if (!healthResponse.ok) {
++      return {
++        ok: false,
++        reachable: true,
++        authenticated: false,
++        message: `Cognee 健康检查失败：${await readResponseMessage(healthResponse)}`,
++      };
++    }
++    const health = await healthResponse.json().catch(() => ({})) as Record<string, unknown>;
++    const version = stringValue(health.version) || undefined;
++
++    let accessToken = apiKey;
++    if (!apiKey) {
++      if (!username || !password) {
++        return {
++          ok: false,
++          reachable: true,
++          authenticated: false,
++          message: 'Cognee 服务可访问，请填写用户名和密码或 API Key',
++          version,
++        };
++      }
++      const loginResponse = await fetchImpl(`${baseUrl}/api/v1/auth/login`, {
++        method: 'POST',
++        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
++        body: new URLSearchParams({ username, password }).toString(),
++        signal: controller.signal,
++      });
++      if (!loginResponse.ok) {
++        return {
++          ok: false,
++          reachable: true,
++          authenticated: false,
++          message: `Cognee 登录失败：${await readResponseMessage(loginResponse)}`,
++          version,
++        };
++      }
++      const login = await loginResponse.json() as Record<string, unknown>;
++      accessToken = stringValue(login.access_token) || stringValue(login.token);
++      if (!accessToken) {
++        return { ok: false, reachable: true, authenticated: false, message: 'Cognee 登录响应缺少访问令牌', version };
++      }
++    }
++
++    const meResponse = await fetchImpl(`${baseUrl}/api/v1/auth/me`, {
++      headers: {
++        Authorization: `Bearer ${accessToken}`,
++        ...(apiKey ? { 'X-Api-Key': apiKey } : {}),
++      },
++      signal: controller.signal,
++    });
++    if (!meResponse.ok) {
++      return {
++        ok: false,
++        reachable: true,
++        authenticated: false,
++        message: `Cognee 凭据验证失败：${await readResponseMessage(meResponse)}`,
++        version,
++      };
++    }
++    const me = await meResponse.json().catch(() => ({})) as Record<string, unknown>;
++    const user = stringValue(me.email) || stringValue(me.username) || username || undefined;
++    return { ok: true, reachable: true, authenticated: true, message: 'Cognee 连接和凭据验证成功', version, user };
++  } catch (error) {
++    const message = error instanceof Error && error.name === 'AbortError'
++      ? '连接 Cognee 超时'
++      : `无法连接 Cognee：${error instanceof Error ? error.message : String(error)}`;
++    return { ok: false, reachable: false, authenticated: false, message };
++  } finally {
++    clearTimeout(timeout);
++  }
++}
+
+warning: in the working copy of 'src/main/plugins/electronPluginCredentialStore.ts', LF will be replaced by CRLF the next time Git touches it
+diff --git a/src/main/plugins/electronPluginCredentialStore.ts b/src/main/plugins/electronPluginCredentialStore.ts
+new file mode 100644
+index 00000000..6e529234
+--- /dev/null
++++ b/src/main/plugins/electronPluginCredentialStore.ts
+@@ -0,0 +1,15 @@
++import { app, safeStorage } from 'electron';
++import path from 'path';
++
++import { PluginCredentialStore } from './pluginCredentialStore';
++
++export function createElectronPluginCredentialStore(): PluginCredentialStore {
++  return new PluginCredentialStore(
++    path.join(app.getPath('userData'), 'secure', 'plugin-credentials.json'),
++    {
++      isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),
++      encryptString: value => safeStorage.encryptString(value),
++      decryptString: value => safeStorage.decryptString(value),
++    },
++  );
++}
+
+warning: in the working copy of 'src/main/plugins/pluginCredentialStore.test.ts', LF will be replaced by CRLF the next time Git touches it
+diff --git a/src/main/plugins/pluginCredentialStore.test.ts b/src/main/plugins/pluginCredentialStore.test.ts
+new file mode 100644
+index 00000000..4b5af2da
+--- /dev/null
++++ b/src/main/plugins/pluginCredentialStore.test.ts
+@@ -0,0 +1,57 @@
++import fs from 'fs';
++import os from 'os';
++import path from 'path';
++import { afterEach, beforeEach, describe, expect, test } from 'vitest';
++
++import { PluginCredentialStore } from './pluginCredentialStore';
++
++describe('PluginCredentialStore', () => {
++  let tmpDir: string;
++  let filePath: string;
++
++  beforeEach(() => {
++    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'plugin-credentials-'));
++    filePath = path.join(tmpDir, 'secure', 'credentials.json');
++  });
++
++  afterEach(() => {
++    fs.rmSync(tmpDir, { recursive: true, force: true });
++  });
++
++  test('stores only encrypted values and decrypts them on demand', () => {
++    const store = new PluginCredentialStore(filePath, {
++      isEncryptionAvailable: () => true,
++      encryptString: value => Buffer.from(`protected:${value}`).reverse(),
++      decryptString: value => value.reverse().toString('utf8').replace(/^protected:/, ''),
++    });
++
++    store.setPluginCredentials('cognee-openclaw', {
++      password: 'very-secret-password',
++      apiKey: 'cognee-api-key',
++    });
++
++    const persisted = fs.readFileSync(filePath, 'utf8');
++    expect(persisted).not.toContain('very-secret-password');
++    expect(persisted).not.toContain('cognee-api-key');
++    expect(store.getPluginCredentials('cognee-openclaw')).toEqual({
++      password: 'very-secret-password',
++      apiKey: 'cognee-api-key',
++    });
++    expect(store.getPluginCredentialStatus('cognee-openclaw')).toEqual({
++      password: true,
++      apiKey: true,
++    });
++  });
++
++  test('refuses to persist plaintext when platform encryption is unavailable', () => {
++    const store = new PluginCredentialStore(filePath, {
++      isEncryptionAvailable: () => false,
++      encryptString: value => Buffer.from(value),
++      decryptString: value => value.toString('utf8'),
++    });
++
++    expect(() => store.setPluginCredentials('cognee-openclaw', { password: 'secret' }))
++      .toThrow('系统安全凭据存储当前不可用');
++    expect(fs.existsSync(filePath)).toBe(false);
++  });
++});
+
+warning: in the working copy of 'src/main/plugins/pluginCredentialStore.ts', LF will be replaced by CRLF the next time Git touches it
+diff --git a/src/main/plugins/pluginCredentialStore.ts b/src/main/plugins/pluginCredentialStore.ts
+new file mode 100644
+index 00000000..d1d9798d
+--- /dev/null
++++ b/src/main/plugins/pluginCredentialStore.ts
+@@ -0,0 +1,90 @@
++import fs from 'fs';
++import path from 'path';
++
++export interface PluginCredentialCipher {
++  isEncryptionAvailable(): boolean;
++  encryptString(value: string): Buffer;
++  decryptString(value: Buffer): string;
++}
++
++interface StoredPluginCredentials {
++  version: 1;
++  plugins: Record<string, Record<string, string>>;
++}
++
++const EMPTY_STORE: StoredPluginCredentials = {
++  version: 1,
++  plugins: {},
++};
++
++/**
++ * Persists plugin credentials only after the platform credential cipher has
++ * encrypted them. The JSON file never contains plaintext secrets.
++ */
++export class PluginCredentialStore {
++  constructor(
++    private readonly filePath: string,
++    private readonly cipher: PluginCredentialCipher,
++  ) {}
++
++  getPluginCredentials(pluginId: string): Record<string, string> {
++    const encrypted = this.readStore().plugins[pluginId] ?? {};
++    const credentials: Record<string, string> = {};
++
++    for (const [key, value] of Object.entries(encrypted)) {
++      try {
++        credentials[key] = this.cipher.decryptString(Buffer.from(value, 'base64'));
++      } catch (error) {
++        console.error(`[PluginCredentialStore] Failed to decrypt ${pluginId}.${key}:`, error);
++      }
++    }
++
++    return credentials;
++  }
++
++  getPluginCredentialStatus(pluginId: string): Record<string, boolean> {
++    return Object.fromEntries(
++      Object.keys(this.readStore().plugins[pluginId] ?? {}).map(key => [key, true]),
++    );
++  }
++
++  setPluginCredentials(pluginId: string, credentials: Record<string, string>): void {
++    const entries = Object.entries(credentials).filter(([, value]) => value.length > 0);
++    if (entries.length === 0) return;
++    if (!this.cipher.isEncryptionAvailable()) {
++      throw new Error('系统安全凭据存储当前不可用，未保存 Cognee 凭据');
++    }
++
++    const store = this.readStore();
++    const pluginCredentials = { ...(store.plugins[pluginId] ?? {}) };
++    for (const [key, value] of entries) {
++      pluginCredentials[key] = this.cipher.encryptString(value).toString('base64');
++    }
++    store.plugins[pluginId] = pluginCredentials;
++    this.writeStore(store);
++  }
++
++  private readStore(): StoredPluginCredentials {
++    try {
++      const parsed = JSON.parse(fs.readFileSync(this.filePath, 'utf8')) as Partial<StoredPluginCredentials>;
++      if (parsed.version === 1 && parsed.plugins && typeof parsed.plugins === 'object') {
++        return { version: 1, plugins: parsed.plugins };
++      }
++    } catch (error) {
++      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
++        console.error('[PluginCredentialStore] Failed to read credential store:', error);
++      }
++    }
++    return { version: EMPTY_STORE.version, plugins: {} };
++  }
++
++  private writeStore(store: StoredPluginCredentials): void {
++    fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
++    const tempPath = `${this.filePath}.${process.pid}.tmp`;
++    fs.writeFileSync(tempPath, `${JSON.stringify(store, null, 2)}\n`, {
++      encoding: 'utf8',
++      mode: 0o600,
++    });
++    fs.renameSync(tempPath, this.filePath);
++  }
++}
+
+warning: in the working copy of 'tests/openclaw-plugin-patches-cognee.test.ts', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tests/openclaw-plugin-patches-cognee.test.ts b/tests/openclaw-plugin-patches-cognee.test.ts
+new file mode 100644
+index 00000000..4720ed1a
+--- /dev/null
++++ b/tests/openclaw-plugin-patches-cognee.test.ts
+@@ -0,0 +1,112 @@
++import fs from 'node:fs';
++import os from 'node:os';
++import path from 'node:path';
++
++import { describe, expect, test } from 'vitest';
++
++const {
++  extractLatestCogneeConversationTurn,
++  patchCognee,
++} = require('../scripts/openclaw-plugin-patches/cognee.cjs');
++
++describe('openclaw Cognee plugin patch', () => {
++  test('extracts the latest visible turn and removes LobsterAI managed prompt context', () => {
++    const turn = extractLatestCogneeConversationTurn([
++      {
++        role: 'user',
++        content: 'old question',
++        idempotencyKey: 'old-user',
++      },
++      {
++        role: 'assistant',
++        content: [{ type: 'text', text: 'old answer' }],
++        responseId: 'old-assistant',
++      },
++      {
++        role: 'user',
++        content: '## Local Time Context\nignored\n\n[Current user request]\n五岳是哪五座山',
++        idempotencyKey: 'current-user',
++      },
++      {
++        role: 'assistant',
++        content: [
++          { type: 'thinking', thinking: 'private reasoning' },
++          { type: 'tool_use', name: 'search', input: { query: 'secret tool input' } },
++          { type: 'text', text: '东岳泰山、西岳华山、南岳衡山、北岳恒山、中岳嵩山' },
++        ],
++        responseId: 'current-assistant',
++      },
++    ]);
++
++    expect(turn).toEqual({
++      question: '五岳是哪五座山',
++      answer: '东岳泰山、西岳华山、南岳衡山、北岳恒山、中岳嵩山',
++      userIdentity: 'current-user',
++      assistantIdentity: 'current-assistant',
++    });
++    expect(JSON.stringify(turn)).not.toContain('private reasoning');
++    expect(JSON.stringify(turn)).not.toContain('secret tool input');
++  });
++
++  test('supports JSONL message envelopes and skips turns without a final answer', () => {
++    expect(extractLatestCogneeConversationTurn([
++      {
++        type: 'message',
++        message: {
++          role: 'user',
++          content: '[Current user request]\n只有问题',
++          idempotencyKey: 'user-1',
++        },
++      },
++    ])).toBeNull();
++  });
++
++  test('patches the pinned plugin idempotently', () => {
++    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cognee-plugin-patch-'));
++    const distDir = path.join(tempDir, 'cognee-openclaw', 'dist', 'src');
++    fs.mkdirSync(distDir, { recursive: true });
++    fs.writeFileSync(
++      path.join(distDir, 'client.js'),
++      [
++        'export class CogneeHttpClient {',
++        '    // POST /api/v1/improve — Cognee 1.0.3\'s memory-oriented alias for /memify.',
++        '    async improve(params) {}',
++        '}',
++      ].join('\n'),
++    );
++    fs.writeFileSync(
++      path.join(distDir, 'client.d.ts'),
++      ['export declare class CogneeHttpClient {', '    improve(params: {}): Promise<{}>;', '}'].join('\n'),
++    );
++    fs.writeFileSync(
++      path.join(distDir, 'plugin.js'),
++      [
++        'const autoSyncedWorkspaces = new Set();',
++        'function register(api) {',
++        '    const cfg = {};',
++        '    const client = {};',
++        '    const multiScope = false;',
++        '    let sessionId;',
++        '        // ------------------------------------------------------------------',
++        '        // Post-agent sync + session persistence',
++        '        // ------------------------------------------------------------------',
++        '}',
++      ].join('\n'),
++    );
++
++    patchCognee({ runtimeExtensionsDir: tempDir, log: () => {} });
++    patchCognee({ runtimeExtensionsDir: tempDir, log: () => {} });
++
++    const client = fs.readFileSync(path.join(distDir, 'client.js'), 'utf-8');
++    const declarations = fs.readFileSync(path.join(distDir, 'client.d.ts'), 'utf-8');
++    const plugin = fs.readFileSync(path.join(distDir, 'plugin.js'), 'utf-8');
++    expect(client.match(/lzclaw_cognee_remember_entry_patch/g)).toHaveLength(1);
++    expect(client).toContain('"/api/v1/remember/entry"');
++    expect(declarations.match(/rememberEntry\(params:/g)).toHaveLength(1);
++    expect(plugin.match(/lzclaw_cognee_agent_end_capture_patch/g)).toHaveLength(1);
++    expect(plugin).toContain('api.on("agent_end"');
++    expect(plugin).toContain('client.rememberEntry({');
++
++    fs.rmSync(tempDir, { recursive: true, force: true });
++  });
++});

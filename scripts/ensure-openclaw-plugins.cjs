@@ -433,6 +433,44 @@ function npmPack(packSpec, registry, outputDir) {
   return path.join(outputDir, tgzName);
 }
 
+/**
+ * Extract a pinned npm plugin that has no production dependencies.
+ *
+ * OpenClaw 2026.6 invokes npm with --allow-scripts for unsafe-install mode.
+ * npm 11 rejects that flag in the isolated project created by OpenClaw. For
+ * audited, dependency-free plugins we can safely use npm pack (which verifies
+ * registry integrity) and extract the already-built package directly.
+ */
+function extractDependencyFreePlugin(tgzPath, outputDir, plugin) {
+  const extractDir = path.join(outputDir, 'direct-extract');
+  ensureDir(extractDir);
+  require('tar').x({ file: tgzPath, cwd: extractDir, sync: true });
+
+  const packageDir = path.join(extractDir, 'package');
+  const packageJsonPath = path.join(packageDir, 'package.json');
+  const manifestPath = path.join(packageDir, 'openclaw.plugin.json');
+  if (!fs.existsSync(packageJsonPath) || !fs.existsSync(manifestPath)) {
+    throw new Error(`Direct-extract plugin ${plugin.id} is missing package.json or openclaw.plugin.json`);
+  }
+
+  const packageJson = readJsonFile(packageJsonPath);
+  const manifest = readJsonFile(manifestPath);
+  const runtimeDependencies = {
+    ...(packageJson?.dependencies || {}),
+    ...(packageJson?.optionalDependencies || {}),
+  };
+  if (Object.keys(runtimeDependencies).length > 0) {
+    throw new Error(`Direct-extract plugin ${plugin.id} unexpectedly declares runtime dependencies`);
+  }
+  if (packageJson?.version !== plugin.version) {
+    throw new Error(`Direct-extract plugin ${plugin.id} version mismatch: ${packageJson?.version || 'unknown'}`);
+  }
+  if (manifest?.id !== plugin.id) {
+    throw new Error(`Direct-extract plugin manifest id mismatch: ${manifest?.id || 'unknown'}`);
+  }
+  return packageDir;
+}
+
 function gitCloneAndPack(spec, version, outputDir) {
   const parsed = parseGitSpec(spec, version);
   if (!parsed) {
@@ -685,23 +723,32 @@ function main() {
           installSpec = prepareOpenClawNimPackage(installSpec, stagingDir, { log });
         }
 
-        runOpenClawCli(
-          ['plugins', 'install', installSpec, '--force', '--dangerously-force-unsafe-install'],
-          {
-            env: {
-              OPENCLAW_STATE_DIR: stagingDir,
-              // Prevent npm from auto-installing peerDependencies (npm v7+).
-              // Channel plugins declare openclaw as a peerDep, but the host
-              // gateway already provides the SDK at runtime.  Without this,
-              // npm installs the full openclaw SDK + transitive deps (~738 MB)
-              // into each plugin's node_modules.
-              npm_config_legacy_peer_deps: 'true',
-            },
-            stdio: 'inherit',
-          }
-        );
+        let installedDir;
+        if (plugin.installMode === 'direct-extract') {
+          log('  Using audited dependency-free direct extraction.');
+          const packedPlugin = fs.existsSync(installSpec)
+            ? installSpec
+            : npmPack(source.pinnedDisplaySpec, plugin.registry, stagingDir);
+          installedDir = extractDependencyFreePlugin(packedPlugin, stagingDir, plugin);
+        } else {
+          runOpenClawCli(
+            ['plugins', 'install', installSpec, '--force', '--dangerously-force-unsafe-install'],
+            {
+              env: {
+                OPENCLAW_STATE_DIR: stagingDir,
+                // Prevent npm from auto-installing peerDependencies (npm v7+).
+                // Channel plugins declare openclaw as a peerDep, but the host
+                // gateway already provides the SDK at runtime.  Without this,
+                // npm installs the full openclaw SDK + transitive deps (~738 MB)
+                // into each plugin's node_modules.
+                npm_config_legacy_peer_deps: 'true',
+              },
+              stdio: 'inherit',
+            }
+          );
+          installedDir = findInstalledPluginDir(stagingDir, plugin);
+        }
 
-        const installedDir = findInstalledPluginDir(stagingDir, plugin);
         if (!installedDir) {
           throw new Error('No plugin found in staging directory after install');
         }

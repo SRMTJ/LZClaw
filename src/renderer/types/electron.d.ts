@@ -1323,7 +1323,19 @@ interface IElectronAPI {
         >;
       } | null;
       config?: Record<string, unknown> | null;
+      secretStatus?: Record<string, boolean>;
       error?: string;
+    }>;
+    testConnection: (
+      pluginId: string,
+      config: Record<string, unknown>,
+    ) => Promise<{
+      ok: boolean;
+      reachable: boolean;
+      authenticated: boolean;
+      message: string;
+      version?: string;
+      user?: string;
     }>;
     saveConfig: (
       pluginId: string,

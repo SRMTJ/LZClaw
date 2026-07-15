@@ -1385,6 +1385,47 @@ describe('OpenClawConfigSync runtime config output', () => {
     });
   });
 
+  test('selects Cognee as the sole memory slot and keeps credentials out of openclaw.json', async () => {
+    const sync = await createSync({
+      getUserPlugins: () => [{
+        pluginId: 'cognee-openclaw',
+        enabled: true,
+        config: {
+          mode: 'local',
+          baseUrl: 'http://127.0.0.1:8000',
+          username: 'admin@example.com',
+          datasetName: 'lzclaw',
+          agentDatasetPrefix: 'lzclaw-agent',
+        },
+      }],
+      getUserPluginCredentials: (pluginId: string) => pluginId === 'cognee-openclaw'
+        ? { password: 'super-secret-password' }
+        : {},
+    });
+
+    const result = sync.sync('cognee-memory-slot');
+    expect(result.ok).toBe(true);
+
+    const configText = fs.readFileSync(configPath, 'utf8');
+    const config = JSON.parse(configText);
+    expect(config.plugins.slots.memory).toBe('cognee-openclaw');
+    expect(config.plugins.entries['cognee-openclaw']).toEqual({
+      enabled: true,
+      hooks: { allowConversationAccess: true },
+      config: expect.objectContaining({
+        baseUrl: 'http://127.0.0.1:8000',
+        username: 'admin@example.com',
+        password: '${COGNEE_PASSWORD}',
+        datasetName: 'lzclaw',
+        agentDatasetPrefix: 'lzclaw-agent',
+      }),
+    });
+    expect(config.plugins.entries['memory-core'].enabled).toBe(false);
+    expect(config.plugins.entries['memory-lancedb'].enabled).toBe(false);
+    expect(configText).not.toContain('super-secret-password');
+    expect(sync.collectSecretEnvVars().COGNEE_PASSWORD).toBe('super-secret-password');
+  });
+
   test('maps OpenAI OAuth mode to the ChatGPT Responses provider', async () => {
     const { AuthType, OpenClawApi, OpenClawProviderId, ProviderName } = await import('../../shared/providers');
     const { buildProviderSelection } = await import('./openclawConfigSync');

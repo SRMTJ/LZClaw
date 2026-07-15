@@ -10,6 +10,23 @@ function commandExists(command) {
   return result.status === 0;
 }
 
+function isMsysBash(candidate) {
+  const normalized = candidate.replace(/\//g, '\\').toLowerCase();
+  if (
+    normalized.includes('\\windowsapps\\') ||
+    normalized.endsWith('\\windows\\system32\\bash.exe')
+  ) {
+    return false;
+  }
+
+  const result = spawnSync(
+    candidate,
+    ['-c', 'case "$(uname -s)" in MINGW*|MSYS*) exit 0 ;; *) exit 1 ;; esac'],
+    { stdio: 'ignore' },
+  );
+  return result.status === 0;
+}
+
 function resolveBashExecutable(rootDir) {
   if (process.platform !== 'win32') {
     return commandExists('bash') ? 'bash' : null;
@@ -19,15 +36,19 @@ function resolveBashExecutable(rootDir) {
   // WSL bash (WindowsApps\bash.exe) runs in a separate Linux environment and
   // cannot access Windows-installed node, npm, pnpm, etc.
 
-  // 1. Check all bash locations, prefer Git Bash over WSL bash.
+  // 1. Check all bash locations and accept only an MSYS2/Git Bash runtime.
   try {
     const result = spawnSync('where', ['bash'], {
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'ignore'],
     });
     if (result.status === 0 && result.stdout) {
-      const paths = result.stdout.trim().split(/\r?\n/).map(p => p.trim()).filter(Boolean);
-      const gitBash = paths.find(p => !p.toLowerCase().includes('windowsapps'));
+      const paths = result.stdout
+        .trim()
+        .split(/\r?\n/)
+        .map(p => p.trim())
+        .filter(Boolean);
+      const gitBash = paths.find(isMsysBash);
       if (gitBash) return gitBash;
     }
   } catch {}
@@ -46,7 +67,7 @@ function resolveBashExecutable(rootDir) {
         path.join(gitRoot, 'usr', 'bin', 'bash.exe'),
       ];
       for (const candidate of gitBashCandidates) {
-        if (fs.existsSync(candidate)) return candidate;
+        if (fs.existsSync(candidate) && isMsysBash(candidate)) return candidate;
       }
     }
   } catch {}
@@ -57,7 +78,7 @@ function resolveBashExecutable(rootDir) {
     path.join(rootDir, 'resources', 'mingit', 'usr', 'bin', 'bash.exe'),
   ];
   for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) {
+    if (fs.existsSync(candidate) && isMsysBash(candidate)) {
       return candidate;
     }
   }
@@ -67,7 +88,9 @@ function resolveBashExecutable(rootDir) {
 
 const targetId = (process.argv[2] || '').trim();
 if (!targetId) {
-  console.error('[run-build-openclaw-runtime] Missing target id (example: mac-arm64, win-x64, linux-x64).');
+  console.error(
+    '[run-build-openclaw-runtime] Missing target id (example: mac-arm64, win-x64, linux-x64).',
+  );
   process.exit(1);
 }
 
@@ -76,7 +99,9 @@ const bashExecutable = resolveBashExecutable(rootDir);
 if (!bashExecutable) {
   console.error('[run-build-openclaw-runtime] bash is required but not found.');
   if (process.platform === 'win32') {
-    console.error('[run-build-openclaw-runtime] Install Git Bash or run `npm run setup:mingit` first.');
+    console.error(
+      '[run-build-openclaw-runtime] Install Git Bash or run `npm run setup:mingit` first.',
+    );
   }
   process.exit(1);
 }
@@ -89,6 +114,11 @@ if (!bashExecutable) {
 //    through deeply-nested npm/cmd.exe process chains.
 const env = { ...process.env };
 env.CI = env.CI || 'true';
+for (const key of Object.keys(env)) {
+  if (key.toLowerCase() === 'npm_config_allow_scripts') {
+    delete env[key];
+  }
+}
 if (process.platform === 'win32') {
   const nodeDir = path.dirname(process.execPath);
   const pathEntries = Object.entries(env).filter(([k]) => k.toUpperCase() === 'PATH');
@@ -100,6 +130,7 @@ if (process.platform === 'win32') {
 // Use a relative path so bash never sees Windows drive-letter paths like
 // "D:/..." which can fail when invoked through nested npm/cmd.exe chains.
 const scriptPath = 'scripts/build-openclaw-runtime.sh';
+console.log(`[run-build-openclaw-runtime] bash=${bashExecutable}`);
 const result = spawnSync(bashExecutable, [scriptPath, targetId], {
   cwd: rootDir,
   env,

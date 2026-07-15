@@ -36,3 +36,7 @@ test('resolveNpmCommand delegates to shared npm runtime resolution', () => {
 test('hides OpenClaw built-in xai provider plugin from user plugin sync', () => {
   expect(isHiddenUserPluginId('xai')).toBe(true);
 });
+
+test('keeps the managed Cognee runtime plugin visible for user configuration', () => {
+  expect(isHiddenUserPluginId('cognee-openclaw')).toBe(false);
+});

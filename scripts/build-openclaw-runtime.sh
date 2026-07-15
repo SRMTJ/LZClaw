@@ -233,6 +233,35 @@ rm -rf node_modules package-lock.json
 # Avoid npm peer resolution conflicts caused by dev-only lint toolchain.
 npm pkg delete devDependencies >/dev/null 2>&1 || true
 
+# npm 11.18+ blocks unreviewed dependency lifecycle scripts. Generate a
+# version-pinned policy from the packaged shrinkwrap so native dependencies
+# can install without allowing scripts from packages outside this runtime.
+node - <<'NODE'
+const fs = require('fs');
+const path = require('path');
+
+const packagePath = path.resolve('package.json');
+const shrinkwrapPath = path.resolve('npm-shrinkwrap.json');
+const pkg = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+const shrinkwrap = JSON.parse(fs.readFileSync(shrinkwrapPath, 'utf8'));
+const allowScripts = {};
+
+for (const [packagePathKey, metadata] of Object.entries(shrinkwrap.packages || {})) {
+  if (!packagePathKey || !metadata?.hasInstallScript || !metadata.version) continue;
+  const normalized = packagePathKey.replace(/\\/g, '/');
+  const match = normalized.match(/(?:^|\/)node_modules\/((?:@[^/]+\/)?[^/]+)$/);
+  if (!match) continue;
+  allowScripts[`${match[1]}@${metadata.version}`] = true;
+}
+
+pkg.allowScripts = {
+  ...(pkg.allowScripts && typeof pkg.allowScripts === 'object' ? pkg.allowScripts : {}),
+  ...allowScripts,
+};
+fs.writeFileSync(packagePath, `${JSON.stringify(pkg, null, 2)}\n`);
+console.log(`[openclaw-runtime] approved install scripts: ${Object.keys(allowScripts).join(', ') || 'none'}`);
+NODE
+
 echo "[openclaw-runtime] npm target platform=$NPM_TARGET_PLATFORM arch=$NPM_TARGET_ARCH"
 NPM_CONFIG_LEGACY_PEER_DEPS=true \
 npm_config_platform="$NPM_TARGET_PLATFORM" \

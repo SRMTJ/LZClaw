@@ -341,6 +341,13 @@ import {
   saveOpenClawSessionPolicyConfig,
 } from './openclawSessionPolicy/store';
 import { registerVoiceInputPermissionHandler } from './permissions/voiceInputPermission';
+import {
+  COGNEE_PLUGIN_ID,
+  ensureCogneePluginRegistration,
+  getSanitizedCogneeConfig,
+} from './plugins/cogneeIntegration';
+import { createElectronPluginCredentialStore } from './plugins/electronPluginCredentialStore';
+import type { PluginCredentialStore } from './plugins/pluginCredentialStore';
 import { isHiddenUserPluginId } from './plugins/pluginManager';
 import { SkillManager } from './skills/skillManager';
 import { getSkillServiceManager } from './skills/skillServices';
@@ -1525,6 +1532,7 @@ let storeInitPromise: Promise<SqliteStore> | null = null;
 let sqliteBackupManager: SqliteBackupManager | null = null;
 let openClawEngineManager: OpenClawEngineManager | null = null;
 let openClawConfigSync: OpenClawConfigSync | null = null;
+let pluginCredentialStore: PluginCredentialStore | null = null;
 let openClawBootstrapPromise: Promise<OpenClawEngineStatus> | null = null;
 let cachedSubscriptionStatus: string = AuthSubscriptionStatus.Free;
 let cachedMediaGenerationEntitled = false;
@@ -1826,6 +1834,13 @@ const resolveCoworkAgentEngine = (): CoworkAgentEngine => {
   return 'openclaw';
 };
 
+const getPluginCredentialStore = (): PluginCredentialStore => {
+  if (!pluginCredentialStore) {
+    pluginCredentialStore = createElectronPluginCredentialStore();
+  }
+  return pluginCredentialStore;
+};
+
 const getOpenClawConfigSync = (): OpenClawConfigSync => {
   if (!openClawConfigSync) {
     openClawConfigSync = new OpenClawConfigSync({
@@ -1932,11 +1947,18 @@ const getOpenClawConfigSync = (): OpenClawConfigSync => {
       getMediaCallbackUrl: () => getMcpRuntime().getMediaCallbackUrl(),
       getMcpBridgeSecret: () => getMcpRuntime().getBridgeSecret(),
       getAgents: () => getCoworkStore().listAgents(),
-      getUserPlugins: () =>
-        getCoworkStore()
+      getUserPlugins: () => {
+        const coworkStore = getCoworkStore();
+        ensureCogneePluginRegistration(coworkStore);
+        getSanitizedCogneeConfig(coworkStore, getPluginCredentialStore());
+        return coworkStore
           .listUserPlugins()
           .filter(p => !isHiddenUserPluginId(p.pluginId))
-          .map(p => ({ pluginId: p.pluginId, enabled: p.enabled, config: p.config })),
+          .map(p => ({ pluginId: p.pluginId, enabled: p.enabled, config: p.config }));
+      },
+      getUserPluginCredentials: pluginId => pluginId === COGNEE_PLUGIN_ID
+        ? getPluginCredentialStore().getPluginCredentials(pluginId)
+        : {},
       canUseMediaGeneration: () => cachedMediaGenerationEntitled,
     });
   }
@@ -8330,7 +8352,7 @@ if (!gotTheLock) {
 
   // ==================== Plugin Management IPC Handlers ====================
 
-  registerPluginHandlers({ getCoworkStore, syncOpenClawConfig });
+  registerPluginHandlers({ getCoworkStore, getPluginCredentialStore, syncOpenClawConfig });
 
   // ==================== Scheduled Task IPC Handlers (OpenClaw) ====================
 

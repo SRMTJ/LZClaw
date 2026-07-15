@@ -55,6 +55,14 @@ export default function PluginConfigPage({ pluginId, onBack, initialConfig, onCo
   const [schema, setSchema] = useState<ConfigSchemaData | null>(null);
   const [configValue, setConfigValue] = useState<Record<string, unknown>>(initialConfig ?? {});
   const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
+  const [secretStatus, setSecretStatus] = useState<Record<string, boolean>>({});
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [connectionResult, setConnectionResult] = useState<{
+    ok: boolean;
+    message: string;
+    version?: string;
+    user?: string;
+  } | null>(null);
 
   const loadSchema = useCallback(async () => {
     setLoading(true);
@@ -64,6 +72,7 @@ export default function PluginConfigPage({ pluginId, onBack, initialConfig, onCo
       if (result?.success && result.schema) {
         setSchema(result.schema);
         const loadedConfig = result.config ?? {};
+        setSecretStatus(result.secretStatus ?? {});
         // If parent already has a pending config for this plugin, use that instead
         if (!initialConfig) {
           setConfigValue(loadedConfig);
@@ -91,6 +100,19 @@ export default function PluginConfigPage({ pluginId, onBack, initialConfig, onCo
 
   const handleToggleSecret = (path: string) => {
     setShowSecrets(prev => ({ ...prev, [path]: !prev[path] }));
+  };
+
+  const handleTestConnection = async () => {
+    setTestingConnection(true);
+    setConnectionResult(null);
+    try {
+      const result = await window.electron?.plugins.testConnection(pluginId, configValue);
+      setConnectionResult(result ?? { ok: false, message: i18nService.t('pluginsCogneeTestFailed') });
+    } catch {
+      setConnectionResult({ ok: false, message: i18nService.t('pluginsCogneeTestFailed') });
+    } finally {
+      setTestingConnection(false);
+    }
   };
 
   return (
@@ -124,15 +146,65 @@ export default function PluginConfigPage({ pluginId, onBack, initialConfig, onCo
           {i18nService.t('pluginsConfigNoSchema')}
         </div>
       ) : (
-        <div className="rounded-lg border border-border p-4">
-          <SchemaForm
-            schema={schema.configSchema}
-            hints={schema.uiHints as Record<string, import('../im/SchemaForm').UiHint>}
-            value={configValue}
-            onChange={handleChange}
-            showSecrets={showSecrets}
-            onToggleSecret={handleToggleSecret}
-          />
+        <div className="space-y-4">
+          {pluginId === 'cognee-openclaw' && (
+            <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-xs text-secondary">
+              <p>{i18nService.t('pluginsCogneeCredentialSecureHint')}</p>
+              {(secretStatus.apiKey || secretStatus.password) && (
+                <p className="mt-1 font-medium text-primary">
+                  {i18nService.t('pluginsCogneeCredentialStored')}
+                  {secretStatus.apiKey ? ' API Key' : ''}
+                  {secretStatus.password ? ' Password' : ''}
+                </p>
+              )}
+            </div>
+          )}
+
+          <div className="rounded-lg border border-border p-4">
+            <SchemaForm
+              schema={schema.configSchema}
+              hints={schema.uiHints as Record<string, import('../im/SchemaForm').UiHint>}
+              value={configValue}
+              onChange={handleChange}
+              showSecrets={showSecrets}
+              onToggleSecret={handleToggleSecret}
+              includePath={(path) => {
+                if (pluginId !== 'cognee-openclaw') return true;
+                const credentialMode = configValue.credentialMode === 'apiKey' ? 'apiKey' : 'password';
+                if (credentialMode === 'apiKey') return path !== 'username' && path !== 'password';
+                return path !== 'apiKey';
+              }}
+            />
+          </div>
+
+          {pluginId === 'cognee-openclaw' && (
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={handleTestConnection}
+                disabled={testingConnection}
+                className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-opacity disabled:opacity-50"
+              >
+                {testingConnection
+                  ? i18nService.t('pluginsCogneeTesting')
+                  : i18nService.t('pluginsCogneeTestConnection')}
+              </button>
+              {connectionResult && (
+                <div className={`rounded-lg border p-3 text-sm ${
+                  connectionResult.ok
+                    ? 'border-green-500/30 bg-green-500/10 text-green-700 dark:text-green-300'
+                    : 'border-destructive/30 bg-destructive/10 text-destructive'
+                }`}>
+                  <p>{connectionResult.message}</p>
+                  {connectionResult.ok && (connectionResult.version || connectionResult.user) && (
+                    <p className="mt-1 text-xs opacity-80">
+                      {[connectionResult.version, connectionResult.user].filter(Boolean).join(' · ')}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

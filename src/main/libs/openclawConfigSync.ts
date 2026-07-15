@@ -30,6 +30,12 @@ import type { DingTalkInstanceConfig, EmailMultiInstanceConfig, FeishuInstanceCo
 import { OpenClawSessionKeepAlive } from '../openclawSessionPolicy/constants';
 import { buildOpenClawSessionConfig } from '../openclawSessionPolicy/store';
 import {
+  buildCogneeOpenClawConfig,
+  COGNEE_API_KEY_ENV,
+  COGNEE_PASSWORD_ENV,
+  COGNEE_PLUGIN_ID,
+} from '../plugins/cogneeIntegration';
+import {
   getAllServerModelMetadata,
   resolveAllEnabledProviderConfigs,
   resolveAllProviderApiKeys,
@@ -1465,6 +1471,7 @@ type OpenClawConfigSyncDeps = {
   getSkillsList?: () => Array<{ id: string; enabled: boolean }>;
   getAgents?: () => Agent[];
   getUserPlugins?: () => Array<{ pluginId: string; enabled: boolean; config?: Record<string, unknown> }>;
+  getUserPluginCredentials?: (pluginId: string) => Record<string, string>;
   canUseMediaGeneration?: () => boolean;
 };
 
@@ -1494,6 +1501,7 @@ export class OpenClawConfigSync {
   private readonly getSkillsList?: () => Array<{ id: string; enabled: boolean }>;
   private readonly getAgents?: () => Agent[];
   private readonly getUserPlugins: () => Array<{ pluginId: string; enabled: boolean; config?: Record<string, unknown> }>;
+  private readonly getUserPluginCredentials: (pluginId: string) => Record<string, string>;
   private readonly canUseMediaGeneration: () => boolean;
   private previousBindingsJson?: string;
   private currentBindingsObj: { bindings?: Array<Record<string, unknown>> } = {};
@@ -1524,6 +1532,7 @@ export class OpenClawConfigSync {
     this.getSkillsList = deps.getSkillsList;
     this.getAgents = deps.getAgents;
     this.getUserPlugins = deps.getUserPlugins ?? (() => []);
+    this.getUserPluginCredentials = deps.getUserPluginCredentials ?? (() => ({}));
     this.canUseMediaGeneration = deps.canUseMediaGeneration ?? (() => false);
   }
 
@@ -1814,6 +1823,9 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
     ensureDir(mainWorkspacePath);
 
     const preinstalledPlugins = readPreinstalledPlugins();
+    const userPlugins = this.getUserPlugins();
+    const cogneePlugin = userPlugins.find(plugin => plugin.pluginId === COGNEE_PLUGIN_ID);
+    const cogneeEnabled = cogneePlugin?.enabled === true;
     const hasPreinstalledPlugin = (...ids: string[]) => (
       preinstalledPlugins.some((plugin) => pluginMatches(plugin, ...ids))
     );
@@ -2053,8 +2065,6 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
         );
         const qqbotPluginEnabled = qqInstances.some(i => i.enabled && i.appId);
         const discordPluginEnabled = discordInstances.some(i => i.enabled && i.botToken);
-        const userPlugins = this.getUserPlugins();
-
         const pluginEntries: Record<string, unknown> = {
           // Preserve ALL existing plugin entries so runtime auto-injected
           // plugins (moonshot, minimax, volcengine, browser, etc.) survive
@@ -2081,6 +2091,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
                 if (pluginMatches(plugin, 'openclaw-weixin')) return true; // Always keep enabled for QR login discovery
                 if (pluginMatches(plugin, 'clawemail-email', EMAIL_PLUGIN_ID)) return !!emailConfig?.instances.some(i => i.enabled && i.email);
                 if (pluginMatches(plugin, DIAGNOSTICS_OTEL_PLUGIN_ID)) return diagnosticsOtelEnabled;
+                if (pluginMatches(plugin, COGNEE_PLUGIN_ID)) return cogneeEnabled;
                 return true; // other plugins stay enabled
               })();
               return [plugin.pluginId, { enabled: pluginEnabled }];
@@ -2099,11 +2110,24 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
           ...(hasXaiPlugin ? { xai: { enabled: true } } : {}),
           // User-installed plugins: merge enabled state and config from user_plugins table
           ...Object.fromEntries(
-            userPlugins.map(p => [p.pluginId, {
-              enabled: p.enabled,
-              ...(p.config && Object.keys(p.config).length > 0 ? { config: p.config } : {}),
-            }]),
+            userPlugins.map(p => {
+              if (p.pluginId === COGNEE_PLUGIN_ID) {
+                return [p.pluginId, {
+                  enabled: p.enabled,
+                  hooks: { allowConversationAccess: true },
+                  config: buildCogneeOpenClawConfig(p.config),
+                }];
+              }
+              return [p.pluginId, {
+                enabled: p.enabled,
+                ...(p.config && Object.keys(p.config).length > 0 ? { config: p.config } : {}),
+              }];
+            }),
           ),
+          ...(cogneeEnabled ? {
+            [OPENCLAW_MEMORY_CORE_PLUGIN_ID]: { enabled: false },
+            'memory-lancedb': { enabled: false },
+          } : {}),
           // Disable acpx (ACP agent runtime) — LobsterAI does not use ACP and
           // the embedded probe adds ~11s to gateway startup while it waits for
           // a process that always fails.  See openclaw/openclaw#62588.
@@ -2155,7 +2179,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
                 deny: [],
                 slots: {
                   ...((existingPlugins as Record<string, unknown>).slots as Record<string, unknown> | undefined),
-                  memory: OPENCLAW_MEMORY_CORE_PLUGIN_ID,
+                  memory: cogneeEnabled ? COGNEE_PLUGIN_ID : OPENCLAW_MEMORY_CORE_PLUGIN_ID,
                 },
                 entries: pluginEntries,
               },
@@ -2209,7 +2233,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
       const entries = plugins.entries as Record<string, Record<string, unknown>>;
       const existingMemoryCore = entries[OPENCLAW_MEMORY_CORE_PLUGIN_ID] ?? {};
       const existingMemoryCoreConfig = (existingMemoryCore as Record<string, unknown>).config as Record<string, unknown> | undefined;
-      if (coworkConfig.dreamingEnabled) {
+      if (coworkConfig.dreamingEnabled && !cogneeEnabled) {
         entries[OPENCLAW_MEMORY_CORE_PLUGIN_ID] = {
           ...existingMemoryCore,
           enabled: true,
@@ -2224,7 +2248,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
       } else {
         entries[OPENCLAW_MEMORY_CORE_PLUGIN_ID] = {
           ...existingMemoryCore,
-          enabled: true,
+          enabled: !cogneeEnabled,
           config: {
             ...existingMemoryCoreConfig,
             dreaming: {
@@ -2835,6 +2859,12 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
     // ${LOBSTER_MCP_BRIDGE_SECRET} placeholder doesn't crash the gateway.
     // Used by the ask-user-question plugin.
     env.LOBSTER_MCP_BRIDGE_SECRET = this.getMcpBridgeSecret?.() || 'unconfigured';
+
+    // Cognee credentials are decrypted from Electron safeStorage only for the
+    // gateway process environment. openclaw.json contains placeholders only.
+    const cogneeCredentials = this.getUserPluginCredentials(COGNEE_PLUGIN_ID);
+    env[COGNEE_PASSWORD_ENV] = cogneeCredentials.password || 'unconfigured';
+    env[COGNEE_API_KEY_ENV] = cogneeCredentials.apiKey || 'unconfigured';
 
     // Telegram — per-instance secrets (must match sync() indexing: enabled instances only)
     const tgInstances = this.getTelegramInstances();
