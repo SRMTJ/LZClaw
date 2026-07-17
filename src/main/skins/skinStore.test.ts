@@ -1,6 +1,7 @@
 import {
   SkinAssetSlot,
   SkinParticleDensity,
+  SkinPreferredAppearance,
   SkinPresentationMode,
   SkinRecordStatus,
   SkinStoreErrorCode,
@@ -108,6 +109,7 @@ function createStore(rootDir: string, ids: string[] = ['skin-one']): SkinStore {
 
 const presentation: SkinPresentation = {
   mode: SkinPresentationMode.ImmersiveShell,
+  preferredAppearance: SkinPreferredAppearance.Dark,
   palette: {
     canvas: '#12090b',
     panel: '#1d0d10',
@@ -215,6 +217,50 @@ describe('SkinStore', () => {
     await store.apply('skin-one');
     await store.apply('skin-two');
     expect((await store.getActive())?.id).toBe('skin-two');
+  });
+
+  test('deletes inactive and active skins without touching generated source files', async () => {
+    const { rootDir, sourceDir } = createTempWorkspace();
+    const backdropPath = writeSource(sourceDir, 'background.png', createPng(1600, 900));
+    const emblemPath = writeSource(sourceDir, 'emblem.png', createPng(256, 256));
+    const store = createStore(rootDir, ['skin-one', 'skin-two']);
+
+    for (const skinId of ['skin-one', 'skin-two']) {
+      await store.createDraft();
+      await store.registerAsset({
+        skinId,
+        slot: SkinAssetSlot.WorkspaceBackdrop,
+        source: backdropPath,
+      });
+      await store.registerAsset({
+        skinId,
+        slot: SkinAssetSlot.HomeEmblem,
+        source: emblemPath,
+      });
+    }
+    await store.apply('skin-one');
+
+    await expect(store.deleteSkin('skin-two')).resolves.toEqual({ wasActive: false });
+    expect((await store.getActive())?.id).toBe('skin-one');
+    expect(await store.getSkin('skin-two')).toBeNull();
+    expect(fs.existsSync(path.join(rootDir, 'skin-two'))).toBe(false);
+
+    await expect(store.deleteSkin('skin-one')).resolves.toEqual({ wasActive: true });
+    expect(await store.getActive()).toBeNull();
+    expect(await store.listSkins()).toEqual([]);
+    expect(fs.existsSync(path.join(rootDir, 'skin-one'))).toBe(false);
+    expect(fs.existsSync(backdropPath)).toBe(true);
+    expect(fs.existsSync(emblemPath)).toBe(true);
+  });
+
+  test('rejects invalid and missing skin deletion targets', async () => {
+    const { rootDir } = createTempWorkspace();
+    const store = createStore(rootDir);
+
+    await expect(store.deleteSkin('../outside'))
+      .rejects.toMatchObject({ code: SkinStoreErrorCode.InvalidSkinId });
+    await expect(store.deleteSkin('missing-skin'))
+      .rejects.toMatchObject({ code: SkinStoreErrorCode.SkinNotFound });
   });
 
   test('rejects remote, relative, non-file, oversized, malformed, and invalid-dimension sources', async () => {

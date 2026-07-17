@@ -4,21 +4,44 @@ import { SkinAssetSlot } from '../../../shared/skin/constants';
 import { useSkin } from '../../providers/SkinProvider';
 import { i18nService } from '../../services/i18n';
 import { buildSkinAssetUrl } from '../../services/skin';
+import TrashIcon from '../icons/TrashIcon';
+import SkinDeleteConfirmDialog from './SkinDeleteConfirmDialog';
 
-type SkinActionError = 'apply' | 'deactivate' | null;
+const SkinActionErrorKind = {
+  Apply: 'apply',
+  Deactivate: 'deactivate',
+  Delete: 'delete',
+} as const;
+
+type SkinActionError = typeof SkinActionErrorKind[keyof typeof SkinActionErrorKind] | null;
+
+const SkinActionErrorI18nKey = {
+  [SkinActionErrorKind.Apply]: 'aiSkinApplyFailed',
+  [SkinActionErrorKind.Deactivate]: 'aiSkinRestoreFailed',
+  [SkinActionErrorKind.Delete]: 'aiSkinDeleteFailed',
+} as const;
+
+interface PendingSkinDeletion {
+  id: string;
+  label: string;
+  isActive: boolean;
+}
 
 const SkinSettingsSection: React.FC = () => {
   const {
     activeSkin,
     apply,
     deactivate,
+    deleteSkin,
     isLoading,
     refreshVersion,
     savedSkins,
   } = useSkin();
   const [applyingSkinId, setApplyingSkinId] = useState<string | null>(null);
+  const [deletingSkinId, setDeletingSkinId] = useState<string | null>(null);
   const [isDeactivating, setIsDeactivating] = useState(false);
   const [actionError, setActionError] = useState<SkinActionError>(null);
+  const [pendingDeletion, setPendingDeletion] = useState<PendingSkinDeletion | null>(null);
 
   const handleApply = async (skinId: string) => {
     setActionError(null);
@@ -27,7 +50,7 @@ const SkinSettingsSection: React.FC = () => {
       await apply(skinId);
     } catch (error) {
       console.error('[Skin] Failed to apply a saved skin', error);
-      setActionError('apply');
+      setActionError(SkinActionErrorKind.Apply);
     } finally {
       setApplyingSkinId(null);
     }
@@ -40,14 +63,30 @@ const SkinSettingsSection: React.FC = () => {
       await deactivate();
     } catch (error) {
       console.error('[Skin] Failed to restore the default skin', error);
-      setActionError('deactivate');
+      setActionError(SkinActionErrorKind.Deactivate);
     } finally {
       setIsDeactivating(false);
     }
   };
 
+  const handleDelete = async () => {
+    if (!pendingDeletion) return;
+    setActionError(null);
+    setDeletingSkinId(pendingDeletion.id);
+    try {
+      await deleteSkin(pendingDeletion.id);
+      setPendingDeletion(null);
+    } catch (error) {
+      console.error('[Skin] Failed to delete a saved skin', error);
+      setActionError(SkinActionErrorKind.Delete);
+      setPendingDeletion(null);
+    } finally {
+      setDeletingSkinId(null);
+    }
+  };
+
   const activeSkinLabel = activeSkin?.name ?? activeSkin?.id;
-  const isMutating = applyingSkinId !== null || isDeactivating;
+  const isMutating = applyingSkinId !== null || deletingSkinId !== null || isDeactivating;
 
   return (
     <section className="mt-5 rounded-xl border border-border bg-surface px-4 py-3.5">
@@ -66,9 +105,7 @@ const SkinSettingsSection: React.FC = () => {
           </p>
           {actionError && (
             <p className="mt-1 text-xs text-red-600 dark:text-red-400">
-              {i18nService.t(
-                actionError === 'apply' ? 'aiSkinApplyFailed' : 'aiSkinRestoreFailed',
-              )}
+              {i18nService.t(SkinActionErrorI18nKey[actionError])}
             </p>
           )}
         </div>
@@ -141,18 +178,36 @@ const SkinSettingsSection: React.FC = () => {
                     <span className="min-w-0 truncate text-sm font-medium text-white drop-shadow-sm">
                       {label}
                     </span>
-                    {!isActive && (
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      {!isActive && (
+                        <button
+                          type="button"
+                          onClick={() => void handleApply(skin.id)}
+                          disabled={isLoading || isMutating}
+                          className="shrink-0 rounded-lg bg-background/90 px-3 py-1.5 text-xs font-medium text-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-background disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {applyingSkinId === skin.id
+                            ? i18nService.t('aiSkinApplying')
+                            : i18nService.t('aiSkinApply')}
+                        </button>
+                      )}
                       <button
                         type="button"
-                        onClick={() => void handleApply(skin.id)}
+                        onClick={() =>
+                          setPendingDeletion({
+                            id: skin.id,
+                            label,
+                            isActive,
+                          })
+                        }
                         disabled={isLoading || isMutating}
-                        className="shrink-0 rounded-lg bg-background/90 px-3 py-1.5 text-xs font-medium text-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-background disabled:cursor-not-allowed disabled:opacity-60"
+                        title={i18nService.t('aiSkinDelete')}
+                        aria-label={i18nService.t('aiSkinDeleteLabel').replace('{name}', label)}
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-background/90 text-destructive shadow-sm backdrop-blur-sm transition-colors hover:bg-background disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        {applyingSkinId === skin.id
-                          ? i18nService.t('aiSkinApplying')
-                          : i18nService.t('aiSkinApply')}
+                        <TrashIcon className="h-3.5 w-3.5" />
                       </button>
-                    )}
+                    </div>
                   </div>
                 </article>
               );
@@ -164,6 +219,15 @@ const SkinSettingsSection: React.FC = () => {
           </div>
         )}
       </div>
+      {pendingDeletion && (
+        <SkinDeleteConfirmDialog
+          skinName={pendingDeletion.label}
+          isActive={pendingDeletion.isActive}
+          isDeleting={deletingSkinId === pendingDeletion.id}
+          onCancel={() => setPendingDeletion(null)}
+          onConfirm={() => void handleDelete()}
+        />
+      )}
     </section>
   );
 };

@@ -14,6 +14,7 @@ import {
   buildSkinAssetUrl,
   skinService,
 } from '../services/skin';
+import { applySkinPreferredAppearanceOnce } from '../services/skinThemeAppearance';
 
 interface SkinContextValue {
   activeSkin: ActiveSkin | null;
@@ -23,6 +24,7 @@ interface SkinContextValue {
   refresh: () => Promise<void>;
   apply: (skinId: string) => Promise<void>;
   deactivate: () => Promise<void>;
+  deleteSkin: (skinId: string) => Promise<void>;
 }
 
 const SkinContext = createContext<SkinContextValue | null>(null);
@@ -67,12 +69,24 @@ export const SkinProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     await refresh();
   }, [refresh]);
 
+  const deleteSkin = useCallback(async (skinId: string) => {
+    await skinService.delete(skinId);
+    await refresh();
+  }, [refresh]);
+
   useEffect(() => {
     void refresh();
     return skinService.subscribe(() => {
       void refresh();
     });
   }, [refresh]);
+
+  useEffect(() => {
+    if (isLoading) return;
+    void applySkinPreferredAppearanceOnce(activeSkin).catch((error) => {
+      console.error('[Skin] Failed to apply the recommended color appearance', error);
+    });
+  }, [activeSkin, isLoading]);
 
   const value = useMemo<SkinContextValue>(() => ({
     activeSkin,
@@ -82,7 +96,17 @@ export const SkinProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     refresh,
     apply,
     deactivate,
-  }), [activeSkin, apply, deactivate, isLoading, refresh, refreshVersion, savedSkins]);
+    deleteSkin,
+  }), [
+    activeSkin,
+    apply,
+    deactivate,
+    deleteSkin,
+    isLoading,
+    refresh,
+    refreshVersion,
+    savedSkins,
+  ]);
 
   return <SkinContext.Provider value={value}>{children}</SkinContext.Provider>;
 };

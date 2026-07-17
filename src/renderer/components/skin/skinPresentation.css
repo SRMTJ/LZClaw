@@ -1,6 +1,8 @@
 [data-skin-presentation="immersive_shell"]
   :is(
     [data-skin-sidebar],
+    [data-skin-app-titlebar],
+    [data-skin-session-titlebar],
     [data-skin-prompt-input],
     [data-skin-quick-actions],
     [data-skin-prompt-panel]
@@ -46,6 +48,18 @@
     color-mix(in srgb, var(--lobster-skin-panel) 86%, var(--lobster-skin-canvas))
   ) !important;
   box-shadow: inset -1px 0 var(--lobster-skin-border);
+}
+
+[data-skin-presentation="immersive_shell"]
+  :is([data-skin-app-titlebar], [data-skin-session-titlebar]) {
+  color: var(--lobster-skin-foreground);
+  background: linear-gradient(
+    155deg,
+    var(--lobster-skin-panel-raised),
+    var(--lobster-skin-panel) 48%,
+    color-mix(in srgb, var(--lobster-skin-panel) 86%, var(--lobster-skin-canvas))
+  ) !important;
+  border-color: var(--lobster-skin-border) !important;
 }
 
 [data-skin-presentation="immersive_shell"] [data-skin-sidebar] button:hover {

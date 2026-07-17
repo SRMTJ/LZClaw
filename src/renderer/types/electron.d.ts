@@ -57,6 +57,7 @@ import type {
 import type {
   SkinApplyResponse,
   SkinDeactivateResponse,
+  SkinDeleteResponse,
   SkinGetActiveResponse,
   SkinListResponse,
 } from '../../shared/skin/types';
@@ -614,6 +615,7 @@ interface IElectronAPI {
     list: () => Promise<SkinListResponse>;
     apply: (skinId: string) => Promise<SkinApplyResponse>;
     deactivate: () => Promise<SkinDeactivateResponse>;
+    delete: (skinId: string) => Promise<SkinDeleteResponse>;
     onChanged: (callback: () => void) => () => void;
   };
   agents: {

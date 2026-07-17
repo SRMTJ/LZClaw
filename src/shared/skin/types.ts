@@ -41,3 +41,7 @@ export type SkinApplyResponse =
 export type SkinDeactivateResponse =
   | { success: true }
   | { success: false; error: string };
+
+export type SkinDeleteResponse =
+  | { success: true; wasActive: boolean }
+  | { success: false; error: string };

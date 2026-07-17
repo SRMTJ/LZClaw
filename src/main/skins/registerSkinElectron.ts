@@ -8,6 +8,7 @@ import {
 import type {
   SkinApplyResponse,
   SkinDeactivateResponse,
+  SkinDeleteResponse,
   SkinGetActiveResponse,
   SkinListResponse,
 } from '../../shared/skin/types';
@@ -98,6 +99,23 @@ export function registerSkinElectronIntegration(store: SkinStore): void {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to deactivate skin',
+      };
+    }
+  });
+
+  ipcMain.handle(SkinIpc.Delete, async (_event, skinId: string): Promise<SkinDeleteResponse> => {
+    try {
+      const result = await store.deleteSkin(skinId);
+      notifySkinChanged();
+      return {
+        success: true,
+        wasActive: result.wasActive,
+      };
+    } catch (error) {
+      console.error('[Skin] failed to delete skin:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to delete skin',
       };
     }
   });

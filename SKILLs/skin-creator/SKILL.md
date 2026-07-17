@@ -24,9 +24,9 @@ Read [references/asset-contract.md](references/asset-contract.md) before the fir
 - Register each successful asset immediately. Do not start the next generation until `lobsterai_skin_manage` confirms registration.
 - Additional serial attempts are allowed when generation fails, returns no usable local output, or the current candidate cannot satisfy a required slot. Never run image generations in parallel or switch backend silently.
 - Never write skin files, application configuration, CSS, or databases directly. Only `lobsterai_skin_manage` may register or apply a skin.
-- The user's saved LobsterAI color theme is independent from the AI skin. Never select or change a color theme as part of this workflow. A validated `presentation` may temporarily style allow-listed Cowork surfaces while the skin is active.
+- Do not choose or name a LobsterAI color theme. LobsterAI deterministically infers the presentation's preferred light or dark appearance from its validated palette and reuses the existing theme system when the completed skin is applied.
 - Do not create icons, sprite sheets, wallpapers for other views, custom fonts, arbitrary CSS, or layout changes in this MVP.
-- Do not customize the application title bar, conversation title bar, home layout, or component positions.
+- Do not add title-bar assets, title-bar content, home-layout changes, or component-position changes. LobsterAI may apply the validated palette to allow-listed application and conversation title-bar surfaces.
 
 ## Workflow
 
@@ -38,7 +38,7 @@ Convert the user's request into a compact internal style bible:
 - dominant and supporting colors;
 - material and lighting language;
 - recurring motif;
-- contrast strategy that remains legible with both light and dark LobsterAI color themes;
+- contrast strategy appropriate for the palette's inferred light or dark appearance;
 - an accessible immersive-shell palette for the Cowork canvas, Sidebar, existing quick actions, and prompt input;
 - forbidden elements;
 - backdrop composition safe zones;
@@ -145,6 +145,7 @@ Then call:
 ```
 
 Tell the user that the skin was applied and can be removed from Appearance settings. Avoid extra generation once both required slots are ready.
+LobsterAI may automatically select a compatible light or dark color theme when applying the skin. Disabling or deleting the skin does not restore the previously selected color theme.
 
 ## Failure handling
 

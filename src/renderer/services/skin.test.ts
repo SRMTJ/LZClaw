@@ -3,6 +3,7 @@ import { describe, expect, test } from 'vitest';
 import {
   SkinAssetSlot,
   SkinParticleDensity,
+  SkinPreferredAppearance,
   SkinPresentationMode,
 } from '../../shared/skin/constants';
 import {
@@ -52,6 +53,7 @@ describe('normalizeActiveSkin', () => {
       baseThemeId: 'sakura',
       presentation: {
         mode: SkinPresentationMode.ImmersiveShell,
+        preferredAppearance: SkinPreferredAppearance.Dark,
         palette: {
           canvas: '#12090b',
           panel: '#1d0d10',

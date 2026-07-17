@@ -29,6 +29,14 @@ export const SkinPresentationMode = {
 
 export type SkinPresentationMode = typeof SkinPresentationMode[keyof typeof SkinPresentationMode];
 
+export const SkinPreferredAppearance = {
+  Light: 'light',
+  Dark: 'dark',
+} as const;
+
+export type SkinPreferredAppearance =
+  typeof SkinPreferredAppearance[keyof typeof SkinPreferredAppearance];
+
 export const SkinParticleDensity = {
   None: 'none',
   Sparse: 'sparse',
@@ -70,6 +78,7 @@ export const SkinIpc = {
   List: 'skin:list',
   Apply: 'skin:apply',
   Deactivate: 'skin:deactivate',
+  Delete: 'skin:delete',
   Changed: 'skin:changed',
 } as const;
 

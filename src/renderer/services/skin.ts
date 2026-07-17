@@ -203,6 +203,15 @@ class SkinService {
     }
   }
 
+  async delete(skinId: string): Promise<void> {
+    const api = getRendererSkinApi();
+    if (!api) return;
+    const result = await api.delete(skinId);
+    if (isRecord(result) && result.success === false) {
+      throw new Error(readString(result, ['error', 'message']) ?? 'Failed to delete skin');
+    }
+  }
+
   subscribe(listener: () => void): () => void {
     const unsubscribe = getRendererSkinApi()?.onChanged?.(listener);
     return typeof unsubscribe === 'function' ? unsubscribe : () => undefined;

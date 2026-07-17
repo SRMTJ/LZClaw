@@ -4249,9 +4249,11 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden">
       {/* Header — spans full width */}
-      <div className={`draggable flex h-12 items-center justify-between border-b border-border bg-background shrink-0 ${
-        isArtifactPanelExpanded ? 'pl-0 pr-4' : 'px-4'
-      }`}
+      <div
+        data-skin-session-titlebar="true"
+        className={`draggable flex h-12 items-center justify-between border-b border-border bg-background shrink-0 ${
+          isArtifactPanelExpanded ? 'pl-0 pr-4' : 'px-4'
+        }`}
       >
         {/* Left side: Toggle buttons (when collapsed) + Title */}
         <div className="flex h-full flex-1 items-center gap-2 min-w-0">

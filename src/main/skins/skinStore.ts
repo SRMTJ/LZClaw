@@ -74,6 +74,10 @@ export interface ResolvedSkinProtocolAsset {
   contentHash: string;
 }
 
+export interface DeleteSkinResult {
+  wasActive: boolean;
+}
+
 export interface SkinAssetPolicy {
   maxBytes: number;
   minWidth: number;
@@ -462,6 +466,34 @@ export class SkinStore {
       if (registry.activeSkinId === null) return;
       registry.activeSkinId = null;
       await this.writeRegistry(registry);
+    });
+  }
+
+  async deleteSkin(skinId: string): Promise<DeleteSkinResult> {
+    if (!SKIN_ID_PATTERN.test(skinId)) {
+      throw new SkinStoreError(SkinStoreErrorCode.InvalidSkinId, 'Skin id is invalid');
+    }
+    return this.enqueueMutation(async () => {
+      const registry = await this.readRegistry();
+      if (!registry.skins[skinId]) {
+        throw new SkinStoreError(SkinStoreErrorCode.SkinNotFound, 'Skin does not exist');
+      }
+
+      const wasActive = registry.activeSkinId === skinId;
+      if (wasActive) registry.activeSkinId = null;
+      delete registry.skins[skinId];
+      await this.writeRegistry(registry);
+
+      const managedSkinDir = this.resolveManagedPath(skinId);
+      try {
+        await fs.promises.rm(managedSkinDir, { recursive: true, force: true });
+      } catch (error) {
+        console.warn(
+          `[Skin] Failed to remove managed files for deleted skin "${skinId}".`,
+          error,
+        );
+      }
+      return { wasActive };
     });
   }
 

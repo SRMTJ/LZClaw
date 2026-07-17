@@ -1,6 +1,8 @@
 import {
   SkinParticleDensity,
   type SkinParticleDensity as SkinParticleDensityValue,
+  SkinPreferredAppearance,
+  type SkinPreferredAppearance as SkinPreferredAppearanceValue,
   SkinPresentationMode,
   type SkinPresentationMode as SkinPresentationModeValue,
 } from './constants';
@@ -28,6 +30,7 @@ export interface SkinPresentationEffects {
 
 export interface SkinPresentation {
   mode: SkinPresentationModeValue;
+  preferredAppearance: SkinPreferredAppearanceValue;
   palette: SkinPresentationPalette;
   art?: SkinPresentationArt;
   effects?: SkinPresentationEffects;
@@ -62,6 +65,19 @@ const linearizeChannel = (channel: number): number => {
 const relativeLuminance = (color: string): number => {
   const [red, green, blue] = parseRgb(color).map(linearizeChannel);
   return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+};
+
+export const inferSkinPreferredAppearance = (
+  palette: SkinPresentationPalette,
+): SkinPreferredAppearanceValue => {
+  const surfaceLuminance = [
+    palette.canvas,
+    palette.panel,
+    palette.panelRaised,
+  ].reduce((total, color) => total + relativeLuminance(color), 0) / 3;
+  return relativeLuminance(palette.foreground) > surfaceLuminance
+    ? SkinPreferredAppearance.Dark
+    : SkinPreferredAppearance.Light;
 };
 
 export const getSkinColorContrast = (left: string, right: string): number => {
@@ -136,11 +152,26 @@ const parseEffects = (value: unknown): SkinPresentationEffects | null => {
 };
 
 export const parseSkinPresentation = (value: unknown): SkinPresentation | null => {
-  if (!isRecord(value) || !hasOnlyKeys(value, ['mode', 'palette', 'art', 'effects'])) return null;
+  if (!isRecord(value) || !hasOnlyKeys(value, [
+    'mode',
+    'preferredAppearance',
+    'palette',
+    'art',
+    'effects',
+  ])) {
+    return null;
+  }
   if (value.mode !== SkinPresentationMode.ImmersiveShell) return null;
 
   const palette = parsePalette(value.palette);
   if (!palette) return null;
+  const preferredAppearance = inferSkinPreferredAppearance(palette);
+  if (
+    value.preferredAppearance !== undefined
+    && value.preferredAppearance !== preferredAppearance
+  ) {
+    return null;
+  }
 
   const art = value.art === undefined ? undefined : parseArt(value.art);
   if (value.art !== undefined && !art) return null;
@@ -150,6 +181,7 @@ export const parseSkinPresentation = (value: unknown): SkinPresentation | null =
 
   return {
     mode: SkinPresentationMode.ImmersiveShell,
+    preferredAppearance,
     palette,
     ...(art ? { art } : {}),
     ...(effects ? { effects } : {}),

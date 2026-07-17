@@ -6,6 +6,7 @@ import {
   SkinAssetMimeType,
   SkinAssetSlot,
   SkinParticleDensity,
+  SkinPreferredAppearance,
   SkinPresentationMode,
   SkinRecordStatus,
   SkinToolAction,
@@ -19,6 +20,7 @@ const timestamp = '2026-07-16T10:00:00.000Z';
 
 const presentation: SkinPresentation = {
   mode: SkinPresentationMode.ImmersiveShell,
+  preferredAppearance: SkinPreferredAppearance.Dark,
   palette: {
     canvas: '#12090b',
     panel: '#1d0d10',

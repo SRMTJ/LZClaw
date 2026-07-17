@@ -49,6 +49,7 @@ import { SkinIpc } from '../shared/skin/constants';
 import type {
   SkinApplyResponse,
   SkinDeactivateResponse,
+  SkinDeleteResponse,
   SkinGetActiveResponse,
   SkinListResponse,
 } from '../shared/skin/types';
@@ -138,6 +139,7 @@ contextBridge.exposeInMainWorld('electron', {
     list: (): Promise<SkinListResponse> => ipcRenderer.invoke(SkinIpc.List),
     apply: (skinId: string): Promise<SkinApplyResponse> => ipcRenderer.invoke(SkinIpc.Apply, skinId),
     deactivate: (): Promise<SkinDeactivateResponse> => ipcRenderer.invoke(SkinIpc.Deactivate),
+    delete: (skinId: string): Promise<SkinDeleteResponse> => ipcRenderer.invoke(SkinIpc.Delete, skinId),
     onChanged: (callback: () => void) => {
       const handler = () => callback();
       ipcRenderer.on(SkinIpc.Changed, handler);
