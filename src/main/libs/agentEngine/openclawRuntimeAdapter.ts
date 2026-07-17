@@ -7653,6 +7653,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
 
     if (state === 'error') {
+      if (this.completeDeferredFinalOnStaleChatError(sessionId, turn, chatPayload)) {
+        return;
+      }
       this.handleChatError(sessionId, turn, chatPayload);
     }
   }
@@ -8918,6 +8921,43 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
   }
 
+  /**
+   * OpenClaw's reply resolver can flush an earlier tool-failure notice as a late
+   * `state=error` chat event after the run already finished successfully — the
+   * successful chat.final is persisted and only its deferred completion is
+   * pending. Surfacing that stale notice would flip a successful turn into a
+   * session error, so complete the deferred final instead.
+   */
+  private completeDeferredFinalOnStaleChatError(
+    sessionId: string,
+    turn: ActiveTurn,
+    payload: ChatEventPayload,
+  ): boolean {
+    if (!turn.finalCompletionTimer) return false;
+    // Silent maintenance/retry waits intentionally outlive their run; a
+    // follow-up error there is a real outcome, not a stale flush.
+    if (turn.finalCompletionFlushOnLifecycleEnd === false) return false;
+    const errorRunId = typeof payload.runId === 'string' ? payload.runId.trim() : '';
+    if (errorRunId && !turn.knownRunIds.has(errorRunId)) return false;
+    for (const knownRunId of turn.knownRunIds) {
+      if (this.terminatedRunIds.has(knownRunId)) return false;
+    }
+    const staleErrorText = payload.errorMessage?.trim()
+      || extractGatewayMessageText(payload.message).trim();
+    console.warn(
+      '[OpenClawRuntime] ignored a stale chat error after a successful final; completing the deferred final instead.',
+      `Session ${sessionId}.`,
+      `Run ${errorRunId || turn.finalCompletionRunId || turn.runId}.`,
+      `Error ${staleErrorText.slice(0, 200) || 'unknown'}.`,
+    );
+    void this.completeDeferredChatFinalNow(
+      sessionId,
+      turn,
+      turn.finalCompletionRunId ?? turn.runId,
+    );
+    return true;
+  }
+
   private handleChatError(sessionId: string, turn: ActiveTurn, payload: ChatEventPayload): void {
     console.log('[OpenClawRuntime] handleChatError payload:', JSON.stringify(payload).slice(0, 1000));
     const rawErrorMessage = payload.errorMessage?.trim() || 'OpenClaw run failed';
@@ -10071,6 +10111,16 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }
       if (turn.hasContextMaintenanceTool || turn.hasContextCompactionEvent || turn.pendingRecoverableFollowup || turn.pendingOpenClawRetry) {
         this.emitContextMaintenance(sessionId, false);
+      }
+      // The compaction end event can be dropped when the run closes first
+      // (late agent events for closed runs are discarded), which would leave
+      // the persisted compaction message spinning forever.
+      const compactionMessage = this.getSessionMessage(sessionId, turn.contextCompactionMessageId);
+      if (compactionMessage?.metadata?.status === ContextCompactionStatus.Running) {
+        this.updateContextCompactionMessage(sessionId, turn, ContextCompactionStatus.Failed, Date.now());
+        console.warn(
+          `[OpenClawRuntime] finalized a running context compaction message as failed during turn cleanup for session ${sessionId}.`,
+        );
       }
       // Cancel any pending throttled messageUpdate timer for this turn
       if (turn.assistantMessageId) {
