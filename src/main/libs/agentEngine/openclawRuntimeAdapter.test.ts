@@ -24,6 +24,7 @@ import {
 import { ContinuityCapsuleSource } from './coworkContinuityCapsule';
 import {
   buildOpenClawChatSendPayloadTooLargeError,
+  buildOpenClawRuntimeErrorDetail,
   ensurePlanModeProposedPlanBlock,
   estimateOpenClawChatSendFrameBytes,
   isPlanModeResponseComplete,
@@ -312,6 +313,83 @@ test('resolveOpenClawRuntimeErrorMessage keeps generic error when safe metadata 
     providerRuntimeFailureKind: 'unclassified',
     rawErrorPreview: 'provider returned a surprising response',
   })).toBe('LLM request failed.');
+});
+
+test('buildOpenClawRuntimeErrorDetail preserves safe metadata behind the normalized copy', () => {
+  const metadata = {
+    provider: 'anthropic',
+    model: 'claude-sonnet-5',
+    failoverReason: 'rate_limit',
+    providerRuntimeFailureKind: 'rate_limit',
+    providerErrorType: 'rate_limit_error',
+    httpCode: '429',
+    providerErrorMessagePreview: 'Number of request tokens has exceeded your per-minute rate limit',
+    rawErrorPreview: '429 {"type":"error","error":{"type":"rate_limit_error"}}',
+    rawErrorHash: 'abc123hash',
+  };
+  const displayMessage = resolveOpenClawRuntimeErrorMessage('LLM request failed.', metadata);
+  const detail = buildOpenClawRuntimeErrorDetail('LLM request failed.', displayMessage, metadata);
+
+  expect(detail).toEqual({
+    rawErrorMessage: 'LLM request failed.',
+    provider: 'anthropic',
+    model: 'claude-sonnet-5',
+    failoverReason: 'rate_limit',
+    providerRuntimeFailureKind: 'rate_limit',
+    providerErrorType: 'rate_limit_error',
+    httpCode: '429',
+    providerErrorMessagePreview: 'Number of request tokens has exceeded your per-minute rate limit',
+    rawErrorPreview: '429 {"type":"error","error":{"type":"rate_limit_error"}}',
+  });
+});
+
+test('buildOpenClawRuntimeErrorDetail returns undefined when the error passed through unchanged', () => {
+  expect(buildOpenClawRuntimeErrorDetail(
+    'session file locked (timeout after 10000ms)',
+    'session file locked (timeout after 10000ms)',
+    undefined,
+  )).toBeUndefined();
+});
+
+test('buildOpenClawRuntimeErrorDetail annotates the model source from gateway provider metadata', () => {
+  const detail = buildOpenClawRuntimeErrorDetail(
+    'LLM request failed.',
+    '请求过于频繁，请稍后再试。',
+    { provider: 'custom', model: 'kimi-k2.5', httpCode: '429' },
+    {
+      resolveModelSource: (providerId) => (providerId === 'custom'
+        ? { source: 'custom-provider', providerName: 'custom', providerDisplayName: '我的中转' }
+        : undefined),
+    },
+  );
+
+  expect(detail).toMatchObject({
+    provider: 'custom',
+    model: 'kimi-k2.5',
+    modelSource: 'custom-provider',
+    providerDisplayName: '我的中转',
+  });
+});
+
+test('buildOpenClawRuntimeErrorDetail falls back to the turn model ref when metadata lacks provider info', () => {
+  const detail = buildOpenClawRuntimeErrorDetail(
+    'Agent failed before reply: something broke.',
+    '任务执行出错，请重试。如果问题持续出现，请检查模型配置。',
+    undefined,
+    {
+      fallbackModelRef: 'zai/glm-5',
+      resolveModelSource: (providerId) => (providerId === 'zai'
+        ? { source: 'coding-plan', providerName: 'zhipu' }
+        : undefined),
+    },
+  );
+
+  expect(detail).toMatchObject({
+    provider: 'zai',
+    model: 'glm-5',
+    modelSource: 'coding-plan',
+  });
+  expect(detail?.providerDisplayName).toBeUndefined();
 });
 
 test('estimateOpenClawChatSendFrameBytes measures the full RPC frame as UTF-8 JSON', () => {
@@ -3487,6 +3565,129 @@ test('chat error can consume quota signal after lifecycle error schedules fallba
     vi.useRealTimers();
     consumeRecentOpenClawTokenProxyQuotaError();
   }
+});
+
+test('stale chat error after a successful deferred final completes the turn instead of erroring', async () => {
+  vi.useFakeTimers();
+  try {
+    const { session, store } = createReconcileStore([
+      { id: 'msg-1', type: 'user', content: 'make a ppt', timestamp: 1, metadata: {} },
+    ]);
+    session.status = 'running';
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const errorSpy = vi.fn();
+    adapter.on('error', errorSpy);
+    const sessionKey = `agent:main:lobsterai:${session.id}`;
+    const turn = createActiveTurn(session.id, sessionKey, 'run-stale-error');
+    adapter.activeTurns.set(session.id, turn);
+    adapter.latestTurnTokenBySession.set(session.id, turn.turnToken);
+
+    adapter.handleChatEvent({
+      state: 'final',
+      runId: 'run-stale-error',
+      sessionKey,
+      message: { role: 'assistant', content: 'PPT 制作完成！' },
+    }, 1);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(turn.finalCompletionTimer).toBeDefined();
+
+    adapter.handleChatEvent({
+      state: 'error',
+      runId: 'run-stale-error',
+      sessionKey,
+      errorMessage: '⚠️ 🩹 Apply Patch failed',
+      message: { role: 'assistant', content: [{ type: 'text', text: '⚠️ 🩹 Apply Patch failed' }] },
+    }, 2);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(session.status).toBe('completed');
+    expect(adapter.activeTurns.has(session.id)).toBe(false);
+    expect(session.messages.some((message) => (
+      message.type === 'system' && String(message.content).includes('Apply Patch failed')
+    ))).toBe(false);
+  } finally {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  }
+});
+
+test('chat error still surfaces when a deferred final exists but the run reported a lifecycle error', async () => {
+  vi.useFakeTimers();
+  try {
+    const { session, store } = createReconcileStore([
+      { id: 'msg-1', type: 'user', content: 'make a ppt', timestamp: 1, metadata: {} },
+    ]);
+    session.status = 'running';
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const errorSpy = vi.fn();
+    adapter.on('error', errorSpy);
+    const sessionKey = `agent:main:lobsterai:${session.id}`;
+    const turn = createActiveTurn(session.id, sessionKey, 'run-real-error');
+    adapter.activeTurns.set(session.id, turn);
+    adapter.latestTurnTokenBySession.set(session.id, turn.turnToken);
+
+    adapter.handleChatEvent({
+      state: 'final',
+      runId: 'run-real-error',
+      sessionKey,
+      message: { role: 'assistant', content: 'partial answer' },
+    }, 1);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(turn.finalCompletionTimer).toBeDefined();
+
+    // Simulate the agent dispatch path having recorded a lifecycle error for this run.
+    adapter.terminatedRunIds.add('run-real-error');
+
+    adapter.handleChatEvent({
+      state: 'error',
+      runId: 'run-real-error',
+      sessionKey,
+      errorMessage: 'LLM request failed.',
+    }, 2);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(errorSpy).toHaveBeenCalled();
+    expect(session.status).toBe('error');
+    expect(adapter.activeTurns.has(session.id)).toBe(false);
+  } finally {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  }
+});
+
+test('turn cleanup finalizes a running context compaction message as failed', () => {
+  const { session, store } = createReconcileStore([
+    { id: 'msg-1', type: 'user', content: 'analyze logs', timestamp: 1, metadata: {} },
+  ]);
+  session.status = 'running';
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const errorSpy = vi.fn();
+  adapter.on('error', errorSpy);
+  const sessionKey = `agent:main:lobsterai:${session.id}`;
+  const turn = createActiveTurn(session.id, sessionKey, 'run-compaction-stuck');
+  adapter.activeTurns.set(session.id, turn);
+
+  adapter.handleAgentCompactionEvent(session.id, { phase: 'start' });
+
+  const runningMessage = session.messages.find((message) => (
+    message.metadata?.kind === CoworkSystemMessageKind.ContextCompaction
+  ));
+  expect(runningMessage?.metadata?.status).toBe(ContextCompactionStatus.Running);
+
+  adapter.handleChatEvent({
+    state: 'error',
+    runId: 'run-compaction-stuck',
+    sessionKey,
+    errorMessage: 'LLM request failed.',
+  }, 1);
+
+  const compactionMessage = session.messages.find((message) => (
+    message.metadata?.kind === CoworkSystemMessageKind.ContextCompaction
+  ));
+  expect(compactionMessage?.metadata?.status).toBe(ContextCompactionStatus.Failed);
+  expect(session.status).toBe('error');
+  expect(adapter.activeTurns.has(session.id)).toBe(false);
 });
 
 test('chat final stopReason=error replaces generic LLM failure using safe OpenClaw metadata', async () => {

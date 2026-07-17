@@ -46,14 +46,26 @@ import type {
   ShareDeploymentCreateNodeInput,
   ShareDeploymentDetectCandidatesInput,
   ShareDeploymentDetectCandidatesResult,
+  ShareDeploymentDownloadPersistenceInput,
+  ShareDeploymentDownloadPersistenceResult,
   ShareDeploymentGetByLocalServiceInput,
+  ShareDeploymentPersistenceInfoResult,
   ShareDeploymentProjectAnalysis,
   ShareDeploymentResult,
+  ShareDeploymentSelectPersistencePathInput,
+  ShareDeploymentSelectPersistencePathResult,
 } from '../../shared/shareDeployment/constants';
 import type {
   ShellGetBrowserAppsInput,
   ShellOpenFailureReason,
 } from '../../shared/shell/constants';
+import type {
+  SkinApplyResponse,
+  SkinDeactivateResponse,
+  SkinDeleteResponse,
+  SkinGetActiveResponse,
+  SkinListResponse,
+} from '../../shared/skin/types';
 import type { CoworkTempDirPreview } from './cowork';
 interface ApiResponse {
   ok: boolean;
@@ -636,6 +648,14 @@ interface IElectronAPI {
       error?: string;
     }>;
   };
+  skin: {
+    getActive: () => Promise<SkinGetActiveResponse>;
+    list: () => Promise<SkinListResponse>;
+    apply: (skinId: string) => Promise<SkinApplyResponse>;
+    deactivate: () => Promise<SkinDeactivateResponse>;
+    delete: (skinId: string) => Promise<SkinDeleteResponse>;
+    onChanged: (callback: () => void) => () => void;
+  };
   agents: {
     list: () => Promise<Agent[]>;
     get: (id: string) => Promise<Agent | null>;
@@ -1205,11 +1225,18 @@ interface IElectronAPI {
     analyzeProjectDirectory: (
       options: ShareDeploymentAnalyzeProjectInput,
     ) => Promise<ShareDeploymentProjectAnalysis>;
+    selectPersistencePath: (
+      options: ShareDeploymentSelectPersistencePathInput,
+    ) => Promise<ShareDeploymentSelectPersistencePathResult>;
     createNodeDeployment: (
       options: ShareDeploymentCreateNodeInput,
     ) => Promise<ShareDeploymentResult>;
     get: (deploymentId: string) => Promise<ShareDeploymentResult>;
     getByLocalService: (options: ShareDeploymentGetByLocalServiceInput) => Promise<ShareDeploymentResult>;
+    getPersistence: (deploymentId: string) => Promise<ShareDeploymentPersistenceInfoResult>;
+    downloadPersistenceArchive: (
+      options: ShareDeploymentDownloadPersistenceInput,
+    ) => Promise<ShareDeploymentDownloadPersistenceResult>;
   };
   asr: {
     createRealtimeSession: (options: AsrRealtimeSessionRequest) => Promise<AsrRealtimeSessionResult>;
