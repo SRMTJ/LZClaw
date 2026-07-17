@@ -57,11 +57,11 @@ describe('WindowsAppTitleBar', () => {
     expect(renderTitleBar(platform)).toBe('');
   });
 
-  test('uses compact Windows caption glyphs with full-size hit targets', () => {
+  test('uses uniform Windows caption glyphs with full-size hit targets', () => {
     const html = renderTitleBar('win32');
 
     expect(html.match(/w-\[46px\]/g)).toHaveLength(3);
-    expect(html.match(/h-\[10px\] w-\[10px\]/g)).toHaveLength(2);
+    expect(html.match(/h-3 w-3/g)).toHaveLength(3);
     expect(html).toContain('aria-label="Minimize"');
     expect(html).toContain('aria-label="Maximize"');
     expect(html).toContain('aria-label="Close"');

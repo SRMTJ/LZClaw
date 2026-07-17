@@ -26,7 +26,7 @@ const WindowControlAction = {
 } as const;
 type WindowControlAction = typeof WindowControlAction[keyof typeof WindowControlAction];
 
-const WINDOW_CAPTION_BUTTON_CLASS_NAME = 'non-draggable inline-flex h-full w-[46px] shrink-0 items-center justify-center text-foreground/90 outline-none transition-colors duration-100 hover:bg-foreground/[0.08] focus-visible:bg-foreground/[0.08] active:bg-foreground/[0.12]';
+const WINDOW_CAPTION_BUTTON_CLASS_NAME = 'non-draggable inline-flex h-full w-[46px] shrink-0 items-center justify-center text-foreground/90 outline-none transition-colors duration-100 hover:bg-foreground/[0.06] focus-visible:bg-foreground/[0.06] active:bg-foreground/[0.09]';
 const WINDOW_CLOSE_CAPTION_BUTTON_CLASS_NAME = 'non-draggable inline-flex h-full w-[46px] shrink-0 items-center justify-center text-foreground/90 outline-none transition-colors duration-100 hover:bg-[#c42b1c] hover:text-white focus-visible:bg-[#c42b1c] focus-visible:text-white active:bg-[#b1261a] active:text-white';
 
 const reportWindowControlAction = (action: WindowControlAction): void => {
@@ -126,8 +126,8 @@ const WindowTitleBar: React.FC<WindowTitleBarProps> = ({
         aria-label="Minimize"
         title="Minimize"
       >
-        <svg aria-hidden="true" viewBox="0 0 10 10" className="h-[10px] w-[10px]" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round">
-          <path d="M1 5.5h8" />
+        <svg aria-hidden="true" viewBox="0 0 12 12" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round">
+          <path d="M2 6.5h8" />
         </svg>
       </button>
       <button
@@ -138,13 +138,13 @@ const WindowTitleBar: React.FC<WindowTitleBarProps> = ({
         title={state.isMaximized ? 'Restore' : 'Maximize'}
       >
         {state.isMaximized ? (
-          <svg aria-hidden="true" viewBox="0 0 10 10" className="h-[10px] w-[10px]" fill="none" stroke="currentColor" strokeWidth="1" strokeLinejoin="round">
-            <path d="M3.5 1.5h5v5" />
-            <rect x="1.5" y="3.5" width="5" height="5" rx="0.5" />
+          <svg aria-hidden="true" viewBox="0 0 12 12" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1" strokeLinejoin="round">
+            <path d="M4 1.5h6.5V8H8" />
+            <rect x="1.5" y="4" width="6.5" height="6.5" rx="0.6" />
           </svg>
         ) : (
-          <svg aria-hidden="true" viewBox="0 0 10 10" className="h-[10px] w-[10px]" fill="none" stroke="currentColor" strokeWidth="1">
-            <rect x="1.5" y="1.5" width="7" height="7" rx="0.6" />
+          <svg aria-hidden="true" viewBox="0 0 12 12" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1">
+            <rect x="2" y="2" width="8" height="8" rx="0.7" />
           </svg>
         )}
       </button>
