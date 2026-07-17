@@ -24,6 +24,7 @@ export function presentSkin(record: SkinRecord): PresentedSkin {
     ...(record.name === undefined ? {} : { name: record.name }),
     workflowKind: record.workflowKind,
     ...(record.baseThemeId === undefined ? {} : { baseThemeId: record.baseThemeId }),
+    ...(record.presentation === undefined ? {} : { presentation: record.presentation }),
     status: record.status,
     assets,
     createdAt: record.createdAt,

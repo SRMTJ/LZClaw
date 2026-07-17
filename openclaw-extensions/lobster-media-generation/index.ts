@@ -256,6 +256,33 @@ const VideoGenerateSchema = Type.Object({
   providerOptions: Type.Optional(Type.Record(Type.String(), Type.Unknown(), { description: 'Model-specific options passed through to the provider (e.g. prompt_optimizer, fast_pretreatment, priority, draft).' })),
 });
 
+const SkinPresentationPaletteSchema = Type.Object({
+  canvas: Type.String({ description: 'Cowork canvas color as #RRGGBB.' }),
+  panel: Type.String({ description: 'Sidebar and prompt surface color as #RRGGBB.' }),
+  panelRaised: Type.String({ description: 'Raised surface color as #RRGGBB.' }),
+  accent: Type.String({ description: 'Primary decorative accent as #RRGGBB.' }),
+  accentForeground: Type.String({ description: 'Readable foreground color on the accent as #RRGGBB.' }),
+  accentAlt: Type.String({ description: 'Secondary decorative accent as #RRGGBB.' }),
+  foreground: Type.String({ description: 'Primary readable text color as #RRGGBB.' }),
+  muted: Type.String({ description: 'Secondary readable text color as #RRGGBB.' }),
+  border: Type.String({ description: 'Subtle skin border color as #RRGGBB.' }),
+}, { additionalProperties: false });
+
+const SkinPresentationSchema = Type.Object({
+  mode: Type.Literal('immersive_shell'),
+  palette: SkinPresentationPaletteSchema,
+  art: Type.Optional(Type.Object({
+    focusX: Type.Number({ minimum: 0, maximum: 1, description: 'Horizontal backdrop focal point.' }),
+    focusY: Type.Number({ minimum: 0, maximum: 1, description: 'Vertical backdrop focal point.' }),
+  }, { additionalProperties: false })),
+  effects: Type.Optional(Type.Object({
+    particleDensity: Type.Union([
+      Type.Literal('none'),
+      Type.Literal('sparse'),
+    ]),
+  }, { additionalProperties: false })),
+}, { additionalProperties: false });
+
 const SkinManageSchema = Type.Union([
   Type.Object({
     action: Type.Literal(SkinManageAction.CreateDraft),
@@ -263,7 +290,8 @@ const SkinManageSchema = Type.Union([
     baseThemeId: Type.Optional(Type.String({
       description: 'Legacy compatibility metadata. LobsterAI does not change the user color theme when applying a skin.',
     })),
-  }),
+    presentation: Type.Optional(SkinPresentationSchema),
+  }, { additionalProperties: false }),
   Type.Object({
     action: Type.Literal(SkinManageAction.RegisterAsset),
     skinId: Type.String({ description: 'Skin draft ID returned by create_draft.' }),
@@ -463,7 +491,9 @@ const plugin = {
         description: [
           'Create and manage a LobsterAI AI skin pack through the trusted desktop callback.',
           'This tool manages drafts and assets; it does not generate images.',
-          'For a new pack, call create_draft with a name first. Do not select or change the user color theme.',
+          'For a new pack, call create_draft with a name and an optional validated immersive-shell presentation first.',
+          'Presentation colors style only supported Cowork surfaces and never select or change the saved user color theme.',
+          'The application title bar, page layout, system icons, and arbitrary CSS are never skin-controlled.',
           'Register only generated local files returned by an image tool.',
           'The only supported asset slots are workspace.backdrop followed by home.emblem.',
           'Use register_asset with skinId, slot, and sourcePath after each generation succeeds.',

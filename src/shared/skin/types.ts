@@ -3,6 +3,7 @@ import type {
   SkinRecordStatus,
   SkinWorkflowKind,
 } from './constants';
+import type { SkinPresentation } from './presentation';
 
 export interface PresentedSkinAsset {
   url: string;
@@ -17,6 +18,7 @@ export interface PresentedSkin {
   name?: string;
   workflowKind: SkinWorkflowKind;
   baseThemeId?: string;
+  presentation?: SkinPresentation;
   status: SkinRecordStatus;
   assets: Partial<Record<SkinAssetSlot, PresentedSkinAsset>>;
   createdAt: string;

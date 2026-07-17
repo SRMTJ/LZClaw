@@ -23,6 +23,19 @@ export const SkinRecordStatus = {
 
 export type SkinRecordStatus = typeof SkinRecordStatus[keyof typeof SkinRecordStatus];
 
+export const SkinPresentationMode = {
+  ImmersiveShell: 'immersive_shell',
+} as const;
+
+export type SkinPresentationMode = typeof SkinPresentationMode[keyof typeof SkinPresentationMode];
+
+export const SkinParticleDensity = {
+  None: 'none',
+  Sparse: 'sparse',
+} as const;
+
+export type SkinParticleDensity = typeof SkinParticleDensity[keyof typeof SkinParticleDensity];
+
 export const SkinAssetFormat = {
   Png: 'png',
   Jpeg: 'jpeg',

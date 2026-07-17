@@ -24,6 +24,7 @@ import { ScheduledTasksView } from './components/scheduledTasks';
 import Settings, { type SettingsOpenOptions } from './components/Settings';
 import Sidebar from './components/Sidebar';
 import { SkillsView } from './components/skills';
+import SkinPresentationScope from './components/skin/SkinPresentationScope';
 import Toast from './components/Toast';
 import AppUpdateBadge from './components/update/AppUpdateBadge';
 import AppUpdateBlockingPanel from './components/update/AppUpdateBlockingPanel';
@@ -1216,7 +1217,10 @@ const App: React.FC = () => {
 
   return (
     <SkinProvider>
-      <div className="h-screen overflow-hidden flex flex-col bg-surface-raised">
+      <SkinPresentationScope
+        enabled={mainView === 'cowork'}
+        className="h-screen overflow-hidden flex flex-col bg-surface-raised"
+      >
       {toastMessage && (
         <Toast
           message={toastMessage}
@@ -1247,7 +1251,10 @@ const App: React.FC = () => {
           hideLogin={enterpriseConfig?.ui?.login === 'hide'}
         />
         <div className={`flex-1 min-w-0 transition-[padding] duration-200 ease-out ${isSidebarCollapsed ? 'pl-1.5' : ''}`}>
-          <div className="relative h-full min-h-0 rounded-xl border border-border bg-background overflow-hidden">
+          <div
+            data-skin-cowork-frame={mainView === 'cowork' ? 'true' : undefined}
+            className="relative h-full min-h-0 rounded-xl border border-border bg-background overflow-hidden"
+          >
             <EngineStartupOverlay />
             {mainView === 'skills' ? (
               <SkillsView
@@ -1349,7 +1356,7 @@ const App: React.FC = () => {
           onCustomModel={handleWelcomeCustomModel}
         />
       )}
-      </div>
+      </SkinPresentationScope>
     </SkinProvider>
   );
 };

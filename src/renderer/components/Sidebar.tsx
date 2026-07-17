@@ -503,6 +503,7 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <aside
+      data-skin-sidebar="true"
       className={`relative shrink-0 overflow-hidden bg-surface-raised ${
         isResizing ? '' : 'sidebar-transition'
       }`}

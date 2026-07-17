@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 
 import { SkinAssetSlot } from '../../../shared/skin/constants';
-import { useSkinAsset } from '../../providers/SkinProvider';
+import { useSkin, useSkinAsset } from '../../providers/SkinProvider';
 
 export const SkinBackdropVariant = {
   Home: 'home',
@@ -30,12 +30,33 @@ const CONVERSATION_OVERLAY = [
   'color-mix(in srgb, var(--lobster-background) 36%, transparent))',
 ].join(' ');
 
+const PRESENTED_HOME_OVERLAY = [
+  'radial-gradient(ellipse at 50% 46%,',
+  'color-mix(in srgb, var(--lobster-skin-canvas) 52%, transparent) 0%,',
+  'color-mix(in srgb, var(--lobster-skin-canvas) 34%, transparent) 48%,',
+  'color-mix(in srgb, var(--lobster-skin-canvas) 18%, transparent) 100%)',
+  ', linear-gradient(to bottom,',
+  'color-mix(in srgb, var(--lobster-skin-canvas) 12%, transparent),',
+  'color-mix(in srgb, var(--lobster-skin-canvas) 82%, transparent))',
+].join(' ');
+
+const PRESENTED_CONVERSATION_OVERLAY = [
+  'linear-gradient(to bottom,',
+  'color-mix(in srgb, var(--lobster-skin-canvas) 48%, transparent),',
+  'color-mix(in srgb, var(--lobster-skin-canvas) 68%, transparent))',
+].join(' ');
+
 const SkinBackdrop: React.FC<SkinBackdropProps> = ({ variant }) => {
+  const { activeSkin } = useSkin();
   const assetUrl = useSkinAsset(SkinAssetSlot.WorkspaceBackdrop);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   if (!assetUrl || failedUrl === assetUrl) return null;
 
   const isHome = variant === SkinBackdropVariant.Home;
+  const hasPresentation = Boolean(activeSkin?.presentation);
+  const overlay = hasPresentation
+    ? isHome ? PRESENTED_HOME_OVERLAY : PRESENTED_CONVERSATION_OVERLAY
+    : isHome ? HOME_OVERLAY : CONVERSATION_OVERLAY;
   return (
     <div
       aria-hidden="true"
@@ -47,15 +68,22 @@ const SkinBackdrop: React.FC<SkinBackdropProps> = ({ variant }) => {
         alt=""
         draggable={false}
         onError={() => setFailedUrl(assetUrl)}
+        style={hasPresentation ? {
+          objectPosition: 'var(--lobster-skin-focus-x) var(--lobster-skin-focus-y)',
+        } : undefined}
         className={`h-full w-full scale-[1.01] object-cover object-center ${
-          isHome
-            ? 'opacity-[0.82] dark:opacity-[0.72]'
-            : 'opacity-[0.32] saturate-[0.90] dark:opacity-[0.28]'
+          hasPresentation
+            ? isHome
+              ? 'opacity-[0.78]'
+              : 'opacity-[0.26] saturate-[0.88]'
+            : isHome
+              ? 'opacity-[0.82] dark:opacity-[0.72]'
+              : 'opacity-[0.32] saturate-[0.90] dark:opacity-[0.28]'
         }`}
       />
       <div
         className="absolute inset-0"
-        style={{ background: isHome ? HOME_OVERLAY : CONVERSATION_OVERLAY }}
+        style={{ background: overlay }}
       />
     </div>
   );

@@ -3,6 +3,10 @@ import {
   type SkinAssetSlot as SkinAssetSlotValue,
   SkinProtocol,
 } from '../../shared/skin/constants';
+import {
+  parseSkinPresentation,
+  type SkinPresentation,
+} from '../../shared/skin/presentation';
 
 export interface SkinAssetReference {
   url: string;
@@ -13,6 +17,7 @@ export interface ActiveSkin {
   id: string;
   name?: string;
   baseThemeId?: string;
+  presentation?: SkinPresentation;
   assets: Partial<Record<SkinAssetSlotValue, SkinAssetReference>>;
 }
 
@@ -86,9 +91,9 @@ const readAssetFromSource = (source: unknown, slot: SkinAssetSlotValue): SkinAss
 };
 
 /**
- * Keep the renderer boundary deliberately narrow: only the two MVP image
- * slots and an allow-listed base theme identifier are retained. Arbitrary
- * CSS or other manifest fields never reach the view layer.
+ * Keep the renderer boundary deliberately narrow: only the two managed image
+ * slots and the validated presentation schema are retained. Arbitrary CSS or
+ * other manifest fields never reach the view layer.
  */
 export const normalizeActiveSkin = (value: unknown): ActiveSkin | null => {
   const candidate = unwrapActiveSkin(value);
@@ -108,11 +113,14 @@ export const normalizeActiveSkin = (value: unknown): ActiveSkin | null => {
   const id = readString(candidate, ['id', 'skinId'])
     ?? readString(manifest, ['id', 'skinId'])
     ?? 'active-skin';
+  const presentation = parseSkinPresentation(candidate.presentation)
+    ?? parseSkinPresentation(manifest?.presentation);
 
   return {
     id,
     name: readString(candidate, ['name', 'title']) ?? readString(manifest, ['name', 'title']),
     baseThemeId: readString(candidate, ['baseThemeId']) ?? readString(manifest, ['baseThemeId']),
+    ...(presentation ? { presentation } : {}),
     assets: {
       ...(workspaceBackdrop ? { [SkinAssetSlot.WorkspaceBackdrop]: workspaceBackdrop } : {}),
       ...(homeEmblem ? { [SkinAssetSlot.HomeEmblem]: homeEmblem } : {}),

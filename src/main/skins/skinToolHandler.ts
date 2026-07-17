@@ -4,6 +4,7 @@ import {
   SkinToolAction,
   SkinWorkflowKind,
 } from '../../shared/skin/constants';
+import { parseSkinPresentation } from '../../shared/skin/presentation';
 import { presentSkin } from './skinPresentation';
 import { SkinStore, SkinStoreError } from './skinStore';
 
@@ -62,10 +63,20 @@ export function createSkinToolHandler(
     const action = readOptionalString(request.args.action);
     try {
       if (action === SkinToolAction.CreateDraft) {
+        const presentation = request.args.presentation === undefined
+          ? undefined
+          : parseSkinPresentation(request.args.presentation);
+        if (request.args.presentation !== undefined && !presentation) {
+          return errorResult(
+            'presentation must use the supported immersive shell schema and accessible colors.',
+            'invalid_arguments',
+          );
+        }
         const skin = await options.store.createDraft({
           name: readOptionalString(request.args.name),
           baseThemeId: readOptionalString(request.args.baseThemeId),
           workflowKind: SkinWorkflowKind.SkinPack,
+          ...(presentation ? { presentation } : {}),
         });
         const presented = presentSkin(skin);
         return {

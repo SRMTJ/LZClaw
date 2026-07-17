@@ -9,13 +9,14 @@ The MVP contains exactly two generated raster assets. Both are content images, n
 - No text, logos, UI mockups, watermarks, borders, or fake controls.
 - Keep the central content band and lower prompt-input area low-detail.
 - Put the main decorative focal point toward an outer third.
+- Match the structured presentation palette registered with the draft.
 - Use broad shapes and restrained contrast so the host's fixed wash can preserve readability.
 - The same image may be reused by the active conversation view at a host-controlled low opacity. Do not generate a separate conversation background.
 
 Prompt suffix template:
 
 ```text
-Create a polished desktop application atmosphere backdrop in the shared art direction. Landscape 16:9 composition, no text, no logo, no UI, no watermark. Keep the central 45% and lower 25% visually quiet for readable interface content. Place the decorative focal interest near an outer third, with broad shapes, controlled contrast, and clean edges suitable for CSS cover cropping.
+Create a polished desktop application atmosphere backdrop in the shared art direction and the exact registered presentation palette. Landscape 16:9 composition, no text, no logo, no UI, no watermark. Keep the central 45% and lower 25% visually quiet for readable interface content. Place the decorative focal interest near the registered focus coordinates, with broad shapes, controlled contrast, and clean edges suitable for CSS cover cropping.
 ```
 
 ## `home.emblem`

@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'vitest';
 
-import { SkinAssetSlot } from '../../shared/skin/constants';
+import {
+  SkinAssetSlot,
+  SkinParticleDensity,
+  SkinPresentationMode,
+} from '../../shared/skin/constants';
 import {
   buildSkinAssetUrl,
   normalizeActiveSkin,
@@ -14,6 +18,22 @@ describe('normalizeActiveSkin', () => {
         id: 'sunset-glass',
         name: 'Sunset Glass',
         baseThemeId: 'sakura',
+        presentation: {
+          mode: SkinPresentationMode.ImmersiveShell,
+          palette: {
+            canvas: '#12090b',
+            panel: '#1d0d10',
+            panelRaised: '#2a1216',
+            accent: '#e5b941',
+            accentForeground: '#160b0d',
+            accentAlt: '#d85a45',
+            foreground: '#f7eee8',
+            muted: '#c7aaa5',
+            border: '#745126',
+          },
+          art: { focusX: 0.72, focusY: 0.42 },
+          effects: { particleDensity: SkinParticleDensity.Sparse },
+        },
         css: 'body { display: none; }',
         assets: {
           [SkinAssetSlot.WorkspaceBackdrop]: {
@@ -30,6 +50,22 @@ describe('normalizeActiveSkin', () => {
       id: 'sunset-glass',
       name: 'Sunset Glass',
       baseThemeId: 'sakura',
+      presentation: {
+        mode: SkinPresentationMode.ImmersiveShell,
+        palette: {
+          canvas: '#12090b',
+          panel: '#1d0d10',
+          panelRaised: '#2a1216',
+          accent: '#e5b941',
+          accentForeground: '#160b0d',
+          accentAlt: '#d85a45',
+          foreground: '#f7eee8',
+          muted: '#c7aaa5',
+          border: '#745126',
+        },
+        art: { focusX: 0.72, focusY: 0.42 },
+        effects: { particleDensity: SkinParticleDensity.Sparse },
+      },
       assets: {
         [SkinAssetSlot.WorkspaceBackdrop]: {
           url: 'lobster-skin://asset/sunset-glass/workspace.backdrop',

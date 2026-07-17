@@ -16,6 +16,10 @@ import {
   SkinStoreErrorCode,
   SkinWorkflowKind,
 } from '../../shared/skin/constants';
+import {
+  parseSkinPresentation,
+  type SkinPresentation,
+} from '../../shared/skin/presentation';
 import { inspectSkinImage, SkinImageInfo } from './skinImageValidation';
 
 export interface SkinAssetRecord extends SkinImageInfo {
@@ -31,6 +35,7 @@ export interface SkinRecord {
   name?: string;
   workflowKind: SkinWorkflowKind;
   baseThemeId?: string;
+  presentation?: SkinPresentation;
   status: SkinRecordStatus;
   assets: Partial<Record<SkinAssetSlot, SkinAssetRecord>>;
   createdAt: string;
@@ -54,6 +59,7 @@ export interface CreateSkinDraftInput {
   name?: string;
   workflowKind?: SkinWorkflowKind;
   baseThemeId?: string;
+  presentation?: SkinPresentation;
 }
 
 export interface RegisterSkinAssetInput {
@@ -201,6 +207,9 @@ function isValidAssetRecord(value: unknown, skinId: string, expectedSlot: SkinAs
 
 function parseSkinRecord(value: unknown, key: string): SkinRecord | null {
   if (!isRecord(value) || value.id !== key || !SKIN_ID_PATTERN.test(key)) return null;
+  const presentation = value.presentation === undefined
+    ? undefined
+    : parseSkinPresentation(value.presentation);
   if (
     !isOptionalBoundedString(value.name, 128) ||
     !isSkinWorkflowKind(value.workflowKind) ||
@@ -210,6 +219,7 @@ function parseSkinRecord(value: unknown, key: string): SkinRecord | null {
     typeof value.createdAt !== 'string' ||
     typeof value.updatedAt !== 'string' ||
     !isOptionalBoundedString(value.appliedAt, 64)
+    || (value.presentation !== undefined && !presentation)
   ) {
     return null;
   }
@@ -227,6 +237,7 @@ function parseSkinRecord(value: unknown, key: string): SkinRecord | null {
     ...(value.name === undefined ? {} : { name: value.name }),
     workflowKind: value.workflowKind,
     ...(value.baseThemeId === undefined ? {} : { baseThemeId: value.baseThemeId }),
+    ...(presentation ? { presentation } : {}),
     status: value.status,
     assets,
     createdAt: value.createdAt,
@@ -280,7 +291,7 @@ function hasValidDimensions(slot: SkinAssetSlot, width: number, height: number):
     aspectRatio <= policy.maxAspectRatio;
 }
 
-function validateDraftInput(input: CreateSkinDraftInput): void {
+function validateDraftInput(input: CreateSkinDraftInput): SkinPresentation | undefined {
   if (!isOptionalBoundedString(input.name, 128)) {
     throw new SkinStoreError(SkinStoreErrorCode.InvalidDraft, 'Skin name must be a non-empty string of at most 128 characters');
   }
@@ -290,6 +301,16 @@ function validateDraftInput(input: CreateSkinDraftInput): void {
   if (input.workflowKind !== undefined && !isSkinWorkflowKind(input.workflowKind)) {
     throw new SkinStoreError(SkinStoreErrorCode.InvalidDraft, 'Unsupported skin workflow kind');
   }
+  const presentation = input.presentation === undefined
+    ? undefined
+    : parseSkinPresentation(input.presentation);
+  if (input.presentation !== undefined && !presentation) {
+    throw new SkinStoreError(
+      SkinStoreErrorCode.InvalidDraft,
+      'Skin presentation must use the supported mode, palette, focus, effects, and accessible color contrast',
+    );
+  }
+  return presentation;
 }
 
 export class SkinStore {
@@ -310,7 +331,7 @@ export class SkinStore {
   }
 
   async createDraft(input: CreateSkinDraftInput = {}): Promise<SkinRecord> {
-    validateDraftInput(input);
+    const presentation = validateDraftInput(input);
     return this.enqueueMutation(async () => {
       const registry = await this.readRegistry();
       const skinId = this.idGenerator();
@@ -324,6 +345,7 @@ export class SkinStore {
         ...(input.name === undefined ? {} : { name: input.name }),
         workflowKind: input.workflowKind ?? SkinWorkflowKind.SkinPack,
         ...(input.baseThemeId === undefined ? {} : { baseThemeId: input.baseThemeId }),
+        ...(presentation ? { presentation } : {}),
         status: SkinRecordStatus.Draft,
         assets: {},
         createdAt: timestamp,

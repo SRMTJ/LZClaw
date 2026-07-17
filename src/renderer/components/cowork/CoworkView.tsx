@@ -39,6 +39,7 @@ import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import { PromptPanel, QuickActionBar } from '../quick-actions';
 import type { SettingsOpenOptions } from '../Settings';
 import HomeSkinEmblem from '../skin/HomeSkinEmblem';
+import SkinAmbientEffects from '../skin/SkinAmbientEffects';
 import SkinBackdrop, { SkinBackdropVariant } from '../skin/SkinBackdrop';
 import { useAgentSelectedModel } from './agentModelSelection';
 import { CoworkUiEvent } from './constants';
@@ -790,10 +791,11 @@ const CoworkView: React.FC<CoworkViewProps> = ({
   ) : null;
 
   return (
-    <div className="relative flex-1 flex flex-col bg-background h-full">
+    <div data-skin-cowork="true" className="relative flex-1 flex flex-col bg-background h-full">
       <SkinBackdrop
         variant={currentSession ? SkinBackdropVariant.Conversation : SkinBackdropVariant.Home}
       />
+      <SkinAmbientEffects visible={!currentSession} />
 
       {currentSession ? (
         <div className="relative z-10 flex-1 flex flex-col h-full">
@@ -828,7 +830,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({
                   the page starts scrolling on short windows. */}
               <div aria-hidden="true" className="w-full min-h-[56px] flex-[2_0_0px]" />
               {/* Welcome Section - staggered entrance animation */}
-              <div className="w-full max-w-3xl text-center">
+              <div data-skin-home-copy="true" className="w-full max-w-3xl text-center">
                 <HomeSkinEmblem
                   className="mx-auto h-12 w-12 animate-fade-in-up"
                 />

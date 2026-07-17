@@ -1,9 +1,12 @@
 import {
   SkinAssetSlot,
+  SkinParticleDensity,
+  SkinPresentationMode,
   SkinRecordStatus,
   SkinStoreErrorCode,
   SkinWorkflowKind,
 } from '@shared/skin/constants';
+import type { SkinPresentation } from '@shared/skin/presentation';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -103,6 +106,23 @@ function createStore(rootDir: string, ids: string[] = ['skin-one']): SkinStore {
   });
 }
 
+const presentation: SkinPresentation = {
+  mode: SkinPresentationMode.ImmersiveShell,
+  palette: {
+    canvas: '#12090b',
+    panel: '#1d0d10',
+    panelRaised: '#2a1216',
+    accent: '#e5b941',
+    accentForeground: '#160b0d',
+    accentAlt: '#d85a45',
+    foreground: '#f7eee8',
+    muted: '#c7aaa5',
+    border: '#745126',
+  },
+  art: { focusX: 0.72, focusY: 0.42 },
+  effects: { particleDensity: SkinParticleDensity.Sparse },
+};
+
 describe('SkinStore', () => {
   test('persists a draft with workflow and base theme metadata', async () => {
     const { rootDir } = createTempWorkspace();
@@ -111,6 +131,7 @@ describe('SkinStore', () => {
     const draft = await store.createDraft({
       name: 'Rose horizon',
       baseThemeId: 'light',
+      presentation,
     });
 
     expect(draft).toMatchObject({
@@ -118,11 +139,31 @@ describe('SkinStore', () => {
       name: 'Rose horizon',
       workflowKind: SkinWorkflowKind.SkinPack,
       baseThemeId: 'light',
+      presentation,
       status: SkinRecordStatus.Draft,
       assets: {},
     });
     const restored = await createStore(rootDir).getSkin('skin-one');
     expect(restored).toEqual(draft);
+  });
+
+  test('rejects inaccessible or extensible presentation metadata before generation', async () => {
+    const { rootDir } = createTempWorkspace();
+    const store = createStore(rootDir);
+
+    await expect(store.createDraft({
+      presentation: {
+        ...presentation,
+        palette: { ...presentation.palette, foreground: '#201010' },
+      },
+    })).rejects.toMatchObject({ code: SkinStoreErrorCode.InvalidDraft });
+
+    await expect(store.createDraft({
+      presentation: {
+        ...presentation,
+        css: 'body { display: none; }',
+      } as SkinPresentation,
+    })).rejects.toMatchObject({ code: SkinStoreErrorCode.InvalidDraft });
   });
 
   test('copies validated assets into content-addressed managed paths and applies one skin', async () => {

@@ -2,7 +2,7 @@
 name: skin-creator
 description: Create and apply a two-asset LobsterAI visual skin from the user's style description. Use only when the AI Skin Designer kit supplies the structured skin_pack workflow marker; do not use for ordinary theme or image requests.
 official: true
-version: 0.1.0
+version: 0.2.0
 ---
 
 # LobsterAI Skin Creator
@@ -24,8 +24,9 @@ Read [references/asset-contract.md](references/asset-contract.md) before the fir
 - Register each successful asset immediately. Do not start the next generation until `lobsterai_skin_manage` confirms registration.
 - Additional serial attempts are allowed when generation fails, returns no usable local output, or the current candidate cannot satisfy a required slot. Never run image generations in parallel or switch backend silently.
 - Never write skin files, application configuration, CSS, or databases directly. Only `lobsterai_skin_manage` may register or apply a skin.
-- The user's active LobsterAI color theme is independent from the AI skin. Never select or change a color theme as part of this workflow.
+- The user's saved LobsterAI color theme is independent from the AI skin. Never select or change a color theme as part of this workflow. A validated `presentation` may temporarily style allow-listed Cowork surfaces while the skin is active.
 - Do not create icons, sprite sheets, wallpapers for other views, custom fonts, arbitrary CSS, or layout changes in this MVP.
+- Do not customize the application title bar, conversation title bar, home layout, or component positions.
 
 ## Workflow
 
@@ -38,6 +39,7 @@ Convert the user's request into a compact internal style bible:
 - material and lighting language;
 - recurring motif;
 - contrast strategy that remains legible with both light and dark LobsterAI color themes;
+- an accessible immersive-shell palette for the Cowork canvas, Sidebar, existing quick actions, and prompt input;
 - forbidden elements;
 - backdrop composition safe zones;
 - emblem silhouette and small-size readability.
@@ -51,9 +53,32 @@ Call `lobsterai_skin_manage` with:
 ```json
 {
   "action": "create_draft",
-  "name": "A concise name derived from the style"
+  "name": "A concise name derived from the style",
+  "presentation": {
+    "mode": "immersive_shell",
+    "palette": {
+      "canvas": "#12090b",
+      "panel": "#1d0d10",
+      "panelRaised": "#2a1216",
+      "accent": "#e5b941",
+      "accentForeground": "#160b0d",
+      "accentAlt": "#d85a45",
+      "foreground": "#f7eee8",
+      "muted": "#c7aaa5",
+      "border": "#745126"
+    },
+    "art": {
+      "focusX": 0.72,
+      "focusY": 0.42
+    },
+    "effects": {
+      "particleDensity": "sparse"
+    }
+  }
 }
 ```
+
+Replace every example value with colors and focus coordinates derived from the user's requested direction. Use `#RRGGBB` only. Ensure primary text contrasts at least 4.5:1 with canvas and panels, muted text and accent at least 3:1, and `accentForeground` at least 4.5:1 with `accent`. If draft creation rejects the palette, correct the metadata before starting a paid image generation. Use `particleDensity="none"` for restrained, professional, monochrome, or already visually busy directions.
 
 Preserve the returned `skinId` for all subsequent calls.
 
@@ -69,7 +94,7 @@ Listing models is not an image-generation attempt.
 
 ### 4. Generate and register the backdrop
 
-Generate exactly one 16:9 or closest supported landscape image. The prompt must include the shared style bible plus the backdrop contract. Prefer a 2K-class output when supported. Use a stable filename hint such as `lobster-skin-backdrop.png`.
+Generate exactly one 16:9 or closest supported landscape image. The prompt must include the shared style bible, the same presentation palette, the intended focus coordinates, and the backdrop contract. Prefer a 2K-class output when supported. Use a stable filename hint such as `lobster-skin-backdrop.png`.
 
 If the generation returns a pending task:
 

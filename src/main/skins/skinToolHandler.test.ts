@@ -5,14 +5,34 @@ import {
   SkinAssetFormat,
   SkinAssetMimeType,
   SkinAssetSlot,
+  SkinParticleDensity,
+  SkinPresentationMode,
   SkinRecordStatus,
   SkinToolAction,
   SkinWorkflowKind,
 } from '../../shared/skin/constants';
+import type { SkinPresentation } from '../../shared/skin/presentation';
 import type { SkinAssetRecord, SkinRecord, SkinStore } from './skinStore';
 import { createSkinToolHandler } from './skinToolHandler';
 
 const timestamp = '2026-07-16T10:00:00.000Z';
+
+const presentation: SkinPresentation = {
+  mode: SkinPresentationMode.ImmersiveShell,
+  palette: {
+    canvas: '#12090b',
+    panel: '#1d0d10',
+    panelRaised: '#2a1216',
+    accent: '#e5b941',
+    accentForeground: '#160b0d',
+    accentAlt: '#d85a45',
+    foreground: '#f7eee8',
+    muted: '#c7aaa5',
+    border: '#745126',
+  },
+  art: { focusX: 0.72, focusY: 0.42 },
+  effects: { particleDensity: SkinParticleDensity.Sparse },
+};
 
 const createAsset = (slot: SkinAssetSlot, hashChar: string): SkinAssetRecord => ({
   slot,
@@ -35,6 +55,7 @@ const draft: SkinRecord = {
   name: 'Ocean glass',
   workflowKind: SkinWorkflowKind.SkinPack,
   baseThemeId: 'classic-dark',
+  presentation,
   status: SkinRecordStatus.Draft,
   assets: {},
   createdAt: timestamp,
@@ -97,6 +118,7 @@ describe('skin tool handler', () => {
         action: SkinToolAction.CreateDraft,
         name: draft.name,
         baseThemeId: draft.baseThemeId,
+        presentation,
       },
       context,
     });
@@ -104,6 +126,7 @@ describe('skin tool handler', () => {
       name: draft.name,
       baseThemeId: draft.baseThemeId,
       workflowKind: SkinWorkflowKind.SkinPack,
+      presentation,
     });
     expect(createResult.details?.skinId).toBe(draft.id);
 
