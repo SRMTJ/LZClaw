@@ -1,9 +1,16 @@
 import React, { useState } from 'react';
+import { useDispatch } from 'react-redux';
 
 import { SkinAssetSlot } from '../../../shared/skin/constants';
 import { useSkin } from '../../providers/SkinProvider';
 import { i18nService } from '../../services/i18n';
 import { buildSkinAssetUrl } from '../../services/skin';
+import { prepareSkinKitOnboarding } from '../../services/skinKitOnboarding';
+import {
+  setInstalledKits,
+  setMarketplaceKits,
+} from '../../store/slices/kitSlice';
+import MagicIcon from '../icons/MagicIcon';
 import TrashIcon from '../icons/TrashIcon';
 import SkinDeleteConfirmDialog from './SkinDeleteConfirmDialog';
 
@@ -27,7 +34,12 @@ interface PendingSkinDeletion {
   isActive: boolean;
 }
 
-const SkinSettingsSection: React.FC = () => {
+interface SkinSettingsSectionProps {
+  onStartAiSkin?: (text: string, kitId: string) => void;
+}
+
+const SkinSettingsSection: React.FC<SkinSettingsSectionProps> = ({ onStartAiSkin }) => {
+  const dispatch = useDispatch();
   const {
     activeSkin,
     apply,
@@ -40,7 +52,9 @@ const SkinSettingsSection: React.FC = () => {
   const [applyingSkinId, setApplyingSkinId] = useState<string | null>(null);
   const [deletingSkinId, setDeletingSkinId] = useState<string | null>(null);
   const [isDeactivating, setIsDeactivating] = useState(false);
+  const [isStartingAiSkin, setIsStartingAiSkin] = useState(false);
   const [actionError, setActionError] = useState<SkinActionError>(null);
+  const [startError, setStartError] = useState(false);
   const [pendingDeletion, setPendingDeletion] = useState<PendingSkinDeletion | null>(null);
 
   const handleApply = async (skinId: string) => {
@@ -85,8 +99,28 @@ const SkinSettingsSection: React.FC = () => {
     }
   };
 
+  const handleStartAiSkin = async () => {
+    if (!onStartAiSkin) return;
+    setStartError(false);
+    setIsStartingAiSkin(true);
+    try {
+      const prepared = await prepareSkinKitOnboarding();
+      dispatch(setMarketplaceKits(prepared.marketplaceKits));
+      dispatch(setInstalledKits(prepared.installedKits));
+      onStartAiSkin(prepared.prompt, prepared.kitId);
+    } catch (error) {
+      console.error('[Skin] Failed to start AI skin onboarding', error);
+      setStartError(true);
+    } finally {
+      setIsStartingAiSkin(false);
+    }
+  };
+
   const activeSkinLabel = activeSkin?.name ?? activeSkin?.id;
-  const isMutating = applyingSkinId !== null || deletingSkinId !== null || isDeactivating;
+  const isMutating = applyingSkinId !== null
+    || deletingSkinId !== null
+    || isDeactivating
+    || isStartingAiSkin;
 
   return (
     <section className="mt-5 rounded-xl border border-border bg-surface px-4 py-3.5">
@@ -214,8 +248,39 @@ const SkinSettingsSection: React.FC = () => {
             })}
           </div>
         ) : (
-          <div className="mt-3 rounded-lg border border-dashed border-border bg-background px-3 py-4 text-center text-xs text-secondary">
-            {isLoading ? i18nService.t('loading') : i18nService.t('aiSkinEmpty')}
+          <div className="mt-3 rounded-lg border border-dashed border-border bg-background px-4 py-5 text-center">
+            {isLoading ? (
+              <p className="text-xs text-secondary">{i18nService.t('loading')}</p>
+            ) : (
+              <>
+                <span className="mx-auto flex h-9 w-9 items-center justify-center rounded-full bg-primary-muted text-primary">
+                  <MagicIcon className="h-4 w-4" />
+                </span>
+                <p className="mt-2 text-sm font-medium text-foreground">
+                  {i18nService.t('aiSkinEmpty')}
+                </p>
+                <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-secondary">
+                  {i18nService.t('aiSkinEmptyDescription')}
+                </p>
+                {onStartAiSkin && (
+                  <button
+                    type="button"
+                    onClick={() => void handleStartAiSkin()}
+                    disabled={isMutating}
+                    className="mt-3 inline-flex h-8 items-center justify-center rounded-lg bg-primary px-3.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isStartingAiSkin
+                      ? i18nService.t('aiSkinStarting')
+                      : i18nService.t('aiSkinCreate')}
+                  </button>
+                )}
+                {startError && (
+                  <p className="mt-2 text-xs text-red-600 dark:text-red-400">
+                    {i18nService.t('aiSkinStartFailed')}
+                  </p>
+                )}
+              </>
+            )}
           </div>
         )}
       </div>

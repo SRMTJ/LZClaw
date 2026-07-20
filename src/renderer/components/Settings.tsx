@@ -881,6 +881,7 @@ export type SettingsOpenOptions = {
 
 interface SettingsProps extends SettingsOpenOptions {
   onClose: () => void;
+  onStartAiSkin?: (text: string, kitId: string) => void;
   initialTabRequestId?: number;
   onUpdateFound?: (info: AppUpdateInfo) => void;
   enterpriseConfig?: {
@@ -1352,6 +1353,7 @@ const SettingsNumberInputRow: React.FC<{
 
 const Settings: React.FC<SettingsProps> = ({
   onClose,
+  onStartAiSkin,
   initialTab,
   initialTabRequestId,
   notice,
@@ -4616,7 +4618,7 @@ const Settings: React.FC<SettingsProps> = ({
           );
         })()}
 
-        <SkinSettingsSection />
+        <SkinSettingsSection onStartAiSkin={onStartAiSkin} />
 
         <div className="mt-5 divide-y divide-border rounded-xl border border-border bg-surface">
           <div className="px-4 py-3">
