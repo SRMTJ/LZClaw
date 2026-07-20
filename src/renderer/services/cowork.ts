@@ -891,6 +891,7 @@ class CoworkService {
       mediaSelection: options.mediaSelection,
       mediaReferences: options.mediaReferences,
       selectedTextSnippets: options.selectedTextSnippets,
+      browserAnnotations: options.browserAnnotations,
     });
     if (!result.success) {
       this.setCurrentSessionStreaming(options.sessionId, false, 'continue_session_failed');

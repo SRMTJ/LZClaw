@@ -92,7 +92,6 @@ import type { MediaAttachmentRef } from '../../types/mediaGeneration';
 import { parseUserMessageForDisplay } from '../../utils/userMessageDisplay';
 import {
   ArtifactPanel,
-  type BrowserAnnotationPayload,
   type LocalServiceDeploymentRequest,
   SubagentPanelContent,
 } from '../artifacts';
@@ -158,6 +157,7 @@ interface CoworkSessionDetailProps {
     imageAttachments?: CoworkImageAttachment[],
     mediaReferences?: MediaAttachmentRef[],
     selectedTextSnippets?: CoworkSelectedTextSnippet[],
+    browserAnnotations?: import('@shared/cowork/browserAnnotations').CoworkBrowserAnnotationMessageBatch[],
     collaborationMode?: CoworkCollaborationModeType,
   ) => boolean | void | Promise<boolean | void>;
   onStop: () => void;
@@ -1636,6 +1636,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     const result = await onContinue(
       i18nService.t('coworkPlanConfirmExecutionPrompt'),
       confirmExecutionSkillPrompt,
+      undefined,
       undefined,
       undefined,
       undefined,
@@ -4067,9 +4068,6 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     })();
   }, [dispatch]);
 
-  const handleBrowserAnnotationCaptured = useCallback((payload: BrowserAnnotationPayload) => {
-    promptInputRef.current?.insertBrowserAnnotation(payload);
-  }, []);
 
   const messages = currentSession?.messages;
   const displayItems = useMemo(() => messages ? buildDisplayItems(messages) : [], [messages]);
@@ -5406,7 +5404,6 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
               onOpenFileListTab={handleOpenArtifactFileListTab}
               onOpenBrowserTab={handleOpenArtifactBrowserTab}
               onOpenHtmlFileInBrowser={handleOpenHtmlFileInBrowser}
-              onBrowserAnnotationCaptured={handleBrowserAnnotationCaptured}
               subagentPanel={(
                 <SubagentPanelContent
                   subagents={subagents}

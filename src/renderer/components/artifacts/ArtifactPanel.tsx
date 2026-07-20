@@ -7,6 +7,18 @@ import {
   PlusIcon as AddIcon,
 } from '@heroicons/react/24/outline';
 import { ArtifactBrowserPartition } from '@shared/artifactPreview/constants';
+import {
+  BrowserAnnotationGuestChannel,
+  BrowserAnnotationGuestCommandType,
+  type BrowserAnnotationGuestEnvelope,
+  BrowserAnnotationGuestEventType,
+  BrowserAnnotationLimit,
+  BrowserAnnotationProtocolVersion,
+  type BrowserAnnotationScreenshotRef,
+  BrowserAnnotationScreenshotStatus,
+  type CoworkBrowserAnnotation,
+  type CoworkBrowserAnnotationBatch,
+} from '@shared/cowork/browserAnnotations';
 import type { CoworkSelectedTextSnippet } from '@shared/cowork/selectedText';
 import {
   HtmlShareAccessMode,
@@ -62,6 +74,10 @@ import {
   setPreviewTabContentView,
   updateLocalServiceProjectMetadata,
 } from '@/store/slices/artifactSlice';
+import {
+  removeDraftBrowserAnnotationBatch,
+  upsertDraftBrowserAnnotationBatch,
+} from '@/store/slices/coworkSlice';
 import {
   type Artifact,
   type ArtifactType,
@@ -597,7 +613,6 @@ interface ArtifactPanelProps {
   onOpenFileListTab?: () => void;
   onOpenBrowserTab?: () => void;
   onOpenHtmlFileInBrowser?: (artifact: Artifact) => void;
-  onBrowserAnnotationCaptured?: (payload: BrowserAnnotationPayload) => void;
   onAddSelectedText?: (snippet: CoworkSelectedTextSnippet) => void;
   selectedTextEnabled?: boolean;
   subagentPanel?: React.ReactNode;
@@ -654,6 +669,8 @@ export interface BrowserAnnotationPayload {
   element: BrowserAnnotationElementInfo;
 }
 
+const EMPTY_BROWSER_ANNOTATION_BATCHES: CoworkBrowserAnnotationBatch[] = [];
+
 const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   sessionId,
   artifacts,
@@ -675,7 +692,6 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   onOpenFileListTab,
   onOpenBrowserTab,
   onOpenHtmlFileInBrowser,
-  onBrowserAnnotationCaptured,
   onAddSelectedText,
   selectedTextEnabled = false,
   subagentPanel,
@@ -686,6 +702,12 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
     selectActivePreviewTab(state, sessionId),
   );
   const authState = useSelector((state: RootState) => state.auth);
+  const browserAnnotationBatches = useSelector(
+    (state: RootState) => (
+      state.cowork.draftBrowserAnnotationBatches[sessionId]
+      || EMPTY_BROWSER_ANNOTATION_BATCHES
+    ),
+  );
   const [showFileListDrawer, setShowFileListDrawer] = useState(false);
   const [isFileListDrawerVisible, setIsFileListDrawerVisible] = useState(false);
   const [localBrowserAddress, setLocalBrowserAddress] = useState('');
@@ -801,6 +823,13 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
   );
   const browserAddress = controlledBrowserAddress ?? localBrowserAddress;
   const browserUrl = controlledBrowserUrl ?? localBrowserUrl;
+  const browserAnnotationBatch = useMemo(
+    () => browserAnnotationBatches.find(batch => (
+      normalizeBrowserPreviewUrlForMatch(batch.pageUrl)
+      === normalizeBrowserPreviewUrlForMatch(browserUrl)
+    )),
+    [browserAnnotationBatches, browserUrl],
+  );
   const browserLocalService = isBrowserTabActive
     ? parseLocalServiceUrl(browserUrl || browserAddress)
     : null;
@@ -4146,7 +4175,18 @@ const ArtifactPanel: React.FC<ArtifactPanelProps> = ({
             onCurrentUrlChange={handleBrowserUrlChange}
             onTitleChange={onBrowserTitleChange}
             onLocalServiceOpen={handleBrowserLocalServiceOpen}
-            onAnnotationCaptured={onBrowserAnnotationCaptured}
+            draftKey={sessionId}
+            annotationBatch={browserAnnotationBatch}
+            onAnnotationBatchChange={batch => {
+              if (batch) {
+                dispatch(upsertDraftBrowserAnnotationBatch({ draftKey: sessionId, batch }));
+              } else if (browserAnnotationBatch) {
+                dispatch(removeDraftBrowserAnnotationBatch({
+                  draftKey: sessionId,
+                  batchId: browserAnnotationBatch.id,
+                }));
+              }
+            }}
           />
         ) : activeSpecialTab === ArtifactSpecialTab.Subagents && subagentPanel ? (
           subagentPanel
@@ -4910,6 +4950,7 @@ type BrowserWebviewElement = HTMLElement & {
   getTitle?: () => string;
   getZoomFactor?: () => number;
   setZoomFactor?: (factor: number) => void;
+  send?: (channel: string, ...args: unknown[]) => void;
 };
 
 const BrowserScreenshotStatus = {
@@ -4921,12 +4962,12 @@ const BrowserScreenshotStatus = {
 type BrowserScreenshotStatus =
   (typeof BrowserScreenshotStatus)[keyof typeof BrowserScreenshotStatus];
 
-const BrowserAnnotationStatus = {
+export const BrowserAnnotationStatus = {
   Sent: 'sent',
   Cancelled: 'cancelled',
 } as const;
 
-type BrowserAnnotationStatus =
+export type BrowserAnnotationStatus =
   (typeof BrowserAnnotationStatus)[keyof typeof BrowserAnnotationStatus];
 
 const BrowserToolbarAction = {
@@ -5071,7 +5112,7 @@ interface BrowserToolbarTooltipPosition {
   placement: 'top' | 'bottom';
 }
 
-interface BrowserAnnotationResult {
+export interface BrowserAnnotationResult {
   status: BrowserAnnotationStatus;
   comment?: string;
   pageUrl?: string;
@@ -5081,7 +5122,7 @@ interface BrowserAnnotationResult {
   viewport?: BrowserAnnotationScreenshotInfo;
 }
 
-function normalizeBrowserAnnotationRect(
+export function normalizeBrowserAnnotationRect(
   rect: BrowserAnnotationRect,
   viewport: BrowserAnnotationScreenshotInfo | undefined,
   screenshot: BrowserAnnotationScreenshotInfo,
@@ -5266,7 +5307,7 @@ function mergeLocalServices(
   return Array.from(byPort.values()).slice(0, LocalServiceDisplay.Limit);
 }
 
-interface BrowserAnnotationLabels {
+export interface BrowserAnnotationLabels {
   instruction: string;
   placeholder: string;
   send: string;
@@ -5278,7 +5319,7 @@ interface BrowserAnnotationLabels {
   statusCancelled: BrowserAnnotationStatus;
 }
 
-function buildBrowserAnnotationScript(labels: BrowserAnnotationLabels): string {
+export function buildBrowserAnnotationScript(labels: BrowserAnnotationLabels): string {
   return `
 (() => {
   const labels = ${JSON.stringify(labels)};
@@ -5492,7 +5533,9 @@ interface BrowserTabContentProps {
   onCurrentUrlChange: (value: string) => void;
   onTitleChange?: (value: string) => void;
   onLocalServiceOpen?: (service: LocalWebService) => void;
-  onAnnotationCaptured?: (payload: BrowserAnnotationPayload) => void;
+  draftKey: string;
+  annotationBatch?: CoworkBrowserAnnotationBatch;
+  onAnnotationBatchChange: (batch: CoworkBrowserAnnotationBatch | null) => void;
 }
 
 const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
@@ -5505,7 +5548,9 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
   onCurrentUrlChange,
   onTitleChange,
   onLocalServiceOpen,
-  onAnnotationCaptured,
+  draftKey,
+  annotationBatch,
+  onAnnotationBatchChange,
 }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [canGoBack, setCanGoBack] = useState(false);
@@ -5515,6 +5560,18 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
     BrowserScreenshotStatus.Idle,
   );
   const [isAnnotating, setIsAnnotating] = useState(false);
+  const browserTabIdRef = useRef(crypto.randomUUID());
+  const documentIdRef = useRef(crypto.randomUUID());
+  const navigationVersionRef = useRef(1);
+  const annotationRevisionRef = useRef(0);
+  const annotationBatchRef = useRef(annotationBatch);
+  const pendingCaptureRef = useRef(new Map<string, {
+    resolve: (capture: CoworkBrowserAnnotation['capture']) => void;
+    reject: (error: Error) => void;
+    timeoutId: number;
+  }>());
+  const activeCaptureIdsRef = useRef(new Set<string>());
+  const replacedCaptureAssetsRef = useRef(new Map<string, BrowserAnnotationScreenshotRef>());
   const [localServices, setLocalServices] = useState<LocalWebService[]>([]);
   const [isLoadingLocalServices, setIsLoadingLocalServices] = useState(false);
   const [hoveredToolbarAction, setHoveredToolbarAction] = useState<BrowserToolbarAction | null>(
@@ -5575,6 +5632,216 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
     deviceScale,
     isDeviceToolbarVisible,
   ]);
+
+  useEffect(() => {
+    annotationBatchRef.current = annotationBatch;
+  }, [annotationBatch]);
+
+  const sendAnnotationCommand = useCallback((
+    type: string,
+    batch: CoworkBrowserAnnotationBatch,
+    payload: Partial<BrowserAnnotationGuestEnvelope> = {},
+  ) => {
+    annotationRevisionRef.current += 1;
+    webviewNodeRef.current?.send?.(BrowserAnnotationGuestChannel.Command, {
+      protocolVersion: BrowserAnnotationProtocolVersion,
+      type,
+      browserTabId: batch.browserTabId,
+      documentId: batch.documentId,
+      navigationVersion: batch.navigationVersion,
+      batchId: batch.id,
+      revision: annotationRevisionRef.current,
+      ...payload,
+    } satisfies BrowserAnnotationGuestEnvelope);
+  }, []);
+
+  const commitAnnotationBatch = useCallback((batch: CoworkBrowserAnnotationBatch) => {
+    annotationBatchRef.current = batch;
+    onAnnotationBatchChange(batch);
+  }, [onAnnotationBatchChange]);
+
+  useEffect(() => {
+    if (!isAnnotating || !annotationBatch) return;
+    sendAnnotationCommand(BrowserAnnotationGuestCommandType.Sync, annotationBatch, {
+      annotations: annotationBatch.annotations,
+    });
+  }, [annotationBatch, isAnnotating, sendAnnotationCommand]);
+
+  const captureBrowserAnnotation = useCallback(async (
+    batch: CoworkBrowserAnnotationBatch,
+    annotation: CoworkBrowserAnnotation,
+  ) => {
+    if (activeCaptureIdsRef.current.has(annotation.id)) return;
+    activeCaptureIdsRef.current.add(annotation.id);
+    const requestId = annotation.screenshot.status === BrowserAnnotationScreenshotStatus.Capturing
+      ? annotation.screenshot.requestId
+      : crypto.randomUUID();
+    try {
+      const capture = await new Promise<CoworkBrowserAnnotation['capture']>((resolve, reject) => {
+        const timeoutId = window.setTimeout(() => {
+          pendingCaptureRef.current.delete(requestId);
+          reject(new Error('Browser annotation capture timed out.'));
+        }, BrowserAnnotationLimit.CaptureTimeoutMs);
+        pendingCaptureRef.current.set(requestId, { resolve, reject, timeoutId });
+        sendAnnotationCommand(BrowserAnnotationGuestCommandType.PrepareCapture, batch, {
+          requestId,
+          annotationId: annotation.id,
+        });
+      });
+      const image = await webviewNodeRef.current?.capturePage?.();
+      if (!image) throw new Error('Browser screenshot capture is unavailable.');
+      const saved = await window.electron?.artifact?.saveBrowserAnnotationAsset({
+        draftKey,
+        batchId: batch.id,
+        annotationId: annotation.id,
+        imageDataUrl: image.toDataURL(),
+        viewportWidth: capture.viewportWidth,
+        viewportHeight: capture.viewportHeight,
+        targetRect: capture.targetRect,
+        markerViewportPoint: capture.markerViewportPoint,
+        compact: batch.annotations.length >= BrowserAnnotationLimit.CompactThreshold,
+      });
+      if (!saved?.success || !saved.asset) throw new Error(saved?.error || 'Screenshot save failed.');
+      const current = annotationBatchRef.current;
+      if (!current || current.id !== batch.id) return;
+      const next = {
+        ...current,
+        updatedAt: Date.now(),
+        annotations: current.annotations.map(item => item.id === annotation.id
+          ? {
+              ...item,
+              capture,
+              screenshot: { status: BrowserAnnotationScreenshotStatus.Ready, asset: saved.asset! },
+              updatedAt: Date.now(),
+            }
+          : item),
+      };
+      commitAnnotationBatch(next);
+      sendAnnotationCommand(BrowserAnnotationGuestCommandType.Sync, next, {
+        annotations: next.annotations,
+      });
+      const replacedAsset = replacedCaptureAssetsRef.current.get(annotation.id);
+      replacedCaptureAssetsRef.current.delete(annotation.id);
+      if (replacedAsset && replacedAsset.assetId !== saved.asset.assetId) {
+        void window.electron?.artifact?.deleteBrowserAnnotationAsset({
+          draftKey,
+          batchId: batch.id,
+          annotationId: annotation.id,
+          assetId: replacedAsset.assetId,
+        });
+      }
+    } catch (error) {
+      const current = annotationBatchRef.current;
+      if (current?.id === batch.id) {
+        const next: CoworkBrowserAnnotationBatch = {
+          ...current,
+          updatedAt: Date.now(),
+          annotations: current.annotations.map(item => item.id === annotation.id
+            ? {
+                ...item,
+                screenshot: {
+                  status: BrowserAnnotationScreenshotStatus.Failed,
+                  reason: error instanceof Error && error.message.includes('timed out')
+                    ? 'timeout'
+                    : 'capture-failed',
+                  failedAt: Date.now(),
+                },
+                updatedAt: Date.now(),
+              }
+            : item),
+        };
+        commitAnnotationBatch(next);
+      }
+      const replacedAsset = replacedCaptureAssetsRef.current.get(annotation.id);
+      if (replacedAsset) {
+        replacedCaptureAssetsRef.current.delete(annotation.id);
+        void window.electron?.artifact?.deleteBrowserAnnotationAsset({
+          draftKey,
+          batchId: batch.id,
+          annotationId: annotation.id,
+          assetId: replacedAsset.assetId,
+        });
+      }
+    } finally {
+      activeCaptureIdsRef.current.delete(annotation.id);
+      sendAnnotationCommand(BrowserAnnotationGuestCommandType.ResumeAfterCapture, batch, {
+        requestId,
+        annotationId: annotation.id,
+      });
+    }
+  }, [commitAnnotationBatch, draftKey, sendAnnotationCommand]);
+
+  const handleBrowserAnnotationIpc = useCallback((event: Event) => {
+    const detail = event as Event & { channel?: string; args?: unknown[] };
+    if (detail.channel !== BrowserAnnotationGuestChannel.Event) return;
+    const message = detail.args?.[0] as BrowserAnnotationGuestEnvelope | undefined;
+    const batch = annotationBatchRef.current;
+    if (
+      !message
+      || !batch
+      || message.protocolVersion !== BrowserAnnotationProtocolVersion
+      || message.browserTabId !== batch.browserTabId
+      || message.documentId !== batch.documentId
+      || message.navigationVersion !== batch.navigationVersion
+      || message.batchId !== batch.id
+    ) return;
+    if (message.type === BrowserAnnotationGuestEventType.CloseRequested) {
+      setIsAnnotating(false);
+      sendAnnotationCommand(BrowserAnnotationGuestCommandType.Stop, batch);
+      return;
+    }
+    if (message.type === BrowserAnnotationGuestEventType.CaptureReady && message.requestId && message.capture) {
+      const pending = pendingCaptureRef.current.get(message.requestId);
+      if (!pending) return;
+      window.clearTimeout(pending.timeoutId);
+      pendingCaptureRef.current.delete(message.requestId);
+      pending.resolve(message.capture);
+      return;
+    }
+    if (message.type !== BrowserAnnotationGuestEventType.Changed || !message.annotations) return;
+    for (const incoming of message.annotations) {
+      if (incoming.screenshot.status !== BrowserAnnotationScreenshotStatus.Capturing) continue;
+      const previous = batch.annotations.find(annotation => annotation.id === incoming.id);
+      if (previous?.screenshot.status === BrowserAnnotationScreenshotStatus.Ready) {
+        replacedCaptureAssetsRef.current.set(incoming.id, previous.screenshot.asset);
+      }
+    }
+    for (const removed of batch.annotations.filter(
+      annotation => !message.annotations?.some(item => item.id === annotation.id),
+    )) {
+      if (removed.screenshot.status === BrowserAnnotationScreenshotStatus.Ready) {
+        void window.electron?.artifact?.deleteBrowserAnnotationAsset({
+          draftKey,
+          batchId: batch.id,
+          annotationId: removed.id,
+          assetId: removed.screenshot.asset.assetId,
+        });
+      }
+      const replacedAsset = replacedCaptureAssetsRef.current.get(removed.id);
+      if (replacedAsset) {
+        replacedCaptureAssetsRef.current.delete(removed.id);
+        void window.electron?.artifact?.deleteBrowserAnnotationAsset({
+          draftKey,
+          batchId: batch.id,
+          annotationId: removed.id,
+          assetId: replacedAsset.assetId,
+        });
+      }
+    }
+    const next: CoworkBrowserAnnotationBatch = {
+      ...batch,
+      annotations: message.annotations.slice(0, BrowserAnnotationLimit.MaxAnnotations),
+      pageUrl: currentUrl || batch.pageUrl,
+      pageTitle: message.annotations[0]?.anchor.pageTitle || batch.pageTitle,
+      updatedAt: Date.now(),
+    };
+    commitAnnotationBatch(next);
+    for (const annotation of next.annotations) {
+      if (annotation.screenshot.status === BrowserAnnotationScreenshotStatus.Capturing) {
+        void captureBrowserAnnotation(next, annotation);
+      }
+    }
+  }, [captureBrowserAnnotation, commitAnnotationBatch, currentUrl, draftKey, sendAnnotationCommand]);
 
   const hideAddressOpenExternal = useCallback(() => {
     setIsAddressBarFocused(false);
@@ -5793,6 +6060,16 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
       }
       syncNavigationState(webviewNode);
     };
+    const handleDocumentNavigate = (event: Event) => {
+      const activeBatch = annotationBatchRef.current;
+      if (isAnnotating && activeBatch) {
+        sendAnnotationCommand(BrowserAnnotationGuestCommandType.Stop, activeBatch);
+      }
+      setIsAnnotating(false);
+      documentIdRef.current = crypto.randomUUID();
+      navigationVersionRef.current += 1;
+      handleNavigate(event);
+    };
     const handleTitleUpdated = () => {
       syncBrowserTitle(webviewNode);
     };
@@ -5811,24 +6088,29 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
     webviewNode.addEventListener('did-start-loading', handleStartLoading);
     webviewNode.addEventListener('did-stop-loading', handleStopLoading);
     webviewNode.addEventListener('did-fail-load', handleFailLoad);
-    webviewNode.addEventListener('did-navigate', handleNavigate);
+    webviewNode.addEventListener('did-navigate', handleDocumentNavigate);
     webviewNode.addEventListener('did-navigate-in-page', handleNavigate);
     webviewNode.addEventListener('page-title-updated', handleTitleUpdated);
     webviewNode.addEventListener('dom-ready', handleDomReady);
+    webviewNode.addEventListener('ipc-message', handleBrowserAnnotationIpc);
     return () => {
       webviewNode.removeEventListener('did-start-loading', handleStartLoading);
       webviewNode.removeEventListener('did-stop-loading', handleStopLoading);
       webviewNode.removeEventListener('did-fail-load', handleFailLoad);
-      webviewNode.removeEventListener('did-navigate', handleNavigate);
+      webviewNode.removeEventListener('did-navigate', handleDocumentNavigate);
       webviewNode.removeEventListener('did-navigate-in-page', handleNavigate);
       webviewNode.removeEventListener('page-title-updated', handleTitleUpdated);
       webviewNode.removeEventListener('dom-ready', handleDomReady);
+      webviewNode.removeEventListener('ipc-message', handleBrowserAnnotationIpc);
     };
   }, [
     browserZoomFactor,
     getBrowserAddressForUrl,
+    handleBrowserAnnotationIpc,
+    isAnnotating,
     onAddressChange,
     onCurrentUrlChange,
+    sendAnnotationCommand,
     syncBrowserTitle,
     syncNavigationState,
     webviewNode,
@@ -6200,79 +6482,80 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
   }, [handleCaptureScreenshot]);
 
   const handleToggleAnnotation = useCallback(async () => {
-    if (!webviewNode?.executeJavaScript || !webviewNode.capturePage || !currentUrl) return;
+    if (!webviewNode?.send || !webviewNode.capturePage || !currentUrl) return;
     if (isAnnotating) {
       reportBrowserAction('browser_annotate_cancel');
-      await webviewNode
-        .executeJavaScript('window.__lobsterAnnotationCleanup?.()')
-        .catch(() => undefined);
+      const batch = annotationBatchRef.current;
+      if (batch) sendAnnotationCommand(BrowserAnnotationGuestCommandType.Stop, batch);
       setIsAnnotating(false);
       return;
     }
     reportBrowserAction('browser_annotate_start');
+    const now = Date.now();
+    const currentNormalizedUrl = normalizeBrowserPreviewUrlForMatch(currentUrl);
+    const existing = annotationBatchRef.current?.pageUrl
+      && normalizeBrowserPreviewUrlForMatch(annotationBatchRef.current.pageUrl) === currentNormalizedUrl
+      ? annotationBatchRef.current
+      : undefined;
+    const batch: CoworkBrowserAnnotationBatch = existing || {
+      version: 1,
+      id: crypto.randomUUID(),
+      browserTabId: browserTabIdRef.current,
+      documentId: documentIdRef.current,
+      navigationVersion: navigationVersionRef.current,
+      pageUrl: currentUrl,
+      pageTitle: webviewNode.getTitle?.() || '',
+      annotations: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    commitAnnotationBatch(batch);
     setIsAnnotating(true);
-    try {
-      const labels: BrowserAnnotationLabels = {
-        instruction: t('artifactBrowserAnnotationInstruction'),
+    sendAnnotationCommand(BrowserAnnotationGuestCommandType.Start, batch, {
+      annotations: batch.annotations,
+      labels: {
         placeholder: t('artifactBrowserAnnotationPlaceholder'),
-        send: t('artifactBrowserAnnotationSend'),
-        tag: t('artifactBrowserAnnotationLabelTag'),
-        size: t('artifactBrowserAnnotationLabelSize'),
-        color: t('artifactBrowserAnnotationLabelColor'),
-        font: t('artifactBrowserAnnotationLabelFont'),
-        statusSent: BrowserAnnotationStatus.Sent,
-        statusCancelled: BrowserAnnotationStatus.Cancelled,
-      };
-      const result = (await webviewNode.executeJavaScript(buildBrowserAnnotationScript(labels))) as
-        | BrowserAnnotationResult
-        | undefined;
-      if (result?.status !== BrowserAnnotationStatus.Sent || !result.element || !result.rect) {
-        reportBrowserAction('browser_annotate_end', {
-          result: result?.status === BrowserAnnotationStatus.Cancelled ? 'cancelled' : 'failed',
-        });
-        return;
-      }
-
-      await new Promise(resolve => window.setTimeout(resolve, 80));
-      const image = await webviewNode.capturePage();
-      const imageDataUrl = image.toDataURL();
-      const imageSize = image.getSize?.();
-      const screenshot: BrowserAnnotationScreenshotInfo = {
-        width: Math.round(imageSize?.width || result.viewport?.width || 0),
-        height: Math.round(imageSize?.height || result.viewport?.height || 0),
-        devicePixelRatio: result.viewport?.devicePixelRatio || window.devicePixelRatio || 1,
-      };
-      const annotation = normalizeBrowserAnnotationRect(result.rect, result.viewport, screenshot);
-      onAnnotationCaptured?.({
-        comment: result.comment?.trim() ?? '',
-        imageDataUrl,
-        pageUrl: result.pageUrl || currentUrl,
-        pageTitle: result.pageTitle || '',
-        screenshot,
-        annotation,
-        element: result.element,
-      });
-      reportBrowserAction('browser_annotate_send', {
-        result: 'success',
-        hasComment: Boolean(result.comment?.trim()),
-        annotationElementTag: result.element.tagName,
-      });
-    } catch {
-      reportBrowserAction('browser_annotate_send', {
-        result: 'failed',
-      });
-      window.dispatchEvent(
-        new CustomEvent('app:showToast', {
-          detail: t('artifactBrowserScreenshotFailed'),
-        }),
-      );
-    } finally {
-      await webviewNode
-        ?.executeJavaScript?.('window.__lobsterAnnotationCleanup?.()')
-        .catch(() => undefined);
-      setIsAnnotating(false);
-    }
-  }, [currentUrl, isAnnotating, onAnnotationCaptured, reportBrowserAction, webviewNode]);
+        save: t('artifactBrowserAnnotationSave'),
+        cancel: t('cancel'),
+        remove: t('delete'),
+        settings: t('artifactBrowserAnnotationSettings'),
+        text: t('artifactBrowserAnnotationText'),
+        textColor: t('artifactBrowserAnnotationTextColor'),
+        background: t('artifactBrowserAnnotationBackground'),
+        opacity: t('artifactBrowserAnnotationOpacity'),
+        font: t('artifactBrowserAnnotationFont'),
+        fontSize: t('artifactBrowserAnnotationFontSize'),
+        fontWeight: t('artifactBrowserAnnotationFontWeight'),
+        borderRadius: t('artifactBrowserAnnotationBorderRadius'),
+        borderColor: t('artifactBrowserAnnotationBorderColor'),
+        borderWidth: t('artifactBrowserAnnotationBorderWidth'),
+        width: t('artifactBrowserAnnotationWidth'),
+        height: t('artifactBrowserAnnotationHeight'),
+        padding: t('artifactBrowserAnnotationPadding'),
+        margin: t('artifactBrowserAnnotationMargin'),
+        flexDirection: t('artifactBrowserAnnotationFlexDirection'),
+        justifyContent: t('artifactBrowserAnnotationJustifyContent'),
+        alignItems: t('artifactBrowserAnnotationAlignItems'),
+        gap: t('artifactBrowserAnnotationGap'),
+        top: t('artifactBrowserAnnotationTop'),
+        right: t('artifactBrowserAnnotationRight'),
+        bottom: t('artifactBrowserAnnotationBottom'),
+        left: t('artifactBrowserAnnotationLeft'),
+        horizontal: t('artifactBrowserAnnotationHorizontal'),
+        vertical: t('artifactBrowserAnnotationVertical'),
+        horizontalReverse: t('artifactBrowserAnnotationHorizontalReverse'),
+        verticalReverse: t('artifactBrowserAnnotationVerticalReverse'),
+        start: t('artifactBrowserAnnotationStart'),
+        center: t('artifactBrowserAnnotationCenter'),
+        end: t('artifactBrowserAnnotationEnd'),
+        spaceBetween: t('artifactBrowserAnnotationSpaceBetween'),
+        spaceAround: t('artifactBrowserAnnotationSpaceAround'),
+        spaceEvenly: t('artifactBrowserAnnotationSpaceEvenly'),
+        stretch: t('artifactBrowserAnnotationStretch'),
+        complexText: t('artifactBrowserAnnotationComplexText'),
+      },
+    });
+  }, [commitAnnotationBatch, currentUrl, isAnnotating, reportBrowserAction, sendAnnotationCommand, webviewNode]);
 
   const screenshotButtonTitle =
     screenshotStatus === BrowserScreenshotStatus.Copied
@@ -6402,6 +6685,7 @@ const BrowserTabContent: React.FC<BrowserTabContentProps> = ({
             title={t('artifactBrowserAnnotating')}
           >
             {t('artifactBrowserAnnotating')}
+            {annotationBatch?.annotations.length ? ` · ${annotationBatch.annotations.length}` : ''}
           </button>
         )}
         <button

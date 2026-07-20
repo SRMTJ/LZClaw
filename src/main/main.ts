@@ -49,6 +49,10 @@ import {
 } from '../shared/browserWebAccess/constants';
 import { ClipboardIpc } from '../shared/clipboard/constants';
 import {
+  type CoworkBrowserAnnotationMessageBatch,
+  normalizeBrowserAnnotationBatches,
+} from '../shared/cowork/browserAnnotations';
+import {
   COWORK_MESSAGE_PAGE_SIZE,
   COWORK_SESSION_PAGE_SIZE,
   COWORK_TEMP_ATTACHMENTS_DIR_NAME,
@@ -188,6 +192,8 @@ import {
   appendLoginParams,
   startAuthLocalCallback,
 } from './libs/authLocalCallbackServer';
+import type { BrowserAnnotationAssetIdentity, SaveBrowserAnnotationAssetInput } from './libs/browserAnnotationAssetStore';
+import { BrowserAnnotationAssetStore } from './libs/browserAnnotationAssetStore';
 import {
   clearServerModelMetadata,
   getAllServerModelMetadata,
@@ -3245,6 +3251,7 @@ function buildCoworkUserSelectionMetadata(options: {
   kitReferences?: KitReference[];
   resolvedKitCapabilities?: ResolvedKitCapabilities;
   selectedTextSnippets?: CoworkSelectedTextSnippet[];
+  browserAnnotations?: CoworkBrowserAnnotationMessageBatch[];
   imageAttachmentPreviews?: CoworkImageAttachmentPreview[];
 }): Record<string, unknown> | undefined {
   const metadata: Record<string, unknown> = {
@@ -3269,6 +3276,9 @@ function buildCoworkUserSelectionMetadata(options: {
   if (options.selectedTextSnippets?.length) {
     metadata.selectedTextSnippets = options.selectedTextSnippets;
   }
+  if (options.browserAnnotations?.length) {
+    metadata.browserAnnotations = options.browserAnnotations;
+  }
 
   return Object.keys(metadata).length > 0 ? metadata : undefined;
 }
@@ -3285,6 +3295,10 @@ function normalizeSelectedTextSnippetsForIpc(value: unknown): CoworkSelectedText
 const PRELOAD_PATH = app.isPackaged
   ? path.join(__dirname, 'preload.js')
   : path.join(__dirname, '../dist-electron/preload.js');
+
+const BROWSER_ANNOTATION_PRELOAD_PATH = app.isPackaged
+  ? path.join(__dirname, 'browserAnnotationPreload.js')
+  : path.join(__dirname, '../dist-electron/browserAnnotationPreload.js');
 
 // 获取应用图标路径（Windows 使用 .ico，其他平台使用 .png）
 const getAppIconPath = (): string | undefined => {
@@ -6801,6 +6815,7 @@ if (!gotTheLock) {
         };
         mediaReferences?: MediaAttachmentRefMain[];
         selectedTextSnippets?: CoworkSelectedTextSnippet[];
+        browserAnnotations?: CoworkBrowserAnnotationMessageBatch[];
       },
     ) => {
       try {
@@ -6852,6 +6867,7 @@ if (!gotTheLock) {
         const taskWorkingDirectory = resolveTaskWorkingDirectory(selectedTaskDirectory);
         const runtimeSkillIds = options.runtimeSkillIds ?? options.activeSkillIds;
         const selectedTextSnippets = normalizeSelectedTextSnippetsForIpc(options.selectedTextSnippets);
+        const browserAnnotations = normalizeBrowserAnnotationBatches(options.browserAnnotations);
         if (selectedTextSnippets.length > 0) {
           console.log(
             `[CoworkSelectedText] accepted ${selectedTextSnippets.length} excerpts with `
@@ -6914,6 +6930,7 @@ if (!gotTheLock) {
           kitReferences: options.kitReferences,
           resolvedKitCapabilities: options.resolvedKitCapabilities,
           selectedTextSnippets,
+          browserAnnotations,
           imageAttachmentPreviews,
         });
         coworkStoreInstance.addMessage(session.id, {
@@ -6947,6 +6964,7 @@ if (!gotTheLock) {
             workflowKind,
             mediaReferences: options.mediaReferences,
             selectedTextSnippets,
+            browserAnnotations,
           })
           .catch(error => {
             console.error('[Cowork] session error:', error);
@@ -7007,6 +7025,7 @@ if (!gotTheLock) {
         };
         mediaReferences?: MediaAttachmentRefMain[];
         selectedTextSnippets?: CoworkSelectedTextSnippet[];
+        browserAnnotations?: CoworkBrowserAnnotationMessageBatch[];
       },
     ) => {
       try {
@@ -7040,6 +7059,7 @@ if (!gotTheLock) {
           );
         }
         const selectedTextSnippets = normalizeSelectedTextSnippetsForIpc(options.selectedTextSnippets);
+        const browserAnnotations = normalizeBrowserAnnotationBatches(options.browserAnnotations);
         if (selectedTextSnippets.length > 0) {
           console.log(
             `[CoworkSelectedText] accepted ${selectedTextSnippets.length} excerpts with `
@@ -7103,6 +7123,7 @@ if (!gotTheLock) {
             workflowKind,
             mediaReferences: options.mediaReferences,
             selectedTextSnippets,
+            browserAnnotations,
           })
           .catch(error => {
             console.error('[Cowork] continue error:', error);
@@ -10305,6 +10326,53 @@ if (!gotTheLock) {
     }
   });
 
+  const browserAnnotationAssetStore = new BrowserAnnotationAssetStore(
+    path.join(app.getPath('userData'), 'browser-annotation-assets'),
+  );
+  ipcMain.handle(
+    ArtifactPreviewIpc.SaveBrowserAnnotationAsset,
+    (_event, input: SaveBrowserAnnotationAssetInput) => {
+      try {
+        return { success: true, asset: browserAnnotationAssetStore.save(input) };
+      } catch (error) {
+        console.error('[BrowserAnnotation] failed to save screenshot asset:', error);
+        return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+      }
+    },
+  );
+  ipcMain.handle(
+    ArtifactPreviewIpc.ReadBrowserAnnotationAsset,
+    (_event, input: BrowserAnnotationAssetIdentity) => {
+      try {
+        return { success: true, ...browserAnnotationAssetStore.read(input) };
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+      }
+    },
+  );
+  ipcMain.handle(
+    ArtifactPreviewIpc.DeleteBrowserAnnotationAsset,
+    (_event, input: BrowserAnnotationAssetIdentity) => {
+      try {
+        browserAnnotationAssetStore.delete(input);
+        return { success: true };
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+      }
+    },
+  );
+  ipcMain.handle(
+    ArtifactPreviewIpc.DeleteBrowserAnnotationBatchAssets,
+    (_event, input: Pick<BrowserAnnotationAssetIdentity, 'draftKey' | 'batchId'>) => {
+      try {
+        browserAnnotationAssetStore.deleteBatch(input);
+        return { success: true };
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+      }
+    },
+  );
+
   ipcMain.handle(
     LocalWebServicesIpc.List,
     async (_event, options?: ListLocalWebServicesOptions) => {
@@ -10765,6 +10833,7 @@ if (!gotTheLock) {
       webPreferences.devTools = isDev;
       webPreferences.partition = ArtifactBrowserPartition.Default;
       delete webPreferences.preload;
+      webPreferences.preload = BROWSER_ANNOTATION_PRELOAD_PATH;
 
       params.partition = ArtifactBrowserPartition.Default;
       params.allowpopups = 'false';
