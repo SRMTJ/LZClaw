@@ -276,8 +276,11 @@ const App: React.FC = () => {
         }
         mark('model resolution done');
 
-        const agreed = await window.electron.store.get('privacy_agreed');
-        setPrivacyAgreed(agreed === true);
+        const hasAgreedToPrivacy = await window.electron.store.get('privacy_agreed') === true;
+        setPrivacyAgreed(hasAgreedToPrivacy);
+        if (hasAgreedToPrivacy) {
+          setShowWelcome(true);
+        }
         mark('privacy check done');
 
         setIsInitialized(true);
