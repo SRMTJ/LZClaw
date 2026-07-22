@@ -10,16 +10,43 @@
 ; which electron-builder inserts inside the install section -- right after
 ; the user clicks Install and, critically, *before* uninstallOldVersion.
 
-; Note: clobbers $0 (nsExec exit status). Callers that need a previous exit
-; code after this macro must copy it to another register first ($R2 by
-; convention below). [Console]::Out.Write emits no trailing newline, so the
-; timestamp can be embedded mid-line in log writes.
+; Timestamp from NSIS built-ins (FileFunc ${GetTime}). The previous
+; implementation spawned a PowerShell process per call just to format a
+; timestamp -- with 20+ call sites that added tens of seconds per install on
+; machines where security software inspects every process launch. Second
+; precision is enough: phase durations are carried separately as elapsed_ms.
+;
+; Preserves every register (unlike the old version, which clobbered $0; the
+; "copy exit codes to $R2 first" convention at call sites is kept anyway).
+; OUTVAR must not be $0-$6.
 !macro GetTimestamp OUTVAR
-  nsExec::ExecToStack 'powershell -NoProfile -NonInteractive -Command "[Console]::Out.Write([DateTime]::Now.ToString(\"yyyy-MM-dd HH:mm:ss.fff\"))"'
-  Pop $0
+  Push $0
+  Push $1
+  Push $2
+  Push $3
+  Push $4
+  Push $5
+  Push $6
+  !ifdef BUILD_UNINSTALLER
+    ${un.GetTime} "" "L" $0 $1 $2 $3 $4 $5 $6
+  !else
+    ${GetTime} "" "L" $0 $1 $2 $3 $4 $5 $6
+  !endif
+  ; $0=day $1=month $2=year $3=day-of-week name $4=hour $5=minute $6=second
+  IntFmt $0 "%02d" $0
+  IntFmt $1 "%02d" $1
+  IntFmt $4 "%02d" $4
+  IntFmt $5 "%02d" $5
+  IntFmt $6 "%02d" $6
+  StrCpy $0 "$2-$1-$0 $4:$5:$6"
+  Pop $6
+  Pop $5
+  Pop $4
+  Pop $3
+  Pop $2
+  Pop $1
+  Exch $0
   Pop ${OUTVAR}
-  StrCmp $0 "0" +2
-    StrCpy ${OUTVAR} "unknown-time"
 !macroend
 
 !macro customHeader
@@ -84,6 +111,26 @@
 ;    before uninstallOldVersion and file extraction
 ;  - uninstaller: un.install section (assisted) or un.onInit (silent /S)
 !macro customCheckAppRunning
+  !ifndef BUILD_UNINSTALLER
+    ; In-app silent updates (/S) have no installer UI at all, so without this
+    ; the user stares at a dead app for minutes and may try to relaunch it
+    ; mid-replace. Banner is a plugin-owned window, so it shows even in
+    ; silent mode; interactive installs keep the wizard and never see it.
+    ; The window dies with the installer process, so no failure path can
+    ; leave it behind.
+    ;
+    ; ASCII-only, deliberately -- comments included: the darwin makensis
+    ; builds used for local syntax checks reject any non-ASCII byte in this
+    ; file (UTF-8 with or without BOM, UTF-16, and they crash on ${U+xxxx}
+    ; escapes), and the file is read line-by-line so even a comment breaks
+    ; it. The pre-quit in-app modal already explains the update in Chinese.
+    ; To localize this string, first verify a Chinese literal compiles with
+    ; the Windows build machine's makensis, then swap it there.
+    ${If} ${Silent}
+      Banner::show /NOUNLOAD "Updating LobsterAI, please wait..."
+    ${EndIf}
+  !endif
+
   !insertmacro stopLobsterAIProcesses
 
   !ifndef BUILD_UNINSTALLER
@@ -180,6 +227,58 @@
     !insertmacro GetTimestamp $8
     FileWrite $9 "$8 phase=old-install-cleanup-complete elapsed_ms=$5 renamed_path=$3 cleanup_mode=async$\r$\n"
     FileClose $9
+
+    ; -- Windows Defender exclusions, added BEFORE any file extraction --
+    ; Field data that motivated the move: on the same SSD, NSIS payload
+    ; extraction took 6m39s while the tar phase -- the only part the old
+    ; customInstall-time exclusions covered -- took 31s. Adding them here
+    ; (user has confirmed, old dir is renamed away, nothing extracted yet)
+    ; puts the payload extraction, ~90% of install time, under the same
+    ; protection.
+    ;
+    ; Scope:
+    ;  - win-resources.tar: the single biggest win (a ~2GB file whose
+    ;    close-handle full scan is the worst case). Temporary: the entry is
+    ;    removed again at the end of customInstall, and a successful
+    ;    extraction deletes the file itself anyway.
+    ;  - cfmind / python-win / app.asar.unpacked: the same permanent entries
+    ;    the previous design used (runtime trees, thousands of small files).
+    ;  - SKILLs is deliberately NO LONGER excluded: it is user-writable and
+    ;    its content is executed by the agent, so it must stay scannable.
+    ;    customInstall drops the entry older installers left behind.
+    ;  - /NoDefenderExclusion skips adding anything (enterprise IT opt-out,
+    ;    also passed by the app when enterprise config demands it). A failing
+    ;    Add-MpPreference (e.g. locked by Intune policy) degrades the same
+    ;    way: slower install, otherwise unaffected.
+    ; GetOptions leaves the error flag set when the switch is absent, so:
+    ; error (switch absent) -> fall through and add exclusions;
+    ; no error (switch present) -> jump past the whole block.
+    ${GetParameters} $R9
+    ClearErrors
+    ${GetOptions} $R9 "/NoDefenderExclusion" $R8
+    IfErrors 0 DefenderExclusionAddSkipped
+
+    DetailPrint "[Installer] Adding Windows Defender exclusions before extraction"
+    FileOpen $9 "$APPDATA\LobsterAI\install-timing.log" a
+    FileSeek $9 0 END
+    !insertmacro GetTimestamp $8
+    FileWrite $9 "$8 phase=defender-exclusion-start$\r$\n"
+    FileClose $9
+    System::Call 'kernel32::GetTickCount()i .r7'
+    CreateDirectory "$INSTDIR\resources\cfmind"
+    CreateDirectory "$INSTDIR\resources\python-win"
+    CreateDirectory "$INSTDIR\resources\SKILLs"
+    nsExec::ExecToLog 'powershell -NoProfile -NonInteractive -Command "try { Add-MpPreference -ExclusionPath $\"$INSTDIR\resources\win-resources.tar$\",$\"$INSTDIR\resources\cfmind$\",$\"$INSTDIR\resources\python-win$\",$\"$INSTDIR\resources\app.asar.unpacked$\" -ErrorAction Stop; Write-Output \"[Installer] Windows Defender exclusions added\" } catch { Write-Output (\"[Installer] Windows Defender exclusions skipped: \" + $$_.Exception.Message) }"'
+    Pop $0
+    StrCpy $R2 $0
+    System::Call 'kernel32::GetTickCount()i .r6'
+    IntOp $5 $6 - $7
+    FileOpen $9 "$APPDATA\LobsterAI\install-timing.log" a
+    FileSeek $9 0 END
+    !insertmacro GetTimestamp $8
+    FileWrite $9 "$8 phase=defender-exclusion-complete exit=$R2 elapsed_ms=$5$\r$\n"
+    FileClose $9
+    DefenderExclusionAddSkipped:
   !endif
 !macroend
 
@@ -200,31 +299,10 @@
   ; All large resource directories (cfmind/, SKILLs/, python-win/) are packed
   ; into a single tar file. NSIS 7z extracts one large file almost instantly;
   ; we then unpack the tar here using Electron's Node runtime.
-
-  ; -- Windows Defender Exclusion (optional, best-effort) --
-  ; Add exclusions before tar extraction so Defender does not slow down the
-  ; expansion of large resource trees.
-  CreateDirectory "$INSTDIR\resources\cfmind"
-  CreateDirectory "$INSTDIR\resources\python-win"
-  CreateDirectory "$INSTDIR\resources\SKILLs"
-  DetailPrint "[Installer] Preparing resource directories"
-  DetailPrint "[Installer] Adding Windows Defender exclusions before extraction"
-  FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
-  FileSeek $2 0 END
-  !insertmacro GetTimestamp $8
-  FileWrite $2 "$8 phase=defender-exclusion-start$\r$\n"
-  FileClose $2
-  System::Call 'kernel32::GetTickCount()i .r7'
-  nsExec::ExecToLog 'powershell -NoProfile -NonInteractive -Command "try { Add-MpPreference -ExclusionPath $\"$INSTDIR\resources\cfmind$\",$\"$INSTDIR\resources\python-win$\",$\"$INSTDIR\resources\SKILLs$\",$\"$INSTDIR\resources\app.asar.unpacked$\" -ErrorAction Stop; Write-Output \"[Installer] Windows Defender exclusions added\" } catch { Write-Output (\"[Installer] Windows Defender exclusions skipped: \" + $$_.Exception.Message) }"'
-  Pop $0
-  StrCpy $R2 $0
-  System::Call 'kernel32::GetTickCount()i .r6'
-  IntOp $5 $6 - $7
-  FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
-  FileSeek $2 0 END
-  !insertmacro GetTimestamp $8
-  FileWrite $2 "$8 phase=defender-exclusion-complete exit=$R2 elapsed_ms=$5$\r$\n"
-  FileClose $2
+  ;
+  ; Defender exclusions were already added in customCheckAppRunning, before
+  ; the NSIS payload extraction; the temporary/legacy entries are trimmed at
+  ; the end of this macro.
 
   System::Call 'Kernel32::SetEnvironmentVariable(t "ELECTRON_RUN_AS_NODE", t "1")i'
 
@@ -405,12 +483,31 @@
   ; The unpack script is deleted in TarExtractSucceeded above; after a failed
   ; extraction it is intentionally kept alongside win-resources.tar.
 
+  ; -- Trim temporary/legacy Defender exclusions --
+  ; The win-resources.tar entry only mattered during extraction; the SKILLs
+  ; entry is what older installers added permanently and must not survive an
+  ; upgrade (user-writable, agent-executed -- it has to stay scannable).
+  ; Unconditional (no skip-flag check): this only ever narrows exclusions.
+  ; Best effort: entries that do not exist are silently ignored.
+  nsExec::ExecToStack 'powershell -NoProfile -NonInteractive -Command "try { Remove-MpPreference -ExclusionPath $\"$INSTDIR\resources\win-resources.tar$\",$\"$INSTDIR\resources\SKILLs$\" -ErrorAction SilentlyContinue } catch {}"'
+  Pop $0
+  Pop $1
+  FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
+  FileSeek $2 0 END
+  !insertmacro GetTimestamp $8
+  FileWrite $2 "$8 phase=defender-exclusion-trim-complete exit=$0$\r$\n"
+  FileClose $2
+
   FileOpen $2 "$APPDATA\LobsterAI\install-timing.log" a
   FileSeek $2 0 END
   !insertmacro GetTimestamp $8
   FileWrite $2 "$8 phase=install-complete$\r$\n"
   FileClose $2
   DetailPrint "[Installer] Installation complete"
+
+  ${If} ${Silent}
+    Banner::destroy
+  ${EndIf}
 !macroend
 
 ; customUnInit intentionally not defined: the uninstaller stops app processes
@@ -420,8 +517,11 @@
 
 !macro customUnInstall
   ; -- Remove Windows Defender Exclusion on uninstall --
-  ; Clean up the exclusions we added during installation.
-  nsExec::ExecToStack 'powershell -NoProfile -NonInteractive -Command "try { Remove-MpPreference -ExclusionPath $\"$INSTDIR\resources\cfmind$\",$\"$INSTDIR\resources\python-win$\",$\"$INSTDIR\resources\SKILLs$\",$\"$INSTDIR\resources\app.asar.unpacked$\" -ErrorAction SilentlyContinue } catch {}"'
+  ; Clean up every exclusion any installer version may have added: the
+  ; current permanent set, the SKILLs entry from older versions, and the
+  ; temporary win-resources.tar entry in case an install was interrupted
+  ; before its trim step ran.
+  nsExec::ExecToStack 'powershell -NoProfile -NonInteractive -Command "try { Remove-MpPreference -ExclusionPath $\"$INSTDIR\resources\cfmind$\",$\"$INSTDIR\resources\python-win$\",$\"$INSTDIR\resources\SKILLs$\",$\"$INSTDIR\resources\app.asar.unpacked$\",$\"$INSTDIR\resources\win-resources.tar$\" -ErrorAction SilentlyContinue } catch {}"'
   Pop $0
   Pop $1
 !macroend
