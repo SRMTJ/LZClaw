@@ -34,6 +34,10 @@ export const getKitStoreUrl = () => isTestModeEnabled()
   : 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/prod/kit-store';
 
 // 登录地址
+const LZCLAW_LOGIN_PAGE_URL = 'http://localhost:3100/login';
+
+export const getLoginPageUrl = () => LZCLAW_LOGIN_PAGE_URL;
+
 export const getLoginOvermindUrl = () => isTestModeEnabled()
   ? 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/test/login-url'
   : 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/prod/login-url';

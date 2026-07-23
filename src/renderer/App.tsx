@@ -10,6 +10,7 @@ import {
   AppUpdateStatus,
   isManualDownloadUrl,
 } from '../shared/appUpdate/constants';
+import type { AuthLoginInAppBounds } from '../shared/auth/constants';
 import { ProviderAuthType, ProviderName, ProviderRegistry } from '../shared/providers';
 import { CoworkView } from './components/cowork';
 import { CoworkShortcutDirection, CoworkUiEvent } from './components/cowork/constants';
@@ -143,12 +144,14 @@ const App: React.FC = () => {
   const [isUserInitiatedUpdateFlowActive, setIsUserInitiatedUpdateFlowActive] = useState(false);
   const [privacyAgreed, setPrivacyAgreed] = useState<boolean | null>(null);
   const [showWelcome, setShowWelcome] = useState(false);
+  const [welcomeLoginStarted, setWelcomeLoginStarted] = useState(false);
   const [enterpriseConfig, setEnterpriseConfig] = useState<{
     ui?: Record<string, 'hide' | 'disable' | 'readonly'>;
     disableUpdate?: boolean;
   } | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const askAiFocusTimerRef = useRef<number | null>(null);
+  const authGatedContentRef = useRef<HTMLDivElement>(null);
   const hasInitialized = useRef(false);
   const hasReportedAppStartedRef = useRef(false);
   const previousUpdateStatusRef = useRef<AppUpdateRuntimeState['status']>(AppUpdateStatus.Idle);
@@ -160,6 +163,8 @@ const App: React.FC = () => {
   const pendingPermission = useSelector(selectFirstCurrentSessionPendingPermission);
   const pendingPermissions = useSelector(selectPendingPermissions);
   const authUser = useSelector((state: RootState) => state.auth.user);
+  const authIsLoading = useSelector((state: RootState) => state.auth.isLoading);
+  const isAuthGateActive = privacyAgreed === true && !authIsLoading && !authUser;
   const isWindows = window.electron.platform === 'win32';
   const [minimizedPermissionIds, setMinimizedPermissionIds] = useState<string[]>([]);
   const isPendingPermissionMinimized = pendingPermission
@@ -724,14 +729,69 @@ const App: React.FC = () => {
     window.electron.window.close();
   }, []);
 
-  const handleWelcomeLogin = useCallback(async () => {
-    setShowWelcome(false);
-    await authService.login();
+  const handleWelcomeLogin = useCallback(async (bounds: AuthLoginInAppBounds) => {
+    if (authUser) {
+      await window.electron.auth.closeLoginInApp();
+      setWelcomeLoginStarted(false);
+      setShowWelcome(false);
+      return;
+    }
+
+    setWelcomeLoginStarted(true);
+    try {
+      await authService.loginInApp(bounds);
+    } catch (error) {
+      setWelcomeLoginStarted(false);
+      throw error;
+    }
+  }, [authUser]);
+  const handleWelcomeLoginCancel = useCallback(() => {
+    setWelcomeLoginStarted(false);
   }, []);
   const handleWelcomeCustomModel = useCallback(() => {
+    setWelcomeLoginStarted(false);
+    if (!authUser) {
+      setShowWelcome(true);
+      return;
+    }
     setShowWelcome(false);
     handleShowSettings({ initialTab: 'model' });
-  }, [handleShowSettings]);
+  }, [authUser, handleShowSettings]);
+
+  useEffect(() => {
+    if (
+      showWelcome
+      && welcomeLoginStarted
+      && authUser
+    ) {
+      void window.electron.auth.closeLoginInApp();
+      setShowWelcome(false);
+      setWelcomeLoginStarted(false);
+    }
+  }, [authUser, showWelcome, welcomeLoginStarted]);
+
+  useEffect(() => {
+    if (
+      privacyAgreed === true
+      && !authIsLoading
+      && !authUser
+    ) {
+      void window.electron.auth.closeLoginInApp();
+      setWelcomeLoginStarted(false);
+      setShowSettings(false);
+      setShowWelcome(true);
+    }
+  }, [authIsLoading, authUser, privacyAgreed]);
+
+  useEffect(() => {
+    const content = authGatedContentRef.current;
+    if (!content) return;
+    if (isAuthGateActive) {
+      content.setAttribute('inert', '');
+    } else {
+      content.removeAttribute('inert');
+    }
+  }, [isAuthGateActive]);
 
   const handlePermissionResponse = useCallback(async (result: CoworkPermissionResult) => {
     if (!pendingPermission) return;
@@ -1172,7 +1232,8 @@ const App: React.FC = () => {
   const isOverlayActive = showSettings
     || showUpdateModal
     || isPermissionModalOpen
-    || isUpdateInteractionBlocked;
+    || isUpdateInteractionBlocked
+    || isAuthGateActive;
   // Keep the badge visible while downloading so the collapsed-sidebar layouts
   // still surface progress; only a plain re-check hides nothing new.
   const shouldShowUpdateBadge = updateInfo && appUpdateState.status !== AppUpdateStatus.Checking;
@@ -1193,7 +1254,10 @@ const App: React.FC = () => {
       onExpandedChange={setIsUpdateCardExpanded}
     />
   ) : null;
-  const canUseWindowsTopBarActions = isInitialized && !initError && !isUpdateInteractionBlocked;
+  const canUseWindowsTopBarActions = isInitialized
+    && !initError
+    && !isUpdateInteractionBlocked
+    && !isAuthGateActive;
   const canUseWindowsCollapsedTopBarActions = canUseWindowsTopBarActions && isSidebarCollapsed;
   const collapsedHeaderUpdateBadge = isSidebarCollapsed && !isWindows ? updateBadge : null;
   const windowsStandaloneTitleBar = isWindows ? (
@@ -1279,8 +1343,10 @@ const App: React.FC = () => {
       )}
       {windowsStandaloneTitleBar}
       <div
+        ref={authGatedContentRef}
         className="relative flex flex-1 min-h-0 overflow-hidden"
         aria-busy={isUpdateInteractionBlocked}
+        aria-hidden={isAuthGateActive}
       >
         <Sidebar
           onShowLogin={handleShowLogin}
@@ -1373,7 +1439,7 @@ const App: React.FC = () => {
       />
 
       {/* 设置窗口显示在所有主内容之上，但不影响主界面的交互 */}
-      {showSettings && (
+      {showSettings && !isAuthGateActive && (
         <Settings
           onClose={handleCloseSettings}
           initialTab={settingsOptions.initialTab}
@@ -1405,7 +1471,9 @@ const App: React.FC = () => {
       )}
       {showWelcome && (
         <WelcomeDialog
+          loginRequired={isAuthGateActive}
           onLogin={handleWelcomeLogin}
+          onLoginCancel={handleWelcomeLoginCancel}
           onCustomModel={handleWelcomeCustomModel}
         />
       )}

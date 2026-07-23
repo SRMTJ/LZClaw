@@ -10,7 +10,11 @@ import {
   AsrIpcChannel,
   type AsrRealtimeSessionRequest,
 } from '../shared/asr/constants';
-import { AuthIpcChannel } from '../shared/auth/constants';
+import {
+  AuthIpcChannel,
+  type AuthLoginInAppBounds,
+  type AuthLoginInAppRequest,
+} from '../shared/auth/constants';
 import { BrowserIpc, type BrowserRuntimeProfile } from '../shared/browserWebAccess/constants';
 import { ClipboardIpc } from '../shared/clipboard/constants';
 import { CoworkIpcChannel } from '../shared/cowork/constants';
@@ -1052,6 +1056,15 @@ contextBridge.exposeInMainWorld('electron', {
   },
   auth: {
     login: (loginUrl?: string) => ipcRenderer.invoke('auth:login', { loginUrl }),
+    loginInApp: (loginUrl: string | undefined, bounds: AuthLoginInAppBounds) => ipcRenderer.invoke(AuthIpcChannel.LoginInApp, {
+      loginUrl,
+      bounds,
+    } satisfies AuthLoginInAppRequest),
+    updateLoginInAppBounds: (bounds: AuthLoginInAppBounds) => ipcRenderer.invoke(
+      AuthIpcChannel.UpdateLoginInAppBounds,
+      { bounds } satisfies AuthLoginInAppRequest,
+    ),
+    closeLoginInApp: () => ipcRenderer.invoke(AuthIpcChannel.CloseLoginInApp),
     exchange: (code: string) => ipcRenderer.invoke('auth:exchange', { code }),
     getUser: () => ipcRenderer.invoke('auth:getUser'),
     getQuota: () => ipcRenderer.invoke('auth:getQuota'),

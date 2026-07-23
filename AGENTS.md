@@ -486,6 +486,66 @@ Scheduled tasks:
 Use branch names like `feat/...` or `fix/...`. Do not use a `codex/...` prefix
 unless the user explicitly asks for it.
 
+### LZClaw Customization And Upstream Merge Policy
+
+The long-lived LZClaw customization branch is `dev-htmm-v1`. Treat `main` as
+the upstream baseline.
+
+- Perform LZClaw product customization on `dev-htmm-v1`. Do not modify, commit
+  to, or push `main` unless the user explicitly changes this policy.
+- Before editing, confirm the repository root, current branch, and worktree
+  state with `git rev-parse --show-toplevel`, `git branch --show-current`, and
+  `git status --short --branch`.
+- Compare target files with `origin/main` before changing conflict-prone code
+  and prefer existing extension points.
+- Keep fork-specific features in focused modules. Entry files such as
+  `src/main/main.ts` and `src/renderer/App.tsx` should contain only the wiring
+  needed to register or render the feature.
+- Prefer additive changes: new modules, components, shared types, IPC channels,
+  options, and compatibility fallbacks. Preserve existing upstream contracts
+  unless the requested behavior requires a deliberate breaking change.
+- Centralize cross-process IPC constants and types in `src/shared`. Do not
+  scatter channel-name literals across main, preload, and renderer code.
+- Keep each feature in a separate commit. Do not mix unrelated refactors,
+  formatting-only churn, dependency updates, local configuration, or generated
+  output into a feature change.
+- Do not commit `.codex-run/`, logs, local databases, build output, secrets,
+  machine-specific environment files, or local-only `.npmrc` changes.
+- Do not change `package.json`, lockfiles, dependencies, or build scripts unless
+  the feature actually requires it.
+- Do not use whole-file `ours` or `theirs` conflict resolution. Compare both
+  sides and preserve the required behavior from each side.
+- During an upstream merge, prefer `origin/main` for general infrastructure,
+  dependency, build, and runtime updates. Preserve `dev-htmm-v1` behavior for
+  LZClaw branding, onboarding, and product-specific login experiences.
+- Review authentication, tokens, cookies, permissions, preload exposure, and
+  Electron security settings manually whenever either side changes them.
+- For a pushed long-lived branch, merge `origin/main` into `dev-htmm-v1`
+  instead of rewriting shared history with rebase.
+- Do not push, open a PR, or create a commit until the user requests or confirms
+  that action.
+
+Use this upstream synchronization sequence:
+
+```bash
+git switch dev-htmm-v1
+git status --short --branch
+git fetch origin
+git rev-list --left-right --count HEAD...origin/main
+git merge --no-edit origin/main
+```
+
+After resolving an upstream merge, run the verification appropriate to the
+changed areas. The default Electron/authentication gate is:
+
+```bash
+npx eslint --ext ts,tsx --report-unused-disable-directives --max-warnings 0 <files>
+npm run compile:electron
+npx tsc --project tsconfig.json --noEmit
+npx vitest run src/main/libs/authLocalCallbackServer.test.ts src/main/libs/authCallbackRouter.test.ts
+git diff --check
+```
+
 Do not create commits until the user has tested and confirmed, unless they
 explicitly asked you to commit.
 

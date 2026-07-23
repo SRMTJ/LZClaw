@@ -5,6 +5,9 @@ import type {
   AsrRealtimeSessionResult,
 } from '../../shared/asr/constants';
 import type {
+  AuthLoginInAppBounds,
+} from '../../shared/auth/constants';
+import type {
   BrowserDiagnosticResult,
   BrowserRuntimeProfile,
 } from '../../shared/browserWebAccess/constants';
@@ -1647,6 +1650,9 @@ interface IElectronAPI {
   };
   auth: {
     login: (loginUrl?: string) => Promise<{ success: boolean; error?: string }>;
+    loginInApp: (loginUrl: string | undefined, bounds: AuthLoginInAppBounds) => Promise<{ success: boolean; error?: string }>;
+    updateLoginInAppBounds: (bounds: AuthLoginInAppBounds) => Promise<{ success: boolean }>;
+    closeLoginInApp: () => Promise<{ success: boolean }>;
     exchange: (
       code: string,
     ) => Promise<{ success: boolean; user?: any; quota?: any; error?: string }>;
@@ -1712,6 +1718,9 @@ interface IElectronAPI {
   };
   auth: {
     login: (loginUrl?: string) => Promise<{ success: boolean; error?: string }>;
+    loginInApp: (loginUrl: string | undefined, bounds: AuthLoginInAppBounds) => Promise<{ success: boolean; error?: string }>;
+    updateLoginInAppBounds: (bounds: AuthLoginInAppBounds) => Promise<{ success: boolean }>;
+    closeLoginInApp: () => Promise<{ success: boolean }>;
     exchange: (code: string) => Promise<{
       success: boolean;
       user?: import('../store/slices/authSlice').UserProfile;

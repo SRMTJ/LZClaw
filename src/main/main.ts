@@ -37,7 +37,10 @@ import { AppIpcChannel } from '../shared/app/constants';
 import { AppSettingsAutoLaunchErrorCode, AppSettingsIpc } from '../shared/appSettings/constants';
 import { AppUpdateIpc } from '../shared/appUpdate/constants';
 import { ArtifactBrowserPartition, ArtifactPreviewIpc, ArtifactPreviewProtocol } from '../shared/artifactPreview/constants';
-import { AuthIpcChannel } from '../shared/auth/constants';
+import {
+  AuthIpcChannel,
+  type AuthLoginInAppRequest,
+} from '../shared/auth/constants';
 import {
   type BrowserDiagnosticResultStep,
   BrowserDiagnosticStatus,
@@ -183,6 +186,7 @@ import {
 } from './libs/agentEngine';
 import { AppUpdateCoordinator, INSTALLATION_UUID_KEY } from './libs/appUpdateCoordinator';
 import { AuthCallbackRouter } from './libs/authCallbackRouter';
+import { AuthInAppLoginViewController } from './libs/authInAppLoginView';
 import {
   appendCallbackReturnTo,
   appendLoginParams,
@@ -235,6 +239,7 @@ import {
 } from './libs/dataMigration/dataMigrationService';
 import { DesktopNotificationManager } from './libs/desktopNotificationManager';
 import {
+  getAuthApiBaseUrl,
   getHtmlSharePublicBaseUrl,
   getKitStoreUrl,
   getPortalTasksUrl,
@@ -3822,6 +3827,19 @@ if (!gotTheLock) {
     }
   };
 
+  const authInAppLoginView = new AuthInAppLoginViewController({
+    getMainWindow: () => mainWindow,
+    isDev,
+    onAuthCode: code => {
+      authCallbackRouter.handleAuthCode(code);
+      focusMainWindow('embedded auth callback');
+    },
+    onAuthDeepLink: url => {
+      authCallbackRouter.handleDeepLink(url);
+      focusMainWindow('embedded auth deep link');
+    },
+  });
+
   ipcMain.on('log:fromRenderer', (_event, level: string, tag: string, message: string) => {
     const fn = level === 'error' ? console.error
       : level === 'warn' ? console.warn
@@ -4265,7 +4283,7 @@ if (!gotTheLock) {
       try {
         const tokens = getAuthTokens();
         if (!tokens?.refreshToken) return null;
-        const serverBaseUrl = getServerApiBaseUrl();
+        const serverBaseUrl = getAuthApiBaseUrl();
         const refreshUrl = `${serverBaseUrl}/api/auth/refresh`;
         console.log(`[Auth] requesting token refresh (reason: ${reason}) at ${refreshUrl}`);
         const resp = await net.fetch(refreshUrl, {
@@ -5305,9 +5323,35 @@ if (!gotTheLock) {
     }
   });
 
+  ipcMain.handle(AuthIpcChannel.LoginInApp, async (_event, request: AuthLoginInAppRequest) => {
+    try {
+      console.log('[Auth] starting embedded login view with local callback server');
+      await authInAppLoginView.open({
+        loginUrl: request?.loginUrl || `${getServerApiBaseUrl()}/login`,
+        bounds: request?.bounds,
+      });
+      return { success: true };
+    } catch (error) {
+      console.error('[Auth] embedded login failed:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to open embedded login',
+      };
+    }
+  });
+
+  ipcMain.handle(AuthIpcChannel.UpdateLoginInAppBounds, async (_event, request: AuthLoginInAppRequest) => ({
+    success: authInAppLoginView.updateBounds(request?.bounds),
+  }));
+
+  ipcMain.handle(AuthIpcChannel.CloseLoginInApp, async () => {
+    await authInAppLoginView.close();
+    return { success: true };
+  });
+
   ipcMain.handle('auth:exchange', async (_event, { code }: { code: string }) => {
     try {
-      const serverBaseUrl = getServerApiBaseUrl();
+      const serverBaseUrl = getAuthApiBaseUrl();
       const exchangeUrl = `${serverBaseUrl}/api/auth/exchange`;
       console.log(`[Auth] requesting auth exchange at ${exchangeUrl}`);
       const resp = await net.fetch(exchangeUrl, {
@@ -5351,7 +5395,7 @@ if (!gotTheLock) {
     try {
       const tokens = getAuthTokens();
       if (!tokens) return { success: false };
-      const serverBaseUrl = getServerApiBaseUrl();
+      const serverBaseUrl = getAuthApiBaseUrl();
       // Fetch user profile
       const profileResp = await fetchWithAuth(`${serverBaseUrl}/api/user/profile`);
       if (!profileResp.ok) return { success: false };
@@ -5386,7 +5430,7 @@ if (!gotTheLock) {
     try {
       const tokens = getAuthTokens();
       if (!tokens) return { success: false };
-      const serverBaseUrl = getServerApiBaseUrl();
+      const serverBaseUrl = getAuthApiBaseUrl();
       const resp = await fetchWithAuth(`${serverBaseUrl}/api/user/quota`);
       if (!resp.ok) return { success: false };
       const body = (await resp.json()) as { code: number; data: Record<string, unknown> };
@@ -5404,7 +5448,7 @@ if (!gotTheLock) {
     try {
       const tokens = getAuthTokens();
       if (!tokens) return { success: false };
-      const serverBaseUrl = getServerApiBaseUrl();
+      const serverBaseUrl = getAuthApiBaseUrl();
       const profileSummaryUrl = appendKeyfromQuery(`${serverBaseUrl}/api/user/profile-summary`);
       console.log(`[Auth] requesting profile summary at ${profileSummaryUrl}`);
       const resp = await fetchWithAuth(profileSummaryUrl);
@@ -5477,7 +5521,7 @@ if (!gotTheLock) {
     try {
       const tokens = getAuthTokens();
       if (tokens) {
-        const serverBaseUrl = getServerApiBaseUrl();
+        const serverBaseUrl = getAuthApiBaseUrl();
         const logoutUrl = `${serverBaseUrl}/api/auth/logout`;
         console.log(`[Auth] requesting logout at ${logoutUrl}`);
         await net
@@ -5591,7 +5635,7 @@ if (!gotTheLock) {
         console.log('[Auth:getModels] No auth tokens available');
         return { success: false };
       }
-      const serverBaseUrl = getServerApiBaseUrl();
+      const serverBaseUrl = getAuthApiBaseUrl();
       const url = appendKeyfromQuery(`${serverBaseUrl}/api/models/available`);
       console.log(`[Auth:getModels] requesting available models at ${url}`);
       const resp = await fetchWithAuth(url);
@@ -10862,6 +10906,7 @@ if (!gotTheLock) {
     mainWindow.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
       if (isMainFrame && !isInPlace) {
         isOpenSessionFromNotificationReady = false;
+        void authInAppLoginView.close();
       }
       authCallbackRouter.handleNavigationStarted({ isMainFrame, isInPlace });
     });
@@ -10869,6 +10914,7 @@ if (!gotTheLock) {
     // 当窗口关闭时，清除引用
     mainWindow.on('closed', () => {
       windowStatePersist.cleanup();
+      void authInAppLoginView.close();
       authCallbackRouter.markRendererUnavailable();
       isOpenSessionFromNotificationReady = false;
       mainWindow = null;
@@ -11305,7 +11351,7 @@ if (!gotTheLock) {
     registerProxyTokenRefresher('lobsterai-server', async () => {
       const tokens = getAuthTokens();
       if (!tokens?.refreshToken) return null;
-      const serverBaseUrl = getServerApiBaseUrl();
+      const serverBaseUrl = getAuthApiBaseUrl();
       try {
         const refreshUrl = `${serverBaseUrl}/api/auth/refresh`;
         console.log(`[Auth] requesting proxy token refresh at ${refreshUrl}`);
@@ -11477,7 +11523,7 @@ if (!gotTheLock) {
     if (getAuthTokens()) {
       profiler.mark('startupCacheWarmup');
       const warmupResult = await runStartupCacheWarmup({
-        serverBaseUrl: getServerApiBaseUrl(),
+        serverBaseUrl: getAuthApiBaseUrl(),
         fetchWithAuth,
         appendKeyfromQuery,
         cachedSubscriptionStatus,

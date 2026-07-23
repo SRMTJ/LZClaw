@@ -4,6 +4,7 @@ import { HtmlSharePublicRoute } from '../../shared/htmlShare/constants';
 import type { SqliteStore } from '../sqliteStore';
 
 let cachedTestMode: boolean | null = null;
+const DEFAULT_AUTH_API_BASE_URL = 'http://127.0.0.1:3100';
 
 /**
  * Read testMode from store and cache it.
@@ -30,6 +31,26 @@ export const getServerApiBaseUrl = (): string => {
   return isTestModeEnabled()
     ? 'https://lobsterai-server.inner.youdao.com'
     : 'https://lobsterai-server.youdao.com';
+};
+
+/**
+ * Authentication API base URL for this LZClaw distribution.
+ * Kept separate from the upstream service base so unrelated remote features
+ * continue using their existing endpoints.
+ */
+export const getAuthApiBaseUrl = (): string => {
+  const configuredBaseUrl = process.env.LZCLAW_AUTH_API_BASE_URL?.trim();
+  if (!configuredBaseUrl) return DEFAULT_AUTH_API_BASE_URL;
+
+  try {
+    const parsedUrl = new URL(configuredBaseUrl);
+    if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+      return DEFAULT_AUTH_API_BASE_URL;
+    }
+    return parsedUrl.toString().replace(/\/$/, '');
+  } catch {
+    return DEFAULT_AUTH_API_BASE_URL;
+  }
 };
 
 export const getHtmlSharePublicBaseUrl = (): string => {
