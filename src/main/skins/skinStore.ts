@@ -508,7 +508,7 @@ export class SkinStore {
     await this.mutationQueue;
     const registry = await this.readRegistry();
     return Object.values(registry.skins)
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
       .map(cloneSkinRecord);
   }
 

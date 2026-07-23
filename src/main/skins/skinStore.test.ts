@@ -219,6 +219,59 @@ describe('SkinStore', () => {
     expect((await store.getActive())?.id).toBe('skin-two');
   });
 
+  test('lists newer skins first without reordering them when an older skin is applied', async () => {
+    const { rootDir, sourceDir } = createTempWorkspace();
+    const backdropPath = writeSource(sourceDir, 'background.png', createPng(1600, 900));
+    const emblemPath = writeSource(sourceDir, 'emblem.png', createPng(256, 256));
+    const ids = ['skin-older', 'skin-newer'];
+    let idIndex = 0;
+    let timestamp = new Date('2026-07-16T10:00:00.000Z');
+    const store = new SkinStore({
+      rootDir,
+      now: () => timestamp,
+      idGenerator: () => ids[idIndex++] ?? `skin-${idIndex}`,
+    });
+
+    await store.createDraft();
+    await store.registerAsset({
+      skinId: 'skin-older',
+      slot: SkinAssetSlot.WorkspaceBackdrop,
+      source: backdropPath,
+    });
+    await store.registerAsset({
+      skinId: 'skin-older',
+      slot: SkinAssetSlot.HomeEmblem,
+      source: emblemPath,
+    });
+
+    timestamp = new Date('2026-07-16T11:00:00.000Z');
+    await store.createDraft();
+    await store.registerAsset({
+      skinId: 'skin-newer',
+      slot: SkinAssetSlot.WorkspaceBackdrop,
+      source: backdropPath,
+    });
+    await store.registerAsset({
+      skinId: 'skin-newer',
+      slot: SkinAssetSlot.HomeEmblem,
+      source: emblemPath,
+    });
+
+    expect((await store.listSkins()).map(skin => skin.id)).toEqual([
+      'skin-newer',
+      'skin-older',
+    ]);
+
+    timestamp = new Date('2026-07-16T12:00:00.000Z');
+    await store.apply('skin-older');
+
+    expect((await store.getSkin('skin-older'))?.updatedAt).toBe(timestamp.toISOString());
+    expect((await store.listSkins()).map(skin => skin.id)).toEqual([
+      'skin-newer',
+      'skin-older',
+    ]);
+  });
+
   test('deletes inactive and active skins without touching generated source files', async () => {
     const { rootDir, sourceDir } = createTempWorkspace();
     const backdropPath = writeSource(sourceDir, 'background.png', createPng(1600, 900));

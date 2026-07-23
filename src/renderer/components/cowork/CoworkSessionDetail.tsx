@@ -4694,7 +4694,10 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
                   {shouldPinArtifactAddTab ? (
                     <div className="h-full w-9 shrink-0" aria-hidden="true" />
                   ) : (
-                    <div className="z-20 flex h-full shrink-0 items-center bg-background pl-1 pr-1">
+                    <div
+                      data-skin-artifact-add-tab="true"
+                      className="z-20 flex h-full shrink-0 items-center bg-background pl-1 pr-1"
+                    >
                       <button
                         ref={artifactAddButtonRef}
                         type="button"
@@ -4712,7 +4715,10 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
                   </div>
                 </div>
                 {shouldPinArtifactAddTab && (
-                  <div className="absolute inset-y-0 right-0 z-20 flex items-center bg-background pl-1 pr-1">
+                  <div
+                    data-skin-artifact-add-tab="true"
+                    className="absolute inset-y-0 right-0 z-20 flex items-center bg-background pl-1 pr-1"
+                  >
                     <button
                       ref={artifactAddButtonRef}
                       type="button"
