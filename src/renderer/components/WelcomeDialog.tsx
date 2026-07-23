@@ -79,59 +79,14 @@ const WelcomeDialog: React.FC<WelcomeDialogProps> = ({
 
   if (loginActive) {
     return (
-      <div className="fixed inset-0 z-[60] bg-surface flex items-center justify-center px-8 py-8">
+      <div className="fixed inset-0 z-[60] overflow-hidden bg-white">
         <div
-          className="absolute inset-0"
-          style={{ background: 'linear-gradient(360deg, rgba(255, 0, 77, 0) 5.5%, rgba(255, 0, 77, 0.05) 100%)' }}
-        />
-        <div className="relative z-10 flex h-full max-h-[760px] w-full max-w-[960px] flex-col">
-          <div className="mb-5 flex items-center justify-between gap-4">
-            <div className="flex min-w-0 items-center gap-3">
-              <img
-                src="logo.png"
-                alt="LobsterAI"
-                width={42}
-                height={42}
-                className="rounded-xl select-none"
-                draggable={false}
-              />
-              <div className="min-w-0">
-                <h1 className="text-lg font-semibold text-foreground">
-                  {i18nService.t('welcomeTitle')}
-                </h1>
-                <p className="text-sm text-secondary">
-                  {i18nService.t('welcomeSubtitle')}
-                </p>
-              </div>
-            </div>
-            <button
-              onClick={() => {
-                onLoginCancel();
-                setLoginActive(false);
-              }}
-              className="h-9 shrink-0 rounded-lg border border-border px-4 text-sm font-medium text-secondary hover:bg-surface-raised hover:text-foreground transition-colors"
-            >
-              {i18nService.t('welcomeLoginBack')}
-            </button>
+          ref={loginHostRef}
+          className="absolute inset-0 bg-white"
+        >
+          <div className="absolute inset-0 flex items-center justify-center text-sm text-secondary">
+            {i18nService.t('welcomeLoginLoading')}
           </div>
-
-          <div
-            ref={loginHostRef}
-            className="relative min-h-[420px] flex-1 overflow-hidden rounded-xl border border-border bg-white shadow-[0_18px_50px_rgba(20,18,11,0.08)]"
-          >
-            <div className="absolute inset-0 flex items-center justify-center text-sm text-secondary">
-              {i18nService.t('welcomeLoginLoading')}
-            </div>
-          </div>
-
-          {!loginRequired && (
-            <button
-              onClick={onCustomModel}
-              className="mt-4 h-10 self-center rounded-lg border border-border px-5 text-sm font-medium text-secondary hover:bg-surface-raised hover:text-foreground transition-colors"
-            >
-              {i18nService.t('welcomeCustomModel')}
-            </button>
-          )}
         </div>
       </div>
     );

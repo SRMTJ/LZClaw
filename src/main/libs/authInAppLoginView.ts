@@ -121,7 +121,7 @@ export class AuthInAppLoginViewController {
       this.parentWindow = parentWindow;
 
       view.setBackgroundColor('#ffffff');
-      view.setBorderRadius(8);
+      view.setBorderRadius(0);
       view.setBounds(bounds);
       parentWindow.contentView.addChildView(view);
 
