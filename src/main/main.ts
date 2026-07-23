@@ -5267,6 +5267,13 @@ if (!gotTheLock) {
     cachedMediaGenerationEntitled = defaultGateState.mediaGenerationEntitled;
   };
 
+  const clearLocalAuthStateAfterLogout = () => {
+    clearAuthTokens();
+    clearAuthUser();
+    clearServerModelMetadata();
+    resetAuthQuotaGateState();
+  };
+
   /**
    * Normalize quota data from various server response formats into a unified shape.
    */
@@ -5537,38 +5544,12 @@ if (!gotTheLock) {
             /* best-effort */
           });
       }
-      clearAuthTokens();
-      clearAuthUser();
-      clearServerModelMetadata();
-      const previousQuotaGateState = getAuthQuotaGateState();
-      resetAuthQuotaGateState();
-      const quotaGateSyncScheduled = syncOpenClawConfigIfAuthQuotaGateChanged(previousQuotaGateState);
-      if (!quotaGateSyncScheduled) {
-        syncOpenClawConfig({
-          reason: 'auth-logout-server-models-cleared',
-          restartGatewayIfRunning: false,
-        }).catch((error) => {
-          console.warn('[Auth] failed to sync OpenClaw config after logout:', error);
-        });
-      }
-      console.log('[Auth] cleared login state and scheduled server model config refresh');
+      clearLocalAuthStateAfterLogout();
+      console.log('[Auth] cleared login state without restarting the OpenClaw gateway');
       return { success: true };
     } catch (error) {
       console.warn('[Auth] logout cleanup encountered an error; clearing local state anyway:', error);
-      const previousQuotaGateState = getAuthQuotaGateState();
-      clearAuthTokens();
-      clearAuthUser();
-      clearServerModelMetadata();
-      resetAuthQuotaGateState();
-      const quotaGateSyncScheduled = syncOpenClawConfigIfAuthQuotaGateChanged(previousQuotaGateState);
-      if (!quotaGateSyncScheduled) {
-        syncOpenClawConfig({
-          reason: 'auth-logout-server-models-cleared',
-          restartGatewayIfRunning: false,
-        }).catch((syncError) => {
-          console.warn('[Auth] failed to sync OpenClaw config after logout cleanup:', syncError);
-        });
-      }
+      clearLocalAuthStateAfterLogout();
       return { success: true };
     }
   });

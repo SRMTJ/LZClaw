@@ -283,9 +283,6 @@ const App: React.FC = () => {
 
         const hasAgreedToPrivacy = await window.electron.store.get('privacy_agreed') === true;
         setPrivacyAgreed(hasAgreedToPrivacy);
-        if (hasAgreedToPrivacy) {
-          setShowWelcome(true);
-        }
         mark('privacy check done');
 
         setIsInitialized(true);
@@ -721,7 +718,6 @@ const App: React.FC = () => {
   const handlePrivacyAccept = useCallback(async () => {
     await window.electron.store.set('privacy_agreed', true);
     setPrivacyAgreed(true);
-    setShowWelcome(true);
   }, []);
 
   const handlePrivacyReject = useCallback(() => {
