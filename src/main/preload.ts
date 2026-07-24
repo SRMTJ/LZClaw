@@ -16,6 +16,13 @@ import {
   type AuthLoginInAppRequest,
 } from '../shared/auth/constants';
 import { BrowserIpc, type BrowserRuntimeProfile } from '../shared/browserWebAccess/constants';
+import {
+  BusinessCenterIpcChannel,
+  type BusinessCenterOpenRequest,
+  type BusinessCenterStatusUpdate,
+  type BusinessCenterViewBounds,
+  type BusinessCenterVisibilityRequest,
+} from '../shared/businessCenter/constants';
 import { ClipboardIpc } from '../shared/clipboard/constants';
 import { CoworkIpcChannel } from '../shared/cowork/constants';
 import { DataMigrationIpc } from '../shared/dataMigration/constants';
@@ -1054,6 +1061,26 @@ contextBridge.exposeInMainWorld('electron', {
   networkStatus: {
     send: (status: 'online' | 'offline') => ipcRenderer.send('network:status-change', status),
   },
+  businessCenter: {
+    open: (bounds: BusinessCenterViewBounds) => ipcRenderer.invoke(
+      BusinessCenterIpcChannel.Open,
+      { bounds } satisfies BusinessCenterOpenRequest,
+    ),
+    updateBounds: (bounds: BusinessCenterViewBounds) => ipcRenderer.invoke(
+      BusinessCenterIpcChannel.UpdateBounds,
+      { bounds } satisfies BusinessCenterOpenRequest,
+    ),
+    setVisible: (visible: boolean) => ipcRenderer.invoke(
+      BusinessCenterIpcChannel.SetVisible,
+      { visible } satisfies BusinessCenterVisibilityRequest,
+    ),
+    reload: () => ipcRenderer.invoke(BusinessCenterIpcChannel.Reload),
+    onStatus: (callback: (update: BusinessCenterStatusUpdate) => void) => {
+      const handler = (_event: unknown, update: BusinessCenterStatusUpdate) => callback(update);
+      ipcRenderer.on(BusinessCenterIpcChannel.Status, handler);
+      return () => ipcRenderer.removeListener(BusinessCenterIpcChannel.Status, handler);
+    },
+  },
   auth: {
     login: (loginUrl?: string) => ipcRenderer.invoke('auth:login', { loginUrl }),
     loginInApp: (loginUrl: string | undefined, bounds: AuthLoginInAppBounds) => ipcRenderer.invoke(AuthIpcChannel.LoginInApp, {
@@ -1083,6 +1110,11 @@ contextBridge.exposeInMainWorld('electron', {
       const handler = (_event: any, data: { code: string }) => callback(data);
       ipcRenderer.on(AuthIpcChannel.Callback, handler);
       return () => ipcRenderer.removeListener(AuthIpcChannel.Callback, handler);
+    },
+    onSessionInvalidated: (callback: () => void) => {
+      const handler = () => callback();
+      ipcRenderer.on(AuthIpcChannel.SessionInvalidated, handler);
+      return () => ipcRenderer.removeListener(AuthIpcChannel.SessionInvalidated, handler);
     },
     onQuotaChanged: (callback: () => void) => {
       const handler = () => callback();

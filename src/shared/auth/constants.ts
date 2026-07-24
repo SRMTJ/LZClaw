@@ -1,11 +1,14 @@
 export const AuthIpcChannel = {
   Callback: 'auth:callback',
+  SessionInvalidated: 'auth:sessionInvalidated',
   LoginInApp: 'auth:loginInApp',
   UpdateLoginInAppBounds: 'auth:updateLoginInAppBounds',
   CloseLoginInApp: 'auth:closeLoginInApp',
   GetPricingCatalog: 'auth:getPricingCatalog',
   GetPendingCallback: 'auth:getPendingCallback',
 } as const;
+
+export const AuthWebSessionPartition = 'persist:lzclaw-web';
 
 export type AuthIpcChannel = typeof AuthIpcChannel[keyof typeof AuthIpcChannel];
 

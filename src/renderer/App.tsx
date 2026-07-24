@@ -147,7 +147,6 @@ const App: React.FC = () => {
   const [isUserInitiatedUpdateFlowActive, setIsUserInitiatedUpdateFlowActive] = useState(false);
   const [privacyAgreed, setPrivacyAgreed] = useState<boolean | null>(null);
   const [showWelcome, setShowWelcome] = useState(false);
-  const [welcomeLoginStarted, setWelcomeLoginStarted] = useState(false);
   const [enterpriseConfig, setEnterpriseConfig] = useState<{
     ui?: Record<string, 'hide' | 'disable' | 'readonly'>;
     disableUpdate?: boolean;
@@ -734,25 +733,19 @@ const App: React.FC = () => {
 
   const handleWelcomeLogin = useCallback(async (bounds: AuthLoginInAppBounds) => {
     if (authUser) {
+      await window.electron.businessCenter.setVisible(false);
       await window.electron.auth.closeLoginInApp();
-      setWelcomeLoginStarted(false);
       setShowWelcome(false);
+      handleNewChat();
       return;
     }
 
-    setWelcomeLoginStarted(true);
-    try {
-      await authService.loginInApp(bounds);
-    } catch (error) {
-      setWelcomeLoginStarted(false);
-      throw error;
-    }
-  }, [authUser]);
+    await authService.loginInApp(bounds);
+  }, [authUser, handleNewChat]);
   const handleWelcomeLoginCancel = useCallback(() => {
-    setWelcomeLoginStarted(false);
+    void window.electron.auth.closeLoginInApp();
   }, []);
   const handleWelcomeCustomModel = useCallback(() => {
-    setWelcomeLoginStarted(false);
     if (!authUser) {
       setShowWelcome(true);
       return;
@@ -764,14 +757,14 @@ const App: React.FC = () => {
   useEffect(() => {
     if (
       showWelcome
-      && welcomeLoginStarted
       && authUser
     ) {
+      void window.electron.businessCenter.setVisible(false);
       void window.electron.auth.closeLoginInApp();
       setShowWelcome(false);
-      setWelcomeLoginStarted(false);
+      handleNewChat();
     }
-  }, [authUser, showWelcome, welcomeLoginStarted]);
+  }, [authUser, handleNewChat, showWelcome]);
 
   useEffect(() => {
     if (
@@ -780,7 +773,6 @@ const App: React.FC = () => {
       && !authUser
     ) {
       void window.electron.auth.closeLoginInApp();
-      setWelcomeLoginStarted(false);
       setShowSettings(false);
       setShowWelcome(true);
     }
@@ -1236,6 +1228,7 @@ const App: React.FC = () => {
     || showUpdateModal
     || isPermissionModalOpen
     || isUpdateInteractionBlocked
+    || showWelcome
     || isAuthGateActive;
   // Keep the badge visible while downloading so the collapsed-sidebar layouts
   // still surface progress; only a plain re-check hides nothing new.
@@ -1412,7 +1405,7 @@ const App: React.FC = () => {
                 updateBadge={collapsedHeaderUpdateBadge}
               />
             ) : mainView === 'businessCenter' ? (
-              <BusinessCenterView />
+              <BusinessCenterView active={!isOverlayActive} />
             ) : (
               <CoworkView
                 onRequestAppSettings={privacyAgreed === true && !showWelcome ? handleShowSettings : undefined}

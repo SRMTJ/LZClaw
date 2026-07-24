@@ -1,8 +1,9 @@
+import { PersistentViewController } from '@fudanda/electron-persistent-view';
 import {
   type BrowserWindow,
   type Rectangle,
+  type Session,
   type WebContents,
-  WebContentsView,
 } from 'electron';
 
 import type { AuthLoginInAppBounds } from '../../shared/auth/constants';
@@ -13,13 +14,13 @@ import {
   startAuthLocalCallback,
 } from './authLocalCallbackServer';
 
-const AUTH_LOGIN_PARTITION = 'persist:lzclaw-auth';
 const AUTH_LOGIN_MIN_WIDTH = 320;
 const AUTH_LOGIN_MIN_HEIGHT = 280;
 const AUTH_DEEP_LINK_PREFIX = 'lobsterai://';
 
 interface AuthInAppLoginViewControllerOptions {
   getMainWindow: () => BrowserWindow | null;
+  session: Session;
   isDev: boolean;
   onAuthCode: (code: string) => void;
   onAuthDeepLink: (url: string) => void;
@@ -56,12 +57,26 @@ const isHttpUrl = (url: string): boolean => {
 };
 
 export class AuthInAppLoginViewController {
-  private view: WebContentsView | null = null;
-  private parentWindow: BrowserWindow | null = null;
+  private readonly viewController: PersistentViewController;
   private localCallback: AuthLocalCallback | null = null;
   private operationId = 0;
 
-  constructor(private readonly options: AuthInAppLoginViewControllerOptions) {}
+  constructor(private readonly options: AuthInAppLoginViewControllerOptions) {
+    this.viewController = new PersistentViewController({
+      session: options.session,
+      backgroundColor: '#ffffff',
+      borderRadius: 0,
+      webPreferences: {
+        devTools: options.isDev,
+        enableWebSQL: false,
+        disableDialogs: true,
+        navigateOnDragDrop: false,
+      },
+      configureWebContents: ({ webContents }) => {
+        this.configureNavigation(webContents);
+      },
+    });
+  }
 
   async open(options: OpenAuthInAppLoginViewOptions): Promise<void> {
     const operationId = ++this.operationId;
@@ -104,30 +119,12 @@ export class AuthInAppLoginViewController {
         state: localCallback.state,
       });
 
-      const view = new WebContentsView({
-        webPreferences: {
-          nodeIntegration: false,
-          contextIsolation: true,
-          sandbox: true,
-          webSecurity: true,
-          devTools: this.options.isDev,
-          partition: AUTH_LOGIN_PARTITION,
-          enableWebSQL: false,
-          disableDialogs: true,
-          navigateOnDragDrop: false,
-        },
+      await this.viewController.open({
+        parentWindow,
+        url: finalUrl,
+        bounds,
+        focus: true,
       });
-      this.view = view;
-      this.parentWindow = parentWindow;
-
-      view.setBackgroundColor('#ffffff');
-      view.setBorderRadius(0);
-      view.setBounds(bounds);
-      parentWindow.contentView.addChildView(view);
-
-      this.configureNavigation(view.webContents);
-      await view.webContents.loadURL(finalUrl);
-      view.webContents.focus();
     } catch (error) {
       if (operationId === this.operationId) {
         await this.closeActiveSurface();
@@ -140,9 +137,7 @@ export class AuthInAppLoginViewController {
 
   updateBounds(bounds: AuthLoginInAppBounds): boolean {
     const normalized = normalizeBounds(bounds);
-    if (!normalized || !this.view) return false;
-    this.view.setBounds(normalized);
-    return true;
+    return normalized ? this.viewController.setBounds(normalized) : false;
   }
 
   async close(): Promise<void> {
@@ -194,24 +189,7 @@ export class AuthInAppLoginViewController {
   }
 
   private async closeActiveSurface(): Promise<void> {
-    const view = this.view;
-    const parentWindow = this.parentWindow;
-    this.view = null;
-    this.parentWindow = null;
-
-    if (view) {
-      try {
-        if (parentWindow && !parentWindow.isDestroyed()) {
-          parentWindow.contentView.removeChildView(view);
-        }
-      } catch (error) {
-        console.warn('[AuthInAppLogin] failed to detach embedded login view:', error);
-      }
-      if (!view.webContents.isDestroyed()) {
-        view.webContents.close({ waitForBeforeUnload: false });
-      }
-    }
-
+    await this.viewController.close();
     await this.closeLocalCallback();
   }
 }

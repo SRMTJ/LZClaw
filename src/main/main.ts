@@ -1,3 +1,4 @@
+import { resolvePersistentSession } from '@fudanda/electron-persistent-view';
 import crypto from 'crypto';
 import {
   app,
@@ -12,6 +13,7 @@ import {
   powerMonitor,
   powerSaveBlocker,
   protocol,
+  type Session,
   session,
   shell,
   type WebContents,
@@ -40,6 +42,7 @@ import { ArtifactBrowserPartition, ArtifactPreviewIpc, ArtifactPreviewProtocol }
 import {
   AuthIpcChannel,
   type AuthLoginInAppRequest,
+  AuthWebSessionPartition,
 } from '../shared/auth/constants';
 import {
   type BrowserDiagnosticResultStep,
@@ -50,6 +53,10 @@ import {
   type BrowserWebAccessConfig,
   normalizeBrowserWebAccessConfig,
 } from '../shared/browserWebAccess/constants';
+import {
+  BusinessCenterIpcChannel,
+  type BusinessCenterStatusUpdate,
+} from '../shared/businessCenter/constants';
 import { ClipboardIpc } from '../shared/clipboard/constants';
 import {
   COWORK_MESSAGE_PAGE_SIZE,
@@ -163,6 +170,7 @@ import type {
 } from './im/types';
 import { registerAgentHandlers } from './ipcHandlers/agents';
 import { registerAsrIpcHandlers } from './ipcHandlers/asr';
+import { registerBusinessCenterIpcHandlers } from './ipcHandlers/businessCenter';
 import { registerCoworkSubagentHandlers } from './ipcHandlers/coworkSubagent';
 import { registerKitHandlers } from './ipcHandlers/kits';
 import { registerMcpHandlers } from './ipcHandlers/mcp';
@@ -192,6 +200,7 @@ import {
   appendLoginParams,
   startAuthLocalCallback,
 } from './libs/authLocalCallbackServer';
+import { BusinessCenterInAppViewController } from './libs/businessCenterInAppView';
 import {
   clearServerModelMetadata,
   getAllServerModelMetadata,
@@ -3827,17 +3836,74 @@ if (!gotTheLock) {
     }
   };
 
-  const authInAppLoginView = new AuthInAppLoginViewController({
-    getMainWindow: () => mainWindow,
-    isDev,
-    onAuthCode: code => {
-      authCallbackRouter.handleAuthCode(code);
-      focusMainWindow('embedded auth callback');
-    },
-    onAuthDeepLink: url => {
-      authCallbackRouter.handleDeepLink(url);
-      focusMainWindow('embedded auth deep link');
-    },
+  let lzclawWebSession: Session | null = null;
+  let authInAppLoginView: AuthInAppLoginViewController | null = null;
+  let businessCenterInAppView: BusinessCenterInAppViewController | null = null;
+  let onBusinessCenterSessionInvalidated: () => void = () => undefined;
+
+  const getLzclawWebSession = (): Session => {
+    if (!lzclawWebSession) {
+      throw new Error('LZClaw web session is not initialized');
+    }
+    return lzclawWebSession;
+  };
+
+  const getAuthInAppLoginView = (): AuthInAppLoginViewController => {
+    if (!authInAppLoginView) {
+      throw new Error('Embedded login view is not initialized');
+    }
+    return authInAppLoginView;
+  };
+
+  const getBusinessCenterInAppView = (): BusinessCenterInAppViewController => {
+    if (!businessCenterInAppView) {
+      throw new Error('Business center view is not initialized');
+    }
+    return businessCenterInAppView;
+  };
+
+  const sendBusinessCenterStatus = (update: BusinessCenterStatusUpdate): void => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send(BusinessCenterIpcChannel.Status, update);
+  };
+
+  const initializeLzclawWebViews = (): void => {
+    lzclawWebSession = resolvePersistentSession({
+      type: 'partition',
+      partition: AuthWebSessionPartition,
+    });
+    authInAppLoginView = new AuthInAppLoginViewController({
+      getMainWindow: () => mainWindow,
+      session: lzclawWebSession,
+      isDev,
+      onAuthCode: code => {
+        authCallbackRouter.handleAuthCode(code);
+        void authInAppLoginView?.close().catch(error => {
+          console.warn('[Auth] failed to close embedded login after callback:', error);
+        });
+        focusMainWindow('embedded auth callback');
+      },
+      onAuthDeepLink: url => {
+        authCallbackRouter.handleDeepLink(url);
+        void authInAppLoginView?.close().catch(error => {
+          console.warn('[Auth] failed to close embedded login after deep link:', error);
+        });
+        focusMainWindow('embedded auth deep link');
+      },
+    });
+    businessCenterInAppView = new BusinessCenterInAppViewController({
+      getMainWindow: () => mainWindow,
+      session: lzclawWebSession,
+      isDev,
+      onStatus: sendBusinessCenterStatus,
+      onSessionInvalidated: () => {
+        onBusinessCenterSessionInvalidated();
+      },
+    });
+  };
+
+  registerBusinessCenterIpcHandlers({
+    getController: getBusinessCenterInAppView,
   });
 
   ipcMain.on('log:fromRenderer', (_event, level: string, tag: string, message: string) => {
@@ -4184,9 +4250,10 @@ if (!gotTheLock) {
     [...new Set([new URL(getAuthApiBaseUrl()).origin, BUSINESS_CENTER_ORIGIN])];
 
   const syncAuthWebSessionCookie = async (refreshToken: string) => {
+    const webSession = getLzclawWebSession();
     await Promise.all(
       getAuthWebSessionOrigins().map(origin =>
-        session.defaultSession.cookies.set({
+        webSession.cookies.set({
           url: `${origin}/`,
           name: AUTH_WEB_SESSION_COOKIE_NAME,
           value: refreshToken,
@@ -4198,22 +4265,25 @@ if (!gotTheLock) {
         }),
       ),
     );
+    await webSession.cookies.flushStore();
   };
 
-  const clearAuthWebSessionCookie = async () => {
-    await Promise.all(
-      getAuthWebSessionOrigins().map(origin =>
-        session.defaultSession.cookies.remove(`${origin}/`, AUTH_WEB_SESSION_COOKIE_NAME),
-      ),
-    );
+  const clearAuthWebSessionStorage = async () => {
+    const webSession = getLzclawWebSession();
+    await Promise.all([
+      authInAppLoginView?.close(),
+      businessCenterInAppView?.close(),
+    ]);
+    await webSession.clearStorageData();
+    await webSession.cookies.flushStore();
   };
 
   /**
    * Helper: Persist auth tokens into the kv store.
    */
-  const saveAuthTokens = (accessToken: string, refreshToken: string) => {
+  const saveAuthTokens = async (accessToken: string, refreshToken: string) => {
     getStore().set('auth_tokens', { accessToken, refreshToken });
-    void syncAuthWebSessionCookie(refreshToken).catch(error => {
+    await syncAuthWebSessionCookie(refreshToken).catch(error => {
       console.warn('[Auth] failed to sync browser session cookie:', error);
     });
   };
@@ -4335,7 +4405,7 @@ if (!gotTheLock) {
         if (resp.ok) {
           const body = await resp.json() as { code: number; data: { accessToken: string; refreshToken?: string } };
           if (body.code === 0 && body.data) {
-            saveAuthTokens(body.data.accessToken, body.data.refreshToken || tokens.refreshToken);
+            await saveAuthTokens(body.data.accessToken, body.data.refreshToken || tokens.refreshToken);
             console.log(`[Auth] token refresh succeeded (reason: ${reason})`);
             resolvedToken = body.data.accessToken;
             // Token proxy handles fresh tokens dynamically — no need
@@ -5308,14 +5378,25 @@ if (!gotTheLock) {
     cachedMediaGenerationEntitled = defaultGateState.mediaGenerationEntitled;
   };
 
-  const clearLocalAuthStateAfterLogout = () => {
+  const clearLocalAuthStateAfterLogout = async () => {
     clearAuthTokens();
-    void clearAuthWebSessionCookie().catch(error => {
-      console.warn('[Auth] failed to clear browser session cookie:', error);
-    });
     clearAuthUser();
     clearServerModelMetadata();
     resetAuthQuotaGateState();
+    await clearAuthWebSessionStorage().catch(error => {
+      console.warn('[Auth] failed to clear embedded web session:', error);
+    });
+  };
+
+  onBusinessCenterSessionInvalidated = () => {
+    void clearLocalAuthStateAfterLogout()
+      .then(() => {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        mainWindow.webContents.send(AuthIpcChannel.SessionInvalidated);
+      })
+      .catch(error => {
+        console.warn('[Auth] failed to handle business center logout:', error);
+      });
   };
 
   /**
@@ -5377,7 +5458,7 @@ if (!gotTheLock) {
   ipcMain.handle(AuthIpcChannel.LoginInApp, async (_event, request: AuthLoginInAppRequest) => {
     try {
       console.log('[Auth] starting embedded login view with local callback server');
-      await authInAppLoginView.open({
+      await getAuthInAppLoginView().open({
         loginUrl: request?.loginUrl || `${getServerApiBaseUrl()}/login`,
         bounds: request?.bounds,
       });
@@ -5392,11 +5473,11 @@ if (!gotTheLock) {
   });
 
   ipcMain.handle(AuthIpcChannel.UpdateLoginInAppBounds, async (_event, request: AuthLoginInAppRequest) => ({
-    success: authInAppLoginView.updateBounds(request?.bounds),
+    success: getAuthInAppLoginView().updateBounds(request?.bounds),
   }));
 
   ipcMain.handle(AuthIpcChannel.CloseLoginInApp, async () => {
-    await authInAppLoginView.close();
+    await getAuthInAppLoginView().close();
     return { success: true };
   });
 
@@ -5426,7 +5507,7 @@ if (!gotTheLock) {
       if (body.code !== 0 || !body.data) {
         return { success: false, error: body.message || 'Exchange failed' };
       }
-      saveAuthTokens(body.data.accessToken, body.data.refreshToken);
+      await saveAuthTokens(body.data.accessToken, body.data.refreshToken);
       saveAuthUser(body.data.user);
       console.log('[Auth] exchange user data:', JSON.stringify(body.data.user));
       const previousQuotaGateState = getAuthQuotaGateState();
@@ -5588,12 +5669,12 @@ if (!gotTheLock) {
             /* best-effort */
           });
       }
-      clearLocalAuthStateAfterLogout();
+      await clearLocalAuthStateAfterLogout();
       console.log('[Auth] cleared login state without restarting the OpenClaw gateway');
       return { success: true };
     } catch (error) {
       console.warn('[Auth] logout cleanup encountered an error; clearing local state anyway:', error);
-      clearLocalAuthStateAfterLogout();
+      await clearLocalAuthStateAfterLogout();
       return { success: true };
     }
   });
@@ -10931,7 +11012,7 @@ if (!gotTheLock) {
     mainWindow.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
       if (isMainFrame && !isInPlace) {
         isOpenSessionFromNotificationReady = false;
-        void authInAppLoginView.close();
+        void authInAppLoginView?.close();
       }
       authCallbackRouter.handleNavigationStarted({ isMainFrame, isInPlace });
     });
@@ -10939,7 +11020,8 @@ if (!gotTheLock) {
     // 当窗口关闭时，清除引用
     mainWindow.on('closed', () => {
       windowStatePersist.cleanup();
-      void authInAppLoginView.close();
+      void authInAppLoginView?.close();
+      void businessCenterInAppView?.close();
       authCallbackRouter.markRendererUnavailable();
       isOpenSessionFromNotificationReady = false;
       mainWindow = null;
@@ -11279,6 +11361,7 @@ if (!gotTheLock) {
     await app.whenReady();
     profiler.measure('app.whenReady');
     console.log('[Main] initApp: app is ready');
+    initializeLzclawWebViews();
 
     // Note: Calendar permission is checked on-demand when calendar operations are requested
     // We don't trigger permission dialogs at startup to avoid annoying users
@@ -11394,7 +11477,7 @@ if (!gotTheLock) {
             data: { accessToken: string; refreshToken?: string };
           };
           if (body.code === 0 && body.data) {
-            saveAuthTokens(body.data.accessToken, body.data.refreshToken || tokens.refreshToken);
+            await saveAuthTokens(body.data.accessToken, body.data.refreshToken || tokens.refreshToken);
             console.log('[Auth] proxy token refresh succeeded');
             return body.data.accessToken;
           }

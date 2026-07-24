@@ -153,6 +153,7 @@
     "@electron/remote": "^2.0.12",
     "@fortune-sheet/core": "^1.0.4",
     "@fortune-sheet/react": "^1.0.4",
+    "@fudanda/electron-persistent-view": "0.1.0",
     "@headlessui/react": "^1.7.18",
     "@heroicons/react": "^2.1.1",
     "@larksuite/openclaw-lark-tools": "~1.0.26",

@@ -12,6 +12,10 @@ import type {
   BrowserRuntimeProfile,
 } from '../../shared/browserWebAccess/constants';
 import type {
+  BusinessCenterStatusUpdate,
+  BusinessCenterViewBounds,
+} from '../../shared/businessCenter/constants';
+import type {
   CoworkContextUsageFailureReason,
   CoworkContextUsageSource,
 } from '../../shared/cowork/constants';
@@ -1648,6 +1652,13 @@ interface IElectronAPI {
       error?: string;
     }>;
   };
+  businessCenter: {
+    open: (bounds: BusinessCenterViewBounds) => Promise<{ success: boolean; error?: string }>;
+    updateBounds: (bounds: BusinessCenterViewBounds) => Promise<{ success: boolean }>;
+    setVisible: (visible: boolean) => Promise<{ success: boolean }>;
+    reload: () => Promise<{ success: boolean; error?: string }>;
+    onStatus: (callback: (update: BusinessCenterStatusUpdate) => void) => () => void;
+  };
   auth: {
     login: (loginUrl?: string) => Promise<{ success: boolean; error?: string }>;
     loginInApp: (loginUrl: string | undefined, bounds: AuthLoginInAppBounds) => Promise<{ success: boolean; error?: string }>;
@@ -1699,6 +1710,7 @@ interface IElectronAPI {
     getActiveClientBanners: () => Promise<{ success: boolean; data?: ClientBannerData[] }>;
     getPendingCallback: () => Promise<string | null>;
     onCallback: (callback: (data: { code: string }) => void) => () => void;
+    onSessionInvalidated: (callback: () => void) => () => void;
     onQuotaChanged: (callback: () => void) => () => void;
   };
   media: {
@@ -1721,6 +1733,7 @@ interface IElectronAPI {
     loginInApp: (loginUrl: string | undefined, bounds: AuthLoginInAppBounds) => Promise<{ success: boolean; error?: string }>;
     updateLoginInAppBounds: (bounds: AuthLoginInAppBounds) => Promise<{ success: boolean }>;
     closeLoginInApp: () => Promise<{ success: boolean }>;
+    onSessionInvalidated: (callback: () => void) => () => void;
     exchange: (code: string) => Promise<{
       success: boolean;
       user?: import('../store/slices/authSlice').UserProfile;

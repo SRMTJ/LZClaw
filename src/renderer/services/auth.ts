@@ -91,6 +91,7 @@ export function mapPricingCatalogToPublicServerModels(
 
 class AuthService {
   private unsubCallback: (() => void) | null = null;
+  private unsubSessionInvalidated: (() => void) | null = null;
   private unsubQuotaChanged: (() => void) | null = null;
   private unsubWindowState: (() => void) | null = null;
   private lastRefreshTime = 0;
@@ -107,6 +108,11 @@ class AuthService {
     // Listen for OAuth callback from protocol handler
     this.unsubCallback = window.electron.auth.onCallback(async ({ code }) => {
       await this.handleCallback(code);
+    });
+    this.unsubSessionInvalidated = window.electron.auth.onSessionInvalidated(() => {
+      store.dispatch(setLoggedOut());
+      store.dispatch(clearServerModels());
+      void this.loadPublicPricingCatalogModels();
     });
 
     try {
@@ -286,6 +292,8 @@ class AuthService {
   destroy() {
     this.unsubCallback?.();
     this.unsubCallback = null;
+    this.unsubSessionInvalidated?.();
+    this.unsubSessionInvalidated = null;
     this.unsubQuotaChanged?.();
     this.unsubQuotaChanged = null;
     this.unsubWindowState?.();

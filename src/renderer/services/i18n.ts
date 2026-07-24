@@ -1831,6 +1831,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     mcpServers: 'MCP',
     businessCenter: '业务中心',
     businessCenterLoading: '正在加载业务中心…',
+    businessCenterLoadFailed: '业务中心加载失败',
+    businessCenterRetry: '重新加载',
     mcpDescription: '配置和管理 MCP（Model Context Protocol）服务器，为您的智能体扩展工具能力',
     searchMcpServers: '搜索 MCP 服务',
     addMcpServer: '自定义',
@@ -4822,6 +4824,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     mcpServers: 'MCP',
     businessCenter: 'Business Center',
     businessCenterLoading: 'Loading Business Center…',
+    businessCenterLoadFailed: 'Failed to load Business Center',
+    businessCenterRetry: 'Reload',
     mcpDescription:
       "Configure and manage MCP (Model Context Protocol) servers to extend your agent's tool capabilities",
     searchMcpServers: 'Search MCP servers',
