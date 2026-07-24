@@ -90,6 +90,7 @@ export class BusinessCenterInAppViewController {
       parentWindow,
       url: BUSINESS_CENTER_URL,
       bounds,
+      visible: this.shouldBeVisible,
       focus: false,
     });
   }

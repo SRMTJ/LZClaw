@@ -100,6 +100,7 @@ describe('BusinessCenterInAppViewController', () => {
       parentWindow,
       url: 'http://localhost:3100/users',
       bounds,
+      visible: true,
       focus: false,
     });
     expect(statuses).toContainEqual({ status: 'loading' });
