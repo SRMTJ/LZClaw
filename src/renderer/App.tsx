@@ -12,6 +12,7 @@ import {
 } from '../shared/appUpdate/constants';
 import type { AuthLoginInAppBounds } from '../shared/auth/constants';
 import { ProviderAuthType, ProviderName, ProviderRegistry } from '../shared/providers';
+import BusinessCenterView from './components/businessCenter/BusinessCenterView';
 import { CoworkView } from './components/cowork';
 import { CoworkShortcutDirection, CoworkUiEvent } from './components/cowork/constants';
 import CoworkPermissionModal from './components/cowork/CoworkPermissionModal';
@@ -123,7 +124,9 @@ const logAppUpdateRendererLifecycle = (
 const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsOptions, setSettingsOptions] = useState<SettingsOpenOptions & { requestId: number }>({ requestId: 0 });
-  const [mainView, setMainView] = useState<'cowork' | 'skills' | 'scheduledTasks' | 'kits' | 'mcp'>('cowork');
+  const [mainView, setMainView] = useState<
+    'cowork' | 'skills' | 'scheduledTasks' | 'kits' | 'mcp' | 'businessCenter'
+  >('cowork');
   const [isInitialized, setIsInitialized] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -405,6 +408,10 @@ const App: React.FC = () => {
 
   const handleShowMcp = useCallback(() => {
     setMainView('mcp');
+  }, []);
+
+  const handleShowBusinessCenter = useCallback(() => {
+    setMainView('businessCenter');
   }, []);
 
   const handleShowKits = useCallback(() => {
@@ -1353,6 +1360,7 @@ const App: React.FC = () => {
           onShowScheduledTasks={handleShowScheduledTasks}
           onShowKits={handleShowKits}
           onShowMcp={handleShowMcp}
+          onShowBusinessCenter={handleShowBusinessCenter}
           onNewChat={handleNewChat}
           isCollapsed={isSidebarCollapsed}
           onToggleCollapse={handleToggleSidebar}
@@ -1403,6 +1411,8 @@ const App: React.FC = () => {
                 onNewChat={handleNewChat}
                 updateBadge={collapsedHeaderUpdateBadge}
               />
+            ) : mainView === 'businessCenter' ? (
+              <BusinessCenterView />
             ) : (
               <CoworkView
                 onRequestAppSettings={privacyAgreed === true && !showWelcome ? handleShowSettings : undefined}

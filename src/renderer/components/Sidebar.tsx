@@ -1,4 +1,4 @@
-import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import { BuildingOffice2Icon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { AgentId } from '@shared/agent';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
@@ -38,12 +38,13 @@ import SidebarAdBanner from './SidebarAdBanner';
 interface SidebarProps {
   onShowSettings: () => void;
   onShowLogin?: () => void;
-  activeView: 'cowork' | 'skills' | 'scheduledTasks' | 'kits' | 'mcp';
+  activeView: 'cowork' | 'skills' | 'scheduledTasks' | 'kits' | 'mcp' | 'businessCenter';
   onShowSkills: () => void;
   onShowCowork: () => void;
   onShowScheduledTasks: () => void;
   onShowKits: () => void;
   onShowMcp: () => void;
+  onShowBusinessCenter: () => void;
   onNewChat: () => void;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
@@ -135,6 +136,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   onShowScheduledTasks,
   onShowKits,
   onShowMcp,
+  onShowBusinessCenter,
   onNewChat,
   isCollapsed,
   onToggleCollapse,
@@ -618,6 +620,19 @@ const Sidebar: React.FC<SidebarProps> = ({
           >
             <SidebarMcpIcon className="h-4 w-4 shrink-0" />
             {i18nService.t('mcpServers')}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              reportSidebarAction('open_business_center', { activeView, isCollapsed });
+              setIsSearchOpen(false);
+              onShowBusinessCenter();
+            }}
+            className={activeView === 'businessCenter' ? activeSidebarNavItemClassName : sidebarNavItemClassName}
+            aria-current={activeView === 'businessCenter' ? 'page' : undefined}
+          >
+            <BuildingOffice2Icon className="h-4 w-4 shrink-0" />
+            {i18nService.t('businessCenter')}
           </button>
         </div>
       </div>

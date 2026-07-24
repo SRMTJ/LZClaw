@@ -4176,11 +4176,46 @@ if (!gotTheLock) {
 
   // ── Auth IPC handlers ──
 
+  const AUTH_WEB_SESSION_COOKIE_NAME = 'lzclaw_web_session';
+  const AUTH_WEB_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
+  const BUSINESS_CENTER_ORIGIN = 'http://localhost:3100';
+
+  const getAuthWebSessionOrigins = () =>
+    [...new Set([new URL(getAuthApiBaseUrl()).origin, BUSINESS_CENTER_ORIGIN])];
+
+  const syncAuthWebSessionCookie = async (refreshToken: string) => {
+    await Promise.all(
+      getAuthWebSessionOrigins().map(origin =>
+        session.defaultSession.cookies.set({
+          url: `${origin}/`,
+          name: AUTH_WEB_SESSION_COOKIE_NAME,
+          value: refreshToken,
+          path: '/',
+          httpOnly: true,
+          secure: origin.startsWith('https:'),
+          sameSite: 'lax',
+          expirationDate: Math.floor(Date.now() / 1000) + AUTH_WEB_SESSION_TTL_SECONDS,
+        }),
+      ),
+    );
+  };
+
+  const clearAuthWebSessionCookie = async () => {
+    await Promise.all(
+      getAuthWebSessionOrigins().map(origin =>
+        session.defaultSession.cookies.remove(`${origin}/`, AUTH_WEB_SESSION_COOKIE_NAME),
+      ),
+    );
+  };
+
   /**
    * Helper: Persist auth tokens into the kv store.
    */
   const saveAuthTokens = (accessToken: string, refreshToken: string) => {
     getStore().set('auth_tokens', { accessToken, refreshToken });
+    void syncAuthWebSessionCookie(refreshToken).catch(error => {
+      console.warn('[Auth] failed to sync browser session cookie:', error);
+    });
   };
 
   const getAuthTokens = (): { accessToken: string; refreshToken: string } | null => {
@@ -4189,6 +4224,12 @@ if (!gotTheLock) {
 
   const clearAuthTokens = () => {
     getStore().delete('auth_tokens');
+  };
+
+  const restoreAuthWebSessionCookie = async () => {
+    const persistedAuthTokens = getAuthTokens();
+    if (!persistedAuthTokens?.refreshToken) return;
+    await syncAuthWebSessionCookie(persistedAuthTokens.refreshToken);
   };
 
   const saveAuthUser = (user: Record<string, unknown>) => {
@@ -5269,6 +5310,9 @@ if (!gotTheLock) {
 
   const clearLocalAuthStateAfterLogout = () => {
     clearAuthTokens();
+    void clearAuthWebSessionCookie().catch(error => {
+      console.warn('[Auth] failed to clear browser session cookie:', error);
+    });
     clearAuthUser();
     clearServerModelMetadata();
     resetAuthQuotaGateState();
@@ -10654,7 +10698,7 @@ if (!gotTheLock) {
         "font-src 'self' data: blob: https:",
         `media-src 'self' data: blob: file: https: http: ${ArtifactPreviewProtocol.LocalFile}:`,
         "worker-src 'self' blob:",
-        "frame-src 'self' file: http://127.0.0.1:*",
+        "frame-src 'self' file: http://127.0.0.1:* http://localhost:*",
       ];
 
       callback({
@@ -11256,6 +11300,9 @@ if (!gotTheLock) {
     store = await initStore();
     profiler.measure('initStore');
     console.log('[Main] initApp: store initialized');
+    await restoreAuthWebSessionCookie().catch(error => {
+      console.warn('[Auth] failed to restore browser session cookie:', error);
+    });
     initializeKeyfromAttribution(store);
     refreshEndpointsTestMode(store);
     sqliteBackupManager = new SqliteBackupManager(app.getPath('userData'));
