@@ -51,6 +51,32 @@ const readPositiveNumber = (value: unknown): number | undefined => (
     : undefined
 );
 
+type AuthRendererLogLevel = 'debug' | 'info' | 'warn';
+
+const writeAuthRendererLog = (
+  level: AuthRendererLogLevel,
+  message: string,
+  error?: unknown,
+): void => {
+  if (level === 'warn') {
+    if (error === undefined) {
+      console.warn(`[Auth] ${message}`);
+    } else {
+      console.warn(`[Auth] ${message}:`, error);
+    }
+  } else if (level === 'debug') {
+    console.debug(`[Auth] ${message}`);
+  } else {
+    console.log(`[Auth] ${message}`);
+  }
+
+  try {
+    window.electron?.log?.fromRenderer?.(level, 'AuthService', message);
+  } catch {
+    // Logging is best-effort and must never interrupt authentication.
+  }
+};
+
 export function mapPricingCatalogTextModelsToServerModels(
   textModels: PricingCatalogTextModel[],
 ): Model[] {
@@ -95,6 +121,7 @@ class AuthService {
   private unsubQuotaChanged: (() => void) | null = null;
   private unsubWindowState: (() => void) | null = null;
   private lastRefreshTime = 0;
+  private loginAttemptSequence = 0;
 
   /**
    * Initialize: try to restore login state from persisted token.
@@ -155,8 +182,21 @@ class AuthService {
    * Initiate login in the system browser.
    */
   async login() {
-    const loginUrl = await this.resolveLoginUrl();
-    await window.electron.auth.login(loginUrl);
+    const attemptId = ++this.loginAttemptSequence;
+    writeAuthRendererLog('info', `login attempt ${attemptId} started`);
+
+    try {
+      const loginUrl = await this.resolveLoginUrl();
+      const result = await window.electron.auth.login(loginUrl);
+      if (result.success) {
+        writeAuthRendererLog('info', `login attempt ${attemptId} handed off to the system browser`);
+      } else {
+        writeAuthRendererLog('warn', `login attempt ${attemptId} could not open the system browser`);
+      }
+    } catch (error) {
+      writeAuthRendererLog('warn', `login attempt ${attemptId} failed before browser handoff`, error);
+      throw error;
+    }
   }
 
   /**
@@ -184,17 +224,20 @@ class AuthService {
    * Handle OAuth callback with auth code.
    */
   async handleCallback(code: string): Promise<boolean> {
+    writeAuthRendererLog('info', 'received login callback; starting token exchange');
     try {
       const result = await window.electron.auth.exchange(code);
       if (result.success) {
+        writeAuthRendererLog('info', 'login callback exchange succeeded');
         store.dispatch(setLoggedIn({ user: result.user, quota: result.quota }));
         await this.loadServerModels();
         void this.fetchProfileSummary();
         this.refreshQuota();
         return true;
       }
+      writeAuthRendererLog('warn', 'login callback exchange was rejected');
     } catch (e) {
-      console.error('Auth callback failed:', e);
+      writeAuthRendererLog('warn', 'login callback exchange failed', e);
     }
     return false;
   }

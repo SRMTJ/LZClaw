@@ -32,6 +32,7 @@ import Toast from './components/Toast';
 import AppUpdateBadge from './components/update/AppUpdateBadge';
 import AppUpdateBlockingPanel from './components/update/AppUpdateBlockingPanel';
 import AppUpdateCard from './components/update/AppUpdateCard';
+import { formatAppUpdateError } from './components/update/appUpdateErrorText';
 import AppUpdateInteractionOverlay from './components/update/AppUpdateInteractionOverlay';
 import {
   isAppUpdateInteractionBlockingStatus,
@@ -537,6 +538,12 @@ const App: React.FC = () => {
             setShowUpdateModal(true);
           }
         }
+        // Silent installs relaunch the app with no visible install step, so
+        // this toast is the only confirmation the update actually happened.
+        const completed = await window.electron.appUpdate.getCompletedUpdate?.();
+        if (mounted && completed?.version) {
+          showToast(`${i18nService.t('updateInstalledToast')} v${completed.version}`);
+        }
       } catch (error) {
         console.error('[App] failed to load initial app update state:', error);
       }
@@ -568,7 +575,11 @@ const App: React.FC = () => {
             .then((installResult) => {
               if (!installResult.success) {
                 stopUserInitiatedUpdateFlow('install-result-failed');
-                showToast(installResult.error || i18nService.t('updateInstallFailed'));
+                showToast(
+                  installResult.error
+                    ? formatAppUpdateError(installResult.error)
+                    : i18nService.t('updateInstallFailed'),
+                );
               }
             })
             .catch((error) => {
@@ -636,7 +647,11 @@ const App: React.FC = () => {
         const installResult = await window.electron.appUpdate.installReady();
         if (!installResult.success) {
           stopUserInitiatedUpdateFlow('install-result-failed');
-          showToast(installResult.error || i18nService.t('updateInstallFailed'));
+          showToast(
+            installResult.error
+              ? formatAppUpdateError(installResult.error)
+              : i18nService.t('updateInstallFailed'),
+          );
         }
       } catch (error) {
         stopUserInitiatedUpdateFlow('install-ipc-failed');
@@ -844,6 +859,11 @@ const App: React.FC = () => {
       });
       dispatch(setAvailableModels(allModels));
     }
+  };
+
+  const handleStartAiSkinFromSettings = (text: string, kitId: string) => {
+    handleCloseSettings();
+    openHomeWithKit(kitId, text);
   };
 
   const isShortcutInputActive = () => {
@@ -1441,6 +1461,7 @@ const App: React.FC = () => {
       {showSettings && !isAuthGateActive && (
         <Settings
           onClose={handleCloseSettings}
+          onStartAiSkin={handleStartAiSkinFromSettings}
           initialTab={settingsOptions.initialTab}
           initialTabRequestId={settingsOptions.requestId}
           notice={settingsOptions.notice}

@@ -6,6 +6,7 @@ export const AuthIpcChannel = {
   CloseLoginInApp: 'auth:closeLoginInApp',
   GetPricingCatalog: 'auth:getPricingCatalog',
   GetPendingCallback: 'auth:getPendingCallback',
+  Login: 'auth:login',
 } as const;
 
 export const AuthWebSessionPartition = 'persist:lzclaw-web';
