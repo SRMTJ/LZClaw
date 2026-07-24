@@ -53,26 +53,27 @@ renderer content.
 - The login controller keeps its existing `lobsterai://` callback and local
   HTTP callback behavior.
 
-## Local Development
+## Dependency And Local Development
 
-The package is connected as:
+LZClaw uses the public package with an exact version:
 
 ```json
-"@fudanda/electron-persistent-view": "file:../electron-persistent-view"
+"@fudanda/electron-persistent-view": "0.2.0"
 ```
 
-Build the package before compiling or launching LZClaw:
+Install dependencies before compiling or launching LZClaw:
 
 ```powershell
-cd D:\AI-AI\electron-persistent-view
-npm install
-npm run build
-
 cd D:\AI-AI\LZClaw
 npm install
 npm run compile:electron
 npm run electron:dev
 ```
+
+Package development continues in `D:\AI-AI\electron-persistent-view`, but
+LZClaw should only switch back to a local `file:` dependency for an explicitly
+requested package integration test. Restore the exact published version before
+committing LZClaw changes.
 
 The login service must be available at `http://localhost:3100`. Business
 Center load failures are reported in the renderer with a reload action.

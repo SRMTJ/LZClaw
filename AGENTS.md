@@ -491,6 +491,10 @@ unless the user explicitly asks for it.
 The long-lived LZClaw customization branch is `dev-htmm-v1`. Treat `main` as
 the upstream baseline.
 
+- Treat `docs/lzclaw-fork-customizations.md` as the canonical product contract
+  for fork-only behavior, conflict hotspots, and runtime acceptance checks.
+  Review it before resolving upstream conflicts and update its synchronization
+  metadata after every merge from `origin/main`.
 - Perform LZClaw product customization on `dev-htmm-v1`. Do not modify, commit
   to, or push `main` unless the user explicitly changes this policy.
 - Before editing, confirm the repository root, current branch, and worktree
