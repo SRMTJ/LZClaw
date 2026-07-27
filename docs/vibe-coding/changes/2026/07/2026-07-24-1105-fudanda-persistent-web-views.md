@@ -1,7 +1,7 @@
 # 持久化内嵌登录与业务中心
 
 > 本文是首次接入时的历史快照，当时使用本地 `0.1.0` 包。当前 LZClaw
-> 已切换到公开的 `@fudanda/electron-persistent-view@0.2.0`。长期产品契约
+> 已切换到公开的 `@fudanda/electron-persistent-view@0.3.0`。长期产品契约
 > 以 `docs/lzclaw-fork-customizations.md` 和
 > `docs/architecture-persistent-web-views.md` 为准。
 

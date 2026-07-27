@@ -9,7 +9,7 @@
 - 上游基线：`origin/main`
 - 最近同步的上游提交：`2921c1e5bddbd96a503da4acd7538cac45bcd0f2`
 - 最近合并提交：`2b49ccd6e755373d299fef399bad8f3c6c616a36`
-- 最近更新：2026-07-24
+- 最近更新：2026-07-27
 - 合并策略：只把 `origin/main` 合并到 `dev-htmm-v1`，不修改或推送 `main`
 
 每次合并上游后都要更新以上两个提交号。功能实现可以随上游结构调整，
@@ -29,11 +29,11 @@
 | 应用内嵌网页登录 | P0 | 登录在欢迎页内全区域显示，不打开额外 `BrowserWindow`；固定使用 LZClaw 登录地址；同时保留系统浏览器登录和回调能力 | `src/main/libs/authInAppLoginView.ts`、`src/renderer/services/auth.ts`、`src/shared/auth/constants.ts` |
 | 登录完成后的落点 | P0 | 登录成功后关闭登录视图，隐藏业务中心，进入“新建任务”状态并聚焦任务输入，而不是跳到 `/users` | `src/renderer/App.tsx` |
 | 退出登录 | P0 | 清除原生令牌、用户、服务端模型元数据和专用 Web Session；立即回欢迎页；不因为退出登录而重启 OpenClaw 网关 | `src/main/main.ts`、`src/renderer/services/auth.ts` |
-| 持久化网页 Session | P0 | 登录页和业务中心共享 `persist:lzclaw-web`；应用重启后可以恢复有效登录状态；使用 `@fudanda/electron-persistent-view` 精确版本 `0.2.0` | `package.json`、`src/shared/auth/constants.ts`、`src/main/main.ts` |
+| 持久化网页 Session | P0 | 登录页和业务中心共享 `persist:lzclaw-web`；应用重启后可以恢复有效登录状态；使用 `@fudanda/electron-persistent-view` 精确版本 `0.3.0` | `package.json`、`src/shared/auth/constants.ts`、`src/main/main.ts` |
 | 业务中心 | P0 | 侧边栏在 MCP 下方显示“业务中心”；应用内加载 `http://localhost:3100/users`；切换菜单时只隐藏视图并保留滚动、表单和页面状态 | `src/renderer/components/Sidebar.tsx`、`src/renderer/components/businessCenter/BusinessCenterView.tsx`、`src/main/libs/businessCenterInAppView.ts` |
 | 原生视图覆盖保护 | P0 | 欢迎页、设置、更新、权限等覆盖层出现时隐藏业务中心原生视图；覆盖层关闭后恢复显示且不重载 | `src/renderer/App.tsx`、`src/renderer/components/businessCenter/BusinessCenterView.tsx` |
 | 业务网页会话失效 | P0 | 业务中心普通导航或 SPA 导航到 `/login` 时，隐藏业务视图、清除桌面登录状态并返回欢迎页 | `src/main/libs/businessCenterInAppView.ts`、`src/main/main.ts` |
-| 导航与 Electron 安全 | P0 | 保持 `nodeIntegration=false`、`contextIsolation=true`、`sandbox=true`、`webSecurity=true`；同源业务导航留在应用内，外部 HTTP/HTTPS 使用系统浏览器，其他协议阻止 | `src/main/libs/authInAppLoginView.ts`、`src/main/libs/businessCenterInAppView.ts` |
+| 导航与 Electron 安全 | P0 | 保持 Node 主线程、Worker 和子框架集成关闭，启用 `contextIsolation`、`sandbox` 和 `webSecurity`，禁用不安全混合内容、WebView、实验特性和宿主 Blink 特性；同源业务导航留在应用内，外部 HTTP/HTTPS 使用系统浏览器，其他协议阻止 | `src/main/libs/authInAppLoginView.ts`、`src/main/libs/businessCenterInAppView.ts` |
 | IPC 契约集中管理 | P1 | 登录和业务中心 IPC 名称、请求类型、状态类型继续放在 `src/shared`，主进程、preload 和 renderer 不各自写字符串 | `src/shared/auth/constants.ts`、`src/shared/businessCenter/constants.ts`、`src/main/preload.ts`、`src/renderer/types/electron.d.ts` |
 | 本地开发隔离 | P2 | 忽略 `.codex-run/`；项目 `.npmrc` 清空继承的用户级 `allow-scripts`，避免嵌套 npm 安装被本机配置污染 | `.gitignore`、`.npmrc` |
 
@@ -62,7 +62,7 @@
 | `src/renderer/services/auth.ts` | 接收上游认证诊断和数据刷新逻辑，保留 LZClaw 登录地址、内嵌登录和退出后的本地状态更新 | 浏览器登录与内嵌登录都可用 |
 | `src/renderer/types/electron.d.ts` | 对上游和分支 API 做并集，必须与 preload 实际暴露一致 | TypeScript 编译和可选 API 兼容 |
 | `src/renderer/components/Sidebar.tsx` | 接收上游菜单调整，在 MCP 菜单后重新插入业务中心 | 展开和折叠布局、选中状态 |
-| `package.json` | 接收上游版本和依赖更新，保留精确依赖 `@fudanda/electron-persistent-view: 0.2.0`，除非明确执行包升级 | CommonJS 加载、打包时进入 `app.asar` |
+| `package.json` | 接收上游版本和依赖更新，保留精确依赖 `@fudanda/electron-persistent-view: 0.3.0`，除非明确执行包升级 | CommonJS 加载、打包时进入 `app.asar` |
 
 禁止用整文件 `ours` 或 `theirs` 处理上述文件。应先接受两边新增能力，再按本表逐项恢复产品契约。
 

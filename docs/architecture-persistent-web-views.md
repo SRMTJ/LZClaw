@@ -44,8 +44,10 @@ renderer content.
 
 ## Navigation And Security
 
-- Every view enforces sandboxing, context isolation, web security, and disabled
-  Node integration.
+- Every view disables Node integration in the main frame, workers, and
+  subframes; enables sandboxing, context isolation, and web security; and
+  disables insecure mixed content, WebView tags, experimental features, and
+  host-provided Blink feature flags.
 - Business Center navigation stays in-app only for
   `http://localhost:3100`.
 - External HTTP and HTTPS links open in the system browser.
@@ -58,7 +60,7 @@ renderer content.
 LZClaw uses the public package with an exact version:
 
 ```json
-"@fudanda/electron-persistent-view": "0.2.0"
+"@fudanda/electron-persistent-view": "0.3.0"
 ```
 
 Install dependencies before compiling or launching LZClaw:
