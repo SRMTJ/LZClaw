@@ -18,8 +18,9 @@ export const registerBusinessCenterIpcHandlers = (
     BusinessCenterIpcChannel.Open,
     async (_event, request: BusinessCenterOpenRequest) => {
       try {
-        await options.getController().open(request.bounds);
-        return { success: true };
+        return {
+          success: await options.getController().open(request.bounds),
+        };
       } catch (error) {
         return {
           success: false,

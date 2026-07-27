@@ -37,6 +37,13 @@ attempt finishes. The Business Center view is created on first use, hidden
 when another menu or renderer overlay is active, and shown again without a
 reload. It is closed only on logout or window shutdown.
 
+Both controllers inspect the package's `open()` result. A current request is
+reported as successful only when the package returns `opened`; a closed login
+attempt is cancelled, and a closed Business Center attempt remains retryable.
+An older Business Center request may settle after a newer open or close, so its
+result is checked against the controller operation ID before updating IPC
+state.
+
 The renderer owns the placeholder rectangle and reports bounds through typed
 IPC. The native view is hidden while settings, update, permission, or welcome
 overlays are active because an Electron child view otherwise renders above
@@ -52,6 +59,10 @@ renderer content.
   `http://localhost:3100`.
 - External HTTP and HTTPS links open in the system browser.
 - Unsupported protocols and popup windows are blocked.
+- The dedicated `persist:lzclaw-web` Session denies permission checks and
+  permission requests by default. Any future camera, microphone, notification,
+  geolocation, or device permission must be added as an explicit,
+  origin-scoped product decision.
 - The login controller keeps its existing `lobsterai://` callback and local
   HTTP callback behavior.
 
@@ -60,7 +71,7 @@ renderer content.
 LZClaw uses the public package with an exact version:
 
 ```json
-"@fudanda/electron-persistent-view": "0.3.0"
+"@fudanda/electron-persistent-view": "0.4.0"
 ```
 
 Install dependencies before compiling or launching LZClaw:

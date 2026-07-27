@@ -13,6 +13,7 @@ import {
   type AuthLocalCallback,
   startAuthLocalCallback,
 } from './authLocalCallbackServer';
+import { isPersistentViewOpened } from './persistentViewOpenResult';
 
 const AUTH_LOGIN_MIN_WIDTH = 320;
 const AUTH_LOGIN_MIN_HEIGHT = 280;
@@ -119,12 +120,15 @@ export class AuthInAppLoginViewController {
         state: localCallback.state,
       });
 
-      await this.viewController.open({
+      const openResult = await this.viewController.open({
         parentWindow,
         url: finalUrl,
         bounds,
         focus: true,
       });
+      if (!isPersistentViewOpened(openResult)) {
+        throw new Error('Embedded login was cancelled');
+      }
     } catch (error) {
       if (operationId === this.operationId) {
         await this.closeActiveSurface();

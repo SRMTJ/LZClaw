@@ -288,6 +288,7 @@ import {
 import { packageHtmlFile } from './libs/htmlShare/htmlSharePackager';
 import { getKeyfromAttribution, initializeKeyfromAttribution } from './libs/keyfromAttribution';
 import { exportLogsZip } from './libs/logExport';
+import { configureLzclawWebSessionSecurity } from './libs/lzclawWebSessionSecurity';
 import { inferImageMimeTypeFromDataUrl, type PersistedGeneratedImageAsset, persistGeneratedImageAssets, type PersistGeneratedImageAssetsResult, persistGeneratedVideoAssets, type RemoteGeneratedMediaAsset } from './libs/mediaAssetPersistence';
 import { migrateAgentModelRefs, parsePrimaryModelRef, resolveQualifiedAgentModelRef } from './libs/openclawAgentModels';
 import {
@@ -3910,6 +3911,7 @@ if (!gotTheLock) {
       type: 'partition',
       partition: AuthWebSessionPartition,
     });
+    configureLzclawWebSessionSecurity(lzclawWebSession);
     authInAppLoginView = new AuthInAppLoginViewController({
       getMainWindow: () => mainWindow,
       session: lzclawWebSession,

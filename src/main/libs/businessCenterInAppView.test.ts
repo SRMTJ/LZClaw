@@ -16,12 +16,17 @@ const mocks = vi.hoisted(() => {
     webContents: null as object | null,
     open: vi.fn(async () => {
       persistentController.webContents = {};
+      return {
+        status: 'opened' as 'opened' | 'superseded' | 'closed',
+      };
     }),
     setBounds: vi.fn(() => true),
     show: vi.fn(() => true),
     hide: vi.fn(() => true),
     reload: vi.fn(() => true),
-    close: vi.fn(async () => undefined),
+    close: vi.fn(async () => {
+      persistentController.webContents = null;
+    }),
     clearStorageData: vi.fn(async () => undefined),
   };
   const openExternal = vi.fn(async () => undefined);
@@ -38,6 +43,11 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock('@fudanda/electron-persistent-view', () => ({
+  PersistentViewOpenStatus: {
+    Opened: 'opened',
+    Superseded: 'superseded',
+    Closed: 'closed',
+  },
   PersistentViewController: class {
     constructor(options: {
       configureWebContents?: (context: {
@@ -94,7 +104,7 @@ describe('BusinessCenterInAppViewController', () => {
     const { controller, parentWindow, statuses } = createController();
     const bounds = { x: 10, y: 20, width: 800, height: 600 };
 
-    await controller.open(bounds);
+    await expect(controller.open(bounds)).resolves.toBe(true);
 
     expect(mocks.persistentController.open).toHaveBeenCalledWith({
       parentWindow,
@@ -104,6 +114,45 @@ describe('BusinessCenterInAppViewController', () => {
       focus: false,
     });
     expect(statuses).toContainEqual({ status: 'loading' });
+  });
+
+  test('does not report success when the persistent view closes while opening', async () => {
+    mocks.persistentController.open.mockResolvedValueOnce({
+      status: 'closed',
+    });
+    const { controller, statuses } = createController();
+
+    await expect(controller.open({
+      x: 10,
+      y: 20,
+      width: 800,
+      height: 600,
+    })).resolves.toBe(false);
+
+    expect(statuses.at(-1)).toEqual({ status: 'error' });
+  });
+
+  test('does not report a superseded open as successful after close', async () => {
+    let resolveOpen!: (result: { status: 'closed' }) => void;
+    const openResult = new Promise<{ status: 'closed' }>(resolve => {
+      resolveOpen = resolve;
+    });
+    mocks.persistentController.open.mockImplementationOnce(async () => {
+      mocks.persistentController.webContents = {};
+      return openResult;
+    });
+    const { controller } = createController();
+
+    const opening = controller.open({
+      x: 10,
+      y: 20,
+      width: 800,
+      height: 600,
+    });
+    await controller.close();
+    resolveOpen({ status: 'closed' });
+
+    await expect(opening).resolves.toBe(false);
   });
 
   test('reuses the live view without navigating again after renderer remount', async () => {

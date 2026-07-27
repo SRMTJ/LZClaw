@@ -10,6 +10,7 @@ import type {
   BusinessCenterStatusUpdate,
   BusinessCenterViewBounds,
 } from '../../shared/businessCenter/constants';
+import { isPersistentViewOpened } from './persistentViewOpenResult';
 
 const BUSINESS_CENTER_URL = 'http://localhost:3100/users';
 const BUSINESS_CENTER_ORIGIN = new URL(BUSINESS_CENTER_URL).origin;
@@ -46,6 +47,7 @@ export class BusinessCenterInAppViewController {
   private lastStatus: BusinessCenterStatusUpdate = { status: 'idle' };
   private sessionInvalidated = false;
   private shouldBeVisible = false;
+  private operationId = 0;
 
   constructor(
     private readonly options: BusinessCenterInAppViewControllerOptions,
@@ -67,7 +69,8 @@ export class BusinessCenterInAppViewController {
     });
   }
 
-  async open(bounds: BusinessCenterViewBounds): Promise<void> {
+  async open(bounds: BusinessCenterViewBounds): Promise<boolean> {
+    const operationId = ++this.operationId;
     const parentWindow = this.options.getMainWindow();
     if (!parentWindow || parentWindow.isDestroyed()) {
       throw new Error('Main window is unavailable for the business center');
@@ -82,17 +85,29 @@ export class BusinessCenterInAppViewController {
         this.viewController.show();
       }
       this.reportStatus(this.lastStatus);
-      return;
+      return true;
     }
 
     this.reportStatus({ status: 'loading' });
-    await this.viewController.open({
+    const openResult = await this.viewController.open({
       parentWindow,
       url: BUSINESS_CENTER_URL,
       bounds,
       visible: this.shouldBeVisible,
       focus: false,
     });
+    if (operationId !== this.operationId) {
+      return (
+        this.shouldBeVisible
+        && this.viewController.webContents !== null
+      );
+    }
+    if (!isPersistentViewOpened(openResult)) {
+      this.shouldBeVisible = false;
+      this.reportStatus({ status: 'error' });
+      return false;
+    }
+    return true;
   }
 
   updateBounds(bounds: BusinessCenterViewBounds): boolean {
@@ -111,11 +126,11 @@ export class BusinessCenterInAppViewController {
     this.reportStatus({ status: 'loading' });
     if (this.viewController.reload()) return true;
     if (!this.lastBounds) return false;
-    await this.open(this.lastBounds);
-    return true;
+    return this.open(this.lastBounds);
   }
 
   async close(): Promise<void> {
+    this.operationId += 1;
     this.lastBounds = null;
     this.shouldBeVisible = false;
     await this.viewController.close();
