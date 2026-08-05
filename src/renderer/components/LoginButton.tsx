@@ -1,19 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 
-import inviteCreditsIconUrl from '../assets/icons/invite-credits.svg';
 import logoutIconUrl from '../assets/icons/logout.svg';
 import promoSubscriptionIconUrl from '../assets/icons/promo-subscription.svg';
-import rechargeIconUrl from '../assets/icons/recharge.svg';
 import soccerBallIconUrl from '../assets/icons/soccer-ball.svg';
-import usageOverviewIconUrl from '../assets/icons/usage-overview.svg';
 import { authService } from '../services/auth';
-import {
-  getPortalCreditsResetActivityUrl,
-  getPortalInvitationUrl,
-  getPortalProfileUrl,
-  getPortalRechargeUrl,
-} from '../services/endpoints';
+import { getPortalCreditsResetActivityUrl } from '../services/endpoints';
 import { i18nService } from '../services/i18n';
 import { LogReporterAction, reportYdAnalyzer } from '../services/logReporter';
 import { RootState } from '../store';
@@ -246,60 +238,6 @@ const UserMenu: React.FC<UserMenuProps> = ({
     }
   };
 
-  const handleUsageOverview = async () => {
-    try {
-      await openPortalUrl(getPortalProfileUrl());
-      reportAccountMenuAction('open_usage_overview', {
-        creditItemCount: creditItems.length,
-        hasCredits,
-        result: 'success',
-      });
-    } catch (error) {
-      reportAccountMenuAction('open_usage_overview', {
-        creditItemCount: creditItems.length,
-        hasCredits,
-        result: 'failed',
-      });
-      throw error;
-    }
-  };
-
-  const handleRecharge = async () => {
-    try {
-      await openPortalUrl(getPortalRechargeUrl());
-      reportAccountMenuAction('open_recharge', {
-        creditItemCount: creditItems.length,
-        hasCredits,
-        result: 'success',
-      });
-    } catch (error) {
-      reportAccountMenuAction('open_recharge', {
-        creditItemCount: creditItems.length,
-        hasCredits,
-        result: 'failed',
-      });
-      throw error;
-    }
-  };
-
-  const handleInvite = async () => {
-    try {
-      await openPortalUrl(getPortalInvitationUrl());
-      reportAccountMenuAction('open_invitation', {
-        creditItemCount: creditItems.length,
-        hasCredits,
-        result: 'success',
-      });
-    } catch (error) {
-      reportAccountMenuAction('open_invitation', {
-        creditItemCount: creditItems.length,
-        hasCredits,
-        result: 'failed',
-      });
-      throw error;
-    }
-  };
-
   const handleCreditsResetActivity = async () => {
     try {
       await openPortalUrl(getPortalCreditsResetActivityUrl());
@@ -465,21 +403,6 @@ const UserMenu: React.FC<UserMenuProps> = ({
             onClick={handleFinalReward}
           />
         ) : null}
-        <AccountMenuAction
-          icon={<PortalMenuIcon src={usageOverviewIconUrl} darkInvert />}
-          label={i18nService.t('authUsageOverview')}
-          onClick={handleUsageOverview}
-        />
-        <AccountMenuAction
-          icon={<PortalMenuIcon src={rechargeIconUrl} darkInvert />}
-          label={i18nService.t('authGoRecharge')}
-          onClick={handleRecharge}
-        />
-        <AccountMenuAction
-          icon={<PortalMenuIcon src={inviteCreditsIconUrl} darkInvert />}
-          label={i18nService.t('authInviteFriendsForCredits')}
-          onClick={handleInvite}
-        />
         <AccountMenuAction
           icon={<PortalMenuIcon src={logoutIconUrl} darkInvert />}
           label={i18nService.t('authLogout')}
