@@ -27,9 +27,9 @@
 | --- | --- | --- | --- |
 | 应用品牌与兼容标识 | P0 | 用户可见产品名统一为“海豚买买AI工作台”；继续使用 `lobsterai://`、`com.lobsterai.app`、`LobsterAI.exe`、`%APPDATA%/LobsterAI`、数据库文件名、provider ID、请求头和环境变量等旧标识，避免登录态、历史数据、升级、深链和服务端协议断裂 | `src/main/appConstants.ts`、`src/renderer/constants/app.ts`、`electron-builder.json`、`src/main/i18n.ts`、`src/renderer/services/i18n.ts`、`scripts/nsis-installer.nsh` |
 | 登录门禁与欢迎页 | P0 | 用户未登录时显示欢迎/登录页并阻止使用主程序；已登录时不显示欢迎页；退出或会话失效后立即回到欢迎页 | `src/renderer/App.tsx`、`src/renderer/components/WelcomeDialog.tsx` |
-| 应用内嵌网页登录 | P0 | 登录在欢迎页内全区域显示，不打开额外 `BrowserWindow`；固定使用 LZClaw 登录地址；同时保留系统浏览器登录和回调能力 | `src/main/libs/authInAppLoginView.ts`、`src/renderer/services/auth.ts`、`src/shared/auth/constants.ts` |
-| 登录完成后的落点 | P0 | 登录成功后关闭登录视图，隐藏业务中心，进入“新建任务”状态并聚焦任务输入，而不是跳到 `/users`；若登录服务误走 Web 流程落到同源 `/users`，主进程从 HttpOnly Cookie 恢复原生令牌，失败则回到桌面登录页 | `src/main/libs/authInAppLoginView.ts`、`src/main/libs/authWebSessionRecovery.ts`、`src/main/main.ts`、`src/renderer/services/auth.ts`、`src/renderer/App.tsx` |
-| 退出登录 | P0 | 清除原生令牌、用户、服务端模型元数据和专用 Web Session；立即回欢迎页；不因为退出登录而重启 OpenClaw 网关 | `src/main/main.ts`、`src/renderer/services/auth.ts` |
+| 应用内嵌网页登录 | P0 | 登录在欢迎页内全区域显示，不打开额外 `BrowserWindow`；开发构建固定使用 `http://127.0.0.1:3103/login`，生产构建固定使用 `https://qiye.srmtj.com/login`；同时保留系统浏览器登录和回调能力 | `src/main/libs/authInAppLoginView.ts`、`src/main/libs/authLocalCallbackServer.ts`、`src/renderer/services/endpoints.ts`、`src/renderer/services/auth.ts`、`src/shared/auth/constants.ts` |
+| 登录完成后的落点 | P0 | 企业工作站登录成功后只接受固定的管理员/员工门户来源，并通过同源 `/api/v1/me` 复验 HttpOnly Web Session；复验成功后关闭登录视图、隐藏业务中心并进入“新建任务”，不继续显示企业门户；旧登录服务落到同源 `/users` 时仍可恢复原生令牌，任一复验失败都返回桌面登录页 | `src/main/libs/authInAppLoginView.ts`、`src/main/libs/enterpriseWebSessionAuth.ts`、`src/main/libs/authWebSessionRecovery.ts`、`src/main/main.ts`、`src/renderer/services/auth.ts`、`src/renderer/App.tsx` |
+| 退出登录 | P0 | 企业登录尽力携带最新 CSRF 调用同源退出接口，然后清除企业会话引用、原生令牌、用户、服务端模型元数据和专用 Web Session；立即回欢迎页；不因为退出登录而重启 OpenClaw 网关 | `src/main/libs/enterpriseWebSessionAuth.ts`、`src/main/main.ts`、`src/renderer/services/auth.ts` |
 | 持久化网页 Session | P0 | 登录页和业务中心共享 `persist:lzclaw-web`；应用重启后可以恢复有效登录状态；专用 Session 默认拒绝网页权限检查和请求；使用 `@fudanda/electron-persistent-view` 精确版本 `0.5.0` | `package.json`、`src/shared/auth/constants.ts`、`src/main/main.ts`、`src/main/libs/lzclawWebSessionSecurity.ts` |
 | 业务中心 | P0 | 侧边栏在 MCP 下方显示“业务中心”；应用内加载 `http://localhost:3100/users`；切换菜单时只隐藏视图并保留滚动、表单和页面状态；只有持久化视图返回 `opened` 才向当前 IPC 调用报告打开成功 | `src/renderer/components/Sidebar.tsx`、`src/renderer/components/businessCenter/BusinessCenterView.tsx`、`src/main/libs/businessCenterInAppView.ts` |
 | 原生视图覆盖保护 | P0 | 欢迎页、设置、更新、权限等覆盖层出现时隐藏业务中心原生视图；覆盖层关闭后恢复显示且不重载 | `src/renderer/App.tsx`、`src/renderer/components/businessCenter/BusinessCenterView.tsx` |
@@ -43,9 +43,25 @@
 
 ## 外部服务契约
 
-当前实现依赖 `D:\AI-AI\lzclaw-login-v1` 提供以下接口和页面：
+登录页面由 `D:\AI-AI\AIZhongtai\grit-enterprise-admin\apps\workstation-web`
+提供：
 
-- 登录页：`http://localhost:3100/login`
+- 开发登录页：`http://127.0.0.1:3103/login`
+- 生产登录页：`https://qiye.srmtj.com/login`
+- 开发管理员/员工会话复验：`http://127.0.0.1:3107/api/v1/me`、
+  `http://127.0.0.1:3108/api/v1/me`；开发构建不接受生产来源
+- 生产管理员/员工会话复验：`https://qiye.srmtj.com/admin/api/v1/me`、
+  `https://qiye.srmtj.com/employee/api/v1/me`；生产构建不接受回环来源
+
+企业工作站仍按服务端判定的角色进入管理员或员工门户。LZClaw 不信任页面
+传入的角色、企业或用户字段，只在门户同源 Session 通过 `/api/v1/me` 复验且
+身份、企业、成员均为 `active` 后保存最小桌面身份摘要；CSRF、handoff 和 Cookie
+不得写入本地用户记录。主进程忽略 renderer 传入的登录地址，内嵌视图只允许当前
+构建固定登录来源和对应管理员/员工门户来源；切换企业会话与旧原生令牌体系时，
+必须定向清除被替代体系的 Cookie/存储，禁止两套可恢复凭据并存。
+
+其余现有认证和业务中心契约包括：
+
 - 业务中心：`http://localhost:3100/users`
 - 桌面登录：本地 HTTP 回调、一次性授权码交换和 `lobsterai://` 深链回退
 - Web Session Cookie：`lzclaw_web_session`，写入专用持久化 Session
@@ -153,12 +169,12 @@ npm run compile:electron
 
 1. 未登录启动后只能操作欢迎/登录页。
 2. 已登录启动后直接进入主程序，不显示欢迎页。
-3. 内嵌登录成功后关闭网页并进入新建任务，不进入用户列表。
+3. 内嵌企业登录成功后复验管理员或员工 Session，关闭网页并进入新建任务，不停留在企业门户。
 4. 系统浏览器登录仍能通过本地回调或深链完成。
 5. 业务中心打开 `/users`，切换菜单后页面状态不丢失。
 6. 设置、更新、权限和欢迎覆盖层不会被原生网页视图遮挡。
 7. 从应用或业务网页退出后立即回欢迎页，网关不重启。
-8. 重启应用后，有效登录可恢复；退出状态不会恢复成已登录。
+8. 重启应用后，有效的企业 Web Session 或旧原生令牌可恢复；退出状态不会恢复成已登录。
 9. `3100` 不可用时业务中心显示错误和重试状态。
 10. 登录页和业务中心的摄像头、麦克风、通知等网页权限请求默认被拒绝。
 

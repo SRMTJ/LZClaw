@@ -79,9 +79,14 @@ const createController = (onAuthenticatedNavigation = vi.fn(async () => true)) =
       getMainWindow: () => parentWindow as never,
       session: {} as never,
       isDev: true,
-      portalOrigin: 'https://example.test',
       onAuthCode: vi.fn(),
       onAuthDeepLink: vi.fn(),
+      isAllowedNavigation: url => new URL(url).origin === 'https://example.test',
+      isAuthenticatedNavigation: url => {
+        const parsed = new URL(url);
+        return parsed.origin === 'https://example.test'
+          && (parsed.pathname === '/users' || parsed.pathname === '/admin/');
+      },
       onAuthenticatedNavigation,
     }),
     parentWindow,
@@ -144,6 +149,20 @@ describe('AuthInAppLoginViewController', () => {
     });
   });
 
+  test('recovers an authenticated enterprise session when login lands on the admin portal', async () => {
+    const { controller, onAuthenticatedNavigation } = createController();
+    await controller.open({
+      loginUrl: 'https://example.test/login',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+    });
+
+    mocks.emit('did-navigate', {}, 'https://example.test/admin/');
+
+    await vi.waitFor(() => {
+      expect(onAuthenticatedNavigation).toHaveBeenCalledWith('https://example.test/admin/');
+    });
+  });
+
   test('restores the desktop login URL when web-session recovery is rejected', async () => {
     const { controller } = createController(vi.fn(async () => false));
     await controller.open({
@@ -169,5 +188,34 @@ describe('AuthInAppLoginViewController', () => {
     await Promise.resolve();
 
     expect(onAuthenticatedNavigation).not.toHaveBeenCalled();
+  });
+
+  test('rejects an untrusted initial URL before starting the callback server', async () => {
+    const { controller } = createController();
+
+    await expect(controller.open({
+      loginUrl: 'https://attacker.test/login',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+    })).rejects.toThrow('Embedded login URL is not trusted');
+
+    expect(mocks.startAuthLocalCallback).not.toHaveBeenCalled();
+    expect(mocks.persistentController.open).not.toHaveBeenCalled();
+  });
+
+  test('blocks untrusted redirects and popups inside the persistent auth session', async () => {
+    const { controller } = createController();
+    await controller.open({
+      loginUrl: 'https://example.test/login',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+    });
+
+    const preventDefault = vi.fn();
+    mocks.emit('will-navigate', { preventDefault }, 'https://attacker.test/login');
+    const popupHandler = mocks.webContents.setWindowOpenHandler.mock.calls.at(-1)?.[0];
+    const popupResult = popupHandler?.({ url: 'https://attacker.test/login' });
+
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(popupResult).toEqual({ action: 'deny' });
+    expect(mocks.webContents.loadURL).not.toHaveBeenCalledWith('https://attacker.test/login');
   });
 });

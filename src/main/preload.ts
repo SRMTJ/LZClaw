@@ -1167,9 +1167,8 @@ contextBridge.exposeInMainWorld('electron', {
     },
   },
   auth: {
-    login: (loginUrl?: string) => ipcRenderer.invoke(AuthIpcChannel.Login, { loginUrl }),
-    loginInApp: (loginUrl: string | undefined, bounds: AuthLoginInAppBounds) => ipcRenderer.invoke(AuthIpcChannel.LoginInApp, {
-      loginUrl,
+    login: () => ipcRenderer.invoke(AuthIpcChannel.Login),
+    loginInApp: (bounds: AuthLoginInAppBounds) => ipcRenderer.invoke(AuthIpcChannel.LoginInApp, {
       bounds,
     } satisfies AuthLoginInAppRequest),
     updateLoginInAppBounds: (bounds: AuthLoginInAppBounds) => ipcRenderer.invoke(

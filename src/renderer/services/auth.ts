@@ -277,8 +277,7 @@ class AuthService {
     writeAuthRendererLog('info', `login attempt ${attemptId} started`);
 
     try {
-      const loginUrl = await this.resolveLoginUrl();
-      const result = await window.electron.auth.login(loginUrl);
+      const result = await window.electron.auth.login();
       if (result.success) {
         writeAuthRendererLog('info', `login attempt ${attemptId} handed off to the system browser`);
       } else {
@@ -295,21 +294,10 @@ class AuthService {
    * Initiate login inside the welcome guide without opening a separate window.
    */
   async loginInApp(bounds: AuthLoginInAppBounds) {
-    const loginUrl = await this.resolveLoginUrl();
-    const result = await window.electron.auth.loginInApp(loginUrl, bounds);
+    const result = await window.electron.auth.loginInApp(bounds);
     if (!result.success) {
       throw new Error(result.error || 'Failed to open embedded login');
     }
-  }
-
-  /**
-   * Resolve the fork-local login page shared by browser and embedded login.
-   */
-  private async resolveLoginUrl(): Promise<string> {
-    const { getLoginPageUrl } = await import('./endpoints');
-    const loginUrl = getLoginPageUrl();
-    console.log(`[Auth] using LZClaw login page: ${loginUrl}`);
-    return loginUrl;
   }
 
   /**

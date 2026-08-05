@@ -3,6 +3,7 @@
  * 后续新增的业务接口也应在此文件中配置。
  */
 
+import { resolveAuthLoginPageUrl } from '../../shared/auth/constants';
 import { configService } from './config';
 
 export const isTestModeEnabled = () => {
@@ -34,9 +35,9 @@ export const getKitStoreUrl = () => isTestModeEnabled()
   : 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/prod/kit-store';
 
 // 登录地址
-const LZCLAW_LOGIN_PAGE_URL = 'http://localhost:3100/login';
+export const resolveLoginPageUrl = resolveAuthLoginPageUrl;
 
-export const getLoginPageUrl = () => LZCLAW_LOGIN_PAGE_URL;
+export const getLoginPageUrl = (): string => resolveLoginPageUrl(import.meta.env.DEV);
 
 export const getLoginOvermindUrl = () => isTestModeEnabled()
   ? 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/test/login-url'

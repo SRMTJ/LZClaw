@@ -25,6 +25,17 @@ export const AuthIpcChannel = {
 
 export const AuthWebSessionPartition = 'persist:lzclaw-web';
 
+export const AuthLoginPageUrl = {
+  Development: 'http://127.0.0.1:3103/login',
+  Production: 'https://qiye.srmtj.com/login',
+} as const;
+
+export const resolveAuthLoginPageUrl = (isDevelopment: boolean): string => (
+  isDevelopment
+    ? AuthLoginPageUrl.Development
+    : AuthLoginPageUrl.Production
+);
+
 export type AuthIpcChannel = typeof AuthIpcChannel[keyof typeof AuthIpcChannel];
 
 export interface AuthLoginInAppBounds {
@@ -35,7 +46,6 @@ export interface AuthLoginInAppBounds {
 }
 
 export interface AuthLoginInAppRequest {
-  loginUrl?: string;
   bounds: AuthLoginInAppBounds;
 }
 

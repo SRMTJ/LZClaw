@@ -50,6 +50,7 @@ import {
   AuthSessionChangeReason,
   AuthSessionStatus,
   AuthWebSessionPartition,
+  resolveAuthLoginPageUrl,
 } from '../shared/auth/constants';
 import {
   type BrowserDiagnosticResultStep,
@@ -228,12 +229,18 @@ import {
   appendLoginParams,
   startAuthLocalCallback,
 } from './libs/authLocalCallbackServer';
+import { isTrustedAuthLoginNavigation } from './libs/authLoginPolicy';
 import {
   AuthSessionManager,
   resolveAuthSessionStatusFromError,
 } from './libs/authSessionManager';
 import {
+  clearEnterpriseAuthWebSessionCredentials,
+  clearNativeAuthWebSessionCredentials,
+} from './libs/authWebSessionIsolation';
+import {
   AuthWebSessionRecoveryStatus,
+  isAuthenticatedPortalNavigation,
   recoverAuthTokensFromWebSession,
 } from './libs/authWebSessionRecovery';
 import type { BrowserAnnotationAssetIdentity, SaveBrowserAnnotationAssetInput } from './libs/browserAnnotationAssetStore';
@@ -304,6 +311,16 @@ import {
   resolveEnterpriseConfigPath,
   syncEnterpriseConfig,
 } from './libs/enterpriseConfigSync';
+import {
+  type EnterpriseWebSessionReference,
+  EnterpriseWebSessionValidationStatus,
+  getEnterpriseWebSessionOrigins,
+  isEnterpriseWebSessionReference,
+  logoutEnterpriseWebSession,
+  recoverEnterpriseWebSession,
+  resolveEnterpriseWebSessionTarget,
+  validateEnterpriseWebSession,
+} from './libs/enterpriseWebSessionAuth';
 import {
   createOfficePreviewSession,
   createPreviewSession,
@@ -3967,7 +3984,8 @@ if (!gotTheLock) {
 
   const AUTH_WEB_SESSION_COOKIE_NAME = 'lzclaw_web_session';
   const AUTH_WEB_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
-  const BUSINESS_CENTER_ORIGIN = 'http://localhost:3100';
+  const AUTH_ENTERPRISE_SESSION_STORE_KEY = 'auth_enterprise_session';
+  const LEGACY_AUTH_PORTAL_ORIGIN = 'http://localhost:3100';
 
   const getLzclawWebSession = (): Session => {
     if (!lzclawWebSession) {
@@ -4005,7 +4023,6 @@ if (!gotTheLock) {
       getMainWindow: () => mainWindow,
       session: lzclawWebSession,
       isDev,
-      portalOrigin: BUSINESS_CENTER_ORIGIN,
       onAuthCode: code => {
         authCallbackRouter.handleAuthCode(code);
         void authInAppLoginView?.close().catch(error => {
@@ -4020,6 +4037,11 @@ if (!gotTheLock) {
         });
         focusMainWindow('embedded auth deep link');
       },
+      isAllowedNavigation: navigationUrl => isTrustedAuthLoginNavigation(navigationUrl, isDev),
+      isAuthenticatedNavigation: navigationUrl => (
+        isAuthenticatedPortalNavigation(navigationUrl, LEGACY_AUTH_PORTAL_ORIGIN)
+        || resolveEnterpriseWebSessionTarget(navigationUrl, isDev) !== null
+      ),
       onAuthenticatedNavigation: navigationUrl =>
         recoverAuthFromEmbeddedWebSession(navigationUrl),
     });
@@ -4375,7 +4397,7 @@ if (!gotTheLock) {
   // ── Auth IPC handlers ──
 
   const getAuthWebSessionOrigins = () =>
-    [...new Set([new URL(getAuthApiBaseUrl()).origin, BUSINESS_CENTER_ORIGIN])];
+    [...new Set([new URL(getAuthApiBaseUrl()).origin, LEGACY_AUTH_PORTAL_ORIGIN])];
 
   const syncAuthWebSessionCookie = async (refreshToken: string) => {
     const webSession = getLzclawWebSession();
@@ -4406,10 +4428,28 @@ if (!gotTheLock) {
     await webSession.cookies.flushStore();
   };
 
+  const getEnterpriseAuthSession = (): EnterpriseWebSessionReference | null => {
+    const stored = getStore().get<unknown>(AUTH_ENTERPRISE_SESSION_STORE_KEY);
+    if (isEnterpriseWebSessionReference(stored, isDev)) return stored;
+    if (stored !== undefined && stored !== null) {
+      getStore().delete(AUTH_ENTERPRISE_SESSION_STORE_KEY);
+    }
+    return null;
+  };
+
+  const clearEnterpriseAuthSession = () => {
+    getStore().delete(AUTH_ENTERPRISE_SESSION_STORE_KEY);
+  };
+
   /**
    * Helper: Persist auth tokens into the kv store.
    */
   const saveAuthTokens = async (accessToken: string, refreshToken: string) => {
+    await clearEnterpriseAuthWebSessionCredentials(
+      getLzclawWebSession(),
+      getEnterpriseWebSessionOrigins(isDev),
+    );
+    clearEnterpriseAuthSession();
     getStore().set('auth_tokens', { accessToken, refreshToken });
     await syncAuthWebSessionCookie(refreshToken).catch(error => {
       console.warn('[Auth] failed to sync browser session cookie:', error);
@@ -4532,6 +4572,24 @@ if (!gotTheLock) {
     }
   };
 
+  const saveEnterpriseAuthSession = async (
+    reference: EnterpriseWebSessionReference,
+    user: Record<string, unknown>,
+  ): Promise<void> => {
+    await clearNativeAuthWebSessionCredentials(
+      getLzclawWebSession(),
+      getAuthWebSessionOrigins(),
+      AUTH_WEB_SESSION_COOKIE_NAME,
+    );
+    clearAuthTokens();
+    clearServerModelMetadata();
+    const defaultQuotaGateState = createDefaultAuthQuotaGateState();
+    cachedSubscriptionStatus = defaultQuotaGateState.subscriptionStatus;
+    cachedMediaGenerationEntitled = defaultQuotaGateState.mediaGenerationEntitled;
+    saveAuthUser(user);
+    getStore().set(AUTH_ENTERPRISE_SESSION_STORE_KEY, reference);
+  };
+
   let activeEmbeddedWebSessionRecovery: Promise<boolean> | null = null;
   recoverAuthFromEmbeddedWebSession = (navigationUrl: string): Promise<boolean> => {
     if (activeEmbeddedWebSessionRecovery) {
@@ -4539,9 +4597,9 @@ if (!gotTheLock) {
     }
 
     const recovery = (async (): Promise<boolean> => {
-      const result = await recoverAuthTokensFromWebSession({
+      const nativeResult = await recoverAuthTokensFromWebSession({
         navigationUrl,
-        portalOrigin: BUSINESS_CENTER_ORIGIN,
+        portalOrigin: LEGACY_AUTH_PORTAL_ORIGIN,
         cookieName: AUTH_WEB_SESSION_COOKIE_NAME,
         getCookies: filter => getLzclawWebSession().cookies.get(filter),
         refreshUrl: `${getAuthApiBaseUrl()}/api/auth/refresh`,
@@ -4550,29 +4608,49 @@ if (!gotTheLock) {
         fetch: (url, options) => net.fetch(url, options),
       });
 
-      if (result.status === AuthWebSessionRecoveryStatus.Ignored) {
-        return false;
-      }
-      if (result.status === AuthWebSessionRecoveryStatus.MissingCookie) {
+      if (nativeResult.status === AuthWebSessionRecoveryStatus.MissingCookie) {
         console.warn('[Auth] authenticated portal navigation had no web session cookie');
         return false;
       }
-      if (result.status === AuthWebSessionRecoveryStatus.Rejected) {
+      if (nativeResult.status === AuthWebSessionRecoveryStatus.Rejected) {
         console.warn('[Auth] web session recovery was rejected', {
-          httpStatus: result.httpStatus,
-          errorCode: result.errorCode,
+          httpStatus: nativeResult.httpStatus,
+          errorCode: nativeResult.errorCode,
         });
         return false;
       }
+      if (nativeResult.status === AuthWebSessionRecoveryStatus.Recovered) {
+        await saveAuthTokens(nativeResult.accessToken, nativeResult.refreshToken);
+        await authInAppLoginView?.close();
+        emitAuthSessionChanged({
+          status: AuthSessionStatus.Authenticated,
+          reason: AuthSessionChangeReason.WebSessionRecovered,
+        });
+        focusMainWindow('embedded web session recovery');
+        console.log('[Auth] recovered native auth from the embedded web session');
+        return true;
+      }
 
-      await saveAuthTokens(result.accessToken, result.refreshToken);
+      const enterpriseResult = await recoverEnterpriseWebSession({
+        navigationUrl,
+        fetch: (url, options) => getLzclawWebSession().fetch(url, options),
+        isDevelopment: isDev,
+      });
+      if (enterpriseResult.status !== EnterpriseWebSessionValidationStatus.Authenticated) {
+        if (enterpriseResult.status !== EnterpriseWebSessionValidationStatus.Ignored) {
+          console.warn(`[Auth] enterprise web session recovery failed: ${enterpriseResult.status}`);
+        }
+        return false;
+      }
+
+      await saveEnterpriseAuthSession(enterpriseResult.reference, enterpriseResult.user);
       await authInAppLoginView?.close();
       emitAuthSessionChanged({
         status: AuthSessionStatus.Authenticated,
         reason: AuthSessionChangeReason.WebSessionRecovered,
       });
-      focusMainWindow('embedded web session recovery');
-      console.log('[Auth] recovered native auth from the embedded web session');
+      focusMainWindow('enterprise web session recovery');
+      console.log('[Auth] recovered enterprise auth from the embedded web session');
       return true;
     })().catch(error => {
       console.warn('[Auth] failed to recover native auth from the embedded web session:', error);
@@ -5800,6 +5878,7 @@ if (!gotTheLock) {
       console.warn('[Auth] failed to clear embedded web session:', error);
     });
     clearAuthTokens();
+    clearEnterpriseAuthSession();
     clearAuthUser();
     clearServerModelMetadata();
     resetAuthQuotaGateState();
@@ -5856,8 +5935,8 @@ if (!gotTheLock) {
     return quota;
   };
 
-  ipcMain.handle(AuthIpcChannel.Login, async (_event, { loginUrl }: { loginUrl?: string } = {}) => {
-    const baseUrl = loginUrl || `${getAuthApiBaseUrl()}/login`;
+  ipcMain.handle(AuthIpcChannel.Login, async () => {
+    const baseUrl = resolveAuthLoginPageUrl(isDev);
     const fallbackUrl = appendLoginParams(baseUrl, { source: 'electron' });
     let localCallback: Awaited<ReturnType<typeof startAuthLocalCallback>> | null = null;
 
@@ -5901,7 +5980,7 @@ if (!gotTheLock) {
     try {
       console.log('[Auth] starting embedded login view with local callback server');
       await getAuthInAppLoginView().open({
-        loginUrl: request?.loginUrl || `${getAuthApiBaseUrl()}/login`,
+        loginUrl: resolveAuthLoginPageUrl(isDev),
         bounds: request?.bounds,
       });
       return { success: true };
@@ -5981,6 +6060,45 @@ if (!gotTheLock) {
 
   ipcMain.handle(AuthIpcChannel.GetUser, async () => {
     try {
+      const enterpriseSession = getEnterpriseAuthSession();
+      if (enterpriseSession) {
+        const enterpriseResult = await validateEnterpriseWebSession({
+          reference: enterpriseSession,
+          fetch: (url, options) => getLzclawWebSession().fetch(url, options),
+          isDevelopment: isDev,
+        });
+        if (enterpriseResult.status === EnterpriseWebSessionValidationStatus.Authenticated) {
+          saveAuthUser(enterpriseResult.user);
+          return {
+            success: true,
+            status: AuthSessionStatus.Authenticated,
+            user: enterpriseResult.user,
+            quota: null,
+          };
+        }
+        if (
+          enterpriseResult.status
+          === EnterpriseWebSessionValidationStatus.TemporarilyUnavailable
+        ) {
+          return {
+            success: false,
+            status: AuthSessionStatus.TemporarilyUnavailable,
+            hasCredentials: true,
+            cachedUser: getAuthUser(),
+          };
+        }
+
+        await clearLocalAuthSession({
+          reason: AuthSessionChangeReason.RefreshRejected,
+          notifyRenderer: false,
+        });
+        return {
+          success: false,
+          status: AuthSessionStatus.Expired,
+          hasCredentials: false,
+        };
+      }
+
       const tokens = getAuthTokens();
       if (!tokens) {
         return {
@@ -6143,6 +6261,17 @@ if (!gotTheLock) {
 
   ipcMain.handle(AuthIpcChannel.Logout, async () => {
     try {
+      const enterpriseSession = getEnterpriseAuthSession();
+      if (enterpriseSession) {
+        const serverLoggedOut = await logoutEnterpriseWebSession({
+          reference: enterpriseSession,
+          fetch: (url, options) => getLzclawWebSession().fetch(url, options),
+          isDevelopment: isDev,
+        });
+        if (!serverLoggedOut) {
+          console.warn('[Auth] enterprise logout was not confirmed; clearing the local web session');
+        }
+      }
       const tokens = getAuthTokens();
       if (tokens) {
         const serverBaseUrl = getAuthApiBaseUrl();

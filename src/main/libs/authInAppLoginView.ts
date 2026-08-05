@@ -13,7 +13,6 @@ import {
   type AuthLocalCallback,
   startAuthLocalCallback,
 } from './authLocalCallbackServer';
-import { isAuthenticatedPortalNavigation } from './authWebSessionRecovery';
 import { isPersistentViewOpened } from './persistentViewOpenResult';
 
 const AUTH_LOGIN_MIN_WIDTH = 320;
@@ -24,9 +23,10 @@ interface AuthInAppLoginViewControllerOptions {
   getMainWindow: () => BrowserWindow | null;
   session: Session;
   isDev: boolean;
-  portalOrigin: string;
   onAuthCode: (code: string) => void;
   onAuthDeepLink: (url: string) => void;
+  isAllowedNavigation: (url: string) => boolean;
+  isAuthenticatedNavigation: (url: string) => boolean;
   onAuthenticatedNavigation: (url: string) => Promise<boolean>;
 }
 
@@ -97,8 +97,8 @@ export class AuthInAppLoginViewController {
     if (!bounds) {
       throw new Error('Embedded login bounds are invalid');
     }
-    if (!isHttpUrl(options.loginUrl)) {
-      throw new Error('Embedded login URL must use HTTP or HTTPS');
+    if (!isHttpUrl(options.loginUrl) || !this.options.isAllowedNavigation(options.loginUrl)) {
+      throw new Error('Embedded login URL is not trusted');
     }
 
     let localCallback: AuthLocalCallback | null = null;
@@ -167,9 +167,12 @@ export class AuthInAppLoginViewController {
         return;
       }
 
-      if (!isHttpUrl(url) && url !== 'about:blank') {
+      if (
+        url !== 'about:blank'
+        && (!isHttpUrl(url) || !this.options.isAllowedNavigation(url))
+      ) {
         event.preventDefault();
-        console.warn(`[AuthInAppLogin] blocked unsupported navigation protocol: ${url}`);
+        console.warn(`[AuthInAppLogin] blocked untrusted navigation: ${url}`);
       }
     };
 
@@ -179,12 +182,12 @@ export class AuthInAppLoginViewController {
         void this.closeLocalCallback();
         return { action: 'deny' };
       }
-      if (isHttpUrl(url)) {
+      if (isHttpUrl(url) && this.options.isAllowedNavigation(url)) {
         void webContents.loadURL(url).catch(error => {
           console.error('[AuthInAppLogin] failed to load login popup in the embedded view:', error);
         });
       } else {
-        console.warn(`[AuthInAppLogin] blocked unsupported popup protocol: ${url}`);
+        console.warn(`[AuthInAppLogin] blocked untrusted popup: ${url}`);
       }
       return { action: 'deny' };
     });
@@ -205,7 +208,7 @@ export class AuthInAppLoginViewController {
     if (
       !retryUrl
       || this.authenticatedNavigationPending
-      || !isAuthenticatedPortalNavigation(url, this.options.portalOrigin)
+      || !this.options.isAuthenticatedNavigation(url)
     ) {
       return;
     }

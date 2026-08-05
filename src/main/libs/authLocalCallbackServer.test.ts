@@ -146,6 +146,22 @@ describe('startAuthLocalCallback', () => {
     expect(body).toContain('127.0.0.1:5180');
   });
 
+  test('allows the LZClaw production login return_to URL', async () => {
+    const callback = await startAuthLocalCallback({ onCode: () => {} });
+    const returnTo = encodeURIComponent(
+      'https://qiye.srmtj.com/login?source=electron&electronLogin=success',
+    );
+
+    const response = await fetch(
+      `${callback.redirectUri}?return_to=${returnTo}&code=abc123&state=${callback.state}`,
+    );
+    const body = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(body).toContain('window.location.replace');
+    expect(body).toContain('qiye.srmtj.com');
+  });
+
   test('does not redirect to unsafe return_to URLs', async () => {
     const callback = await startAuthLocalCallback({ onCode: () => {} });
     const returnTo = encodeURIComponent(

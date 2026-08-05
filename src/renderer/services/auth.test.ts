@@ -141,7 +141,7 @@ describe('login diagnostics', () => {
 
     await expect(authService.login()).resolves.toEqual(loginResult);
 
-    expect(login).toHaveBeenCalledWith('http://localhost:3100/login');
+    expect(login).toHaveBeenCalledWith();
     expect(fromRenderer).toHaveBeenCalledWith(
       'info',
       'AuthService',

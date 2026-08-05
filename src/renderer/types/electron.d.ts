@@ -1771,8 +1771,8 @@ interface IElectronAPI {
     ) => Promise<ActivityResult<ActivityActionResponse>>;
   };
   auth: {
-    login: (loginUrl?: string) => Promise<AuthLoginResult>;
-    loginInApp: (loginUrl: string | undefined, bounds: AuthLoginInAppBounds) => Promise<{ success: boolean; error?: string }>;
+    login: () => Promise<AuthLoginResult>;
+    loginInApp: (bounds: AuthLoginInAppBounds) => Promise<{ success: boolean; error?: string }>;
     updateLoginInAppBounds: (bounds: AuthLoginInAppBounds) => Promise<{ success: boolean }>;
     closeLoginInApp: () => Promise<{ success: boolean }>;
     exchange: (
@@ -1858,8 +1858,8 @@ interface IElectronAPI {
     send: (status: 'online' | 'offline') => void;
   };
   auth: {
-    login: (loginUrl?: string) => Promise<AuthLoginResult>;
-    loginInApp: (loginUrl: string | undefined, bounds: AuthLoginInAppBounds) => Promise<{ success: boolean; error?: string }>;
+    login: () => Promise<AuthLoginResult>;
+    loginInApp: (bounds: AuthLoginInAppBounds) => Promise<{ success: boolean; error?: string }>;
     updateLoginInAppBounds: (bounds: AuthLoginInAppBounds) => Promise<{ success: boolean }>;
     closeLoginInApp: () => Promise<{ success: boolean }>;
     onSessionInvalidated: (callback: () => void) => () => void;

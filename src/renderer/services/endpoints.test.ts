@@ -8,6 +8,7 @@ import {
   getPortalProfileUrl,
   getPortalRechargeUrl,
   PortalPricingKeyfrom,
+  resolveLoginPageUrl,
 } from './endpoints';
 
 const mockTestMode = (testMode: boolean) => {
@@ -18,6 +19,11 @@ const mockTestMode = (testMode: boolean) => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+});
+
+test('login page url follows the renderer build environment', () => {
+  expect(resolveLoginPageUrl(true)).toBe('http://127.0.0.1:3103/login');
+  expect(resolveLoginPageUrl(false)).toBe('https://qiye.srmtj.com/login');
 });
 
 test('portal account urls use production base when test mode is disabled', () => {
