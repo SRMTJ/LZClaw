@@ -284,4 +284,38 @@ describe('auth state restoration', () => {
     expect(toastEvent.type).toBe('app:showToast');
     expect(toastEvent.detail).toContain('登录状态已过期');
   });
+
+  test('restores renderer auth state after the main process recovers a web session', async () => {
+    const getUser = vi.fn().mockResolvedValue({
+      success: true,
+      user,
+      quota,
+      status: AuthSessionStatus.Authenticated,
+    });
+    vi.stubGlobal('window', {
+      electron: {
+        auth: {
+          getUser,
+          getModels: vi.fn().mockResolvedValue({ success: true, models: [] }),
+          getProfileSummary: vi.fn().mockResolvedValue({ success: false }),
+        },
+      },
+    });
+
+    const serviceWithSessionHandler = authService as unknown as {
+      handleSessionChanged: (event: AuthSessionChangedEvent) => Promise<void>;
+    };
+    await serviceWithSessionHandler.handleSessionChanged({
+      status: AuthSessionStatus.Authenticated,
+      reason: AuthSessionChangeReason.WebSessionRecovered,
+    });
+
+    expect(getUser).toHaveBeenCalledOnce();
+    expect(store.getState().auth).toMatchObject({
+      isLoggedIn: true,
+      sessionStatus: AuthSessionStatus.Authenticated,
+      user,
+      quota,
+    });
+  });
 });

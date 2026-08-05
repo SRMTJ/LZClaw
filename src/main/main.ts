@@ -232,6 +232,10 @@ import {
   AuthSessionManager,
   resolveAuthSessionStatusFromError,
 } from './libs/authSessionManager';
+import {
+  AuthWebSessionRecoveryStatus,
+  recoverAuthTokensFromWebSession,
+} from './libs/authWebSessionRecovery';
 import type { BrowserAnnotationAssetIdentity, SaveBrowserAnnotationAssetInput } from './libs/browserAnnotationAssetStore';
 import { BrowserAnnotationAssetStore } from './libs/browserAnnotationAssetStore';
 import { BusinessCenterInAppViewController } from './libs/businessCenterInAppView';
@@ -3958,6 +3962,12 @@ if (!gotTheLock) {
   let authInAppLoginView: AuthInAppLoginViewController | null = null;
   let businessCenterInAppView: BusinessCenterInAppViewController | null = null;
   let onBusinessCenterSessionInvalidated: () => void = () => undefined;
+  let recoverAuthFromEmbeddedWebSession: (navigationUrl: string) => Promise<boolean> =
+    async () => false;
+
+  const AUTH_WEB_SESSION_COOKIE_NAME = 'lzclaw_web_session';
+  const AUTH_WEB_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
+  const BUSINESS_CENTER_ORIGIN = 'http://localhost:3100';
 
   const getLzclawWebSession = (): Session => {
     if (!lzclawWebSession) {
@@ -3995,6 +4005,7 @@ if (!gotTheLock) {
       getMainWindow: () => mainWindow,
       session: lzclawWebSession,
       isDev,
+      portalOrigin: BUSINESS_CENTER_ORIGIN,
       onAuthCode: code => {
         authCallbackRouter.handleAuthCode(code);
         void authInAppLoginView?.close().catch(error => {
@@ -4009,6 +4020,8 @@ if (!gotTheLock) {
         });
         focusMainWindow('embedded auth deep link');
       },
+      onAuthenticatedNavigation: navigationUrl =>
+        recoverAuthFromEmbeddedWebSession(navigationUrl),
     });
     businessCenterInAppView = new BusinessCenterInAppViewController({
       getMainWindow: () => mainWindow,
@@ -4361,10 +4374,6 @@ if (!gotTheLock) {
 
   // ── Auth IPC handlers ──
 
-  const AUTH_WEB_SESSION_COOKIE_NAME = 'lzclaw_web_session';
-  const AUTH_WEB_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
-  const BUSINESS_CENTER_ORIGIN = 'http://localhost:3100';
-
   const getAuthWebSessionOrigins = () =>
     [...new Set([new URL(getAuthApiBaseUrl()).origin, BUSINESS_CENTER_ORIGIN])];
 
@@ -4521,6 +4530,62 @@ if (!gotTheLock) {
         window.webContents.send(AuthIpcChannel.SessionChanged, event);
       }
     }
+  };
+
+  let activeEmbeddedWebSessionRecovery: Promise<boolean> | null = null;
+  recoverAuthFromEmbeddedWebSession = (navigationUrl: string): Promise<boolean> => {
+    if (activeEmbeddedWebSessionRecovery) {
+      return activeEmbeddedWebSessionRecovery;
+    }
+
+    const recovery = (async (): Promise<boolean> => {
+      const result = await recoverAuthTokensFromWebSession({
+        navigationUrl,
+        portalOrigin: BUSINESS_CENTER_ORIGIN,
+        cookieName: AUTH_WEB_SESSION_COOKIE_NAME,
+        getCookies: filter => getLzclawWebSession().cookies.get(filter),
+        refreshUrl: `${getAuthApiBaseUrl()}/api/auth/refresh`,
+        buildRefreshRequestBody: refreshToken =>
+          JSON.stringify(withKeyfromBody({ refreshToken })),
+        fetch: (url, options) => net.fetch(url, options),
+      });
+
+      if (result.status === AuthWebSessionRecoveryStatus.Ignored) {
+        return false;
+      }
+      if (result.status === AuthWebSessionRecoveryStatus.MissingCookie) {
+        console.warn('[Auth] authenticated portal navigation had no web session cookie');
+        return false;
+      }
+      if (result.status === AuthWebSessionRecoveryStatus.Rejected) {
+        console.warn('[Auth] web session recovery was rejected', {
+          httpStatus: result.httpStatus,
+          errorCode: result.errorCode,
+        });
+        return false;
+      }
+
+      await saveAuthTokens(result.accessToken, result.refreshToken);
+      await authInAppLoginView?.close();
+      emitAuthSessionChanged({
+        status: AuthSessionStatus.Authenticated,
+        reason: AuthSessionChangeReason.WebSessionRecovered,
+      });
+      focusMainWindow('embedded web session recovery');
+      console.log('[Auth] recovered native auth from the embedded web session');
+      return true;
+    })().catch(error => {
+      console.warn('[Auth] failed to recover native auth from the embedded web session:', error);
+      return false;
+    });
+
+    activeEmbeddedWebSessionRecovery = recovery;
+    void recovery.then(() => {
+      if (activeEmbeddedWebSessionRecovery === recovery) {
+        activeEmbeddedWebSessionRecovery = null;
+      }
+    });
+    return recovery;
   };
 
   const authSessionManager = new AuthSessionManager({

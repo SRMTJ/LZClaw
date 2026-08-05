@@ -27,7 +27,7 @@
 | --- | --- | --- | --- |
 | 登录门禁与欢迎页 | P0 | 用户未登录时显示欢迎/登录页并阻止使用主程序；已登录时不显示欢迎页；退出或会话失效后立即回到欢迎页 | `src/renderer/App.tsx`、`src/renderer/components/WelcomeDialog.tsx` |
 | 应用内嵌网页登录 | P0 | 登录在欢迎页内全区域显示，不打开额外 `BrowserWindow`；固定使用 LZClaw 登录地址；同时保留系统浏览器登录和回调能力 | `src/main/libs/authInAppLoginView.ts`、`src/renderer/services/auth.ts`、`src/shared/auth/constants.ts` |
-| 登录完成后的落点 | P0 | 登录成功后关闭登录视图，隐藏业务中心，进入“新建任务”状态并聚焦任务输入，而不是跳到 `/users` | `src/renderer/App.tsx` |
+| 登录完成后的落点 | P0 | 登录成功后关闭登录视图，隐藏业务中心，进入“新建任务”状态并聚焦任务输入，而不是跳到 `/users`；若登录服务误走 Web 流程落到同源 `/users`，主进程从 HttpOnly Cookie 恢复原生令牌，失败则回到桌面登录页 | `src/main/libs/authInAppLoginView.ts`、`src/main/libs/authWebSessionRecovery.ts`、`src/main/main.ts`、`src/renderer/services/auth.ts`、`src/renderer/App.tsx` |
 | 退出登录 | P0 | 清除原生令牌、用户、服务端模型元数据和专用 Web Session；立即回欢迎页；不因为退出登录而重启 OpenClaw 网关 | `src/main/main.ts`、`src/renderer/services/auth.ts` |
 | 持久化网页 Session | P0 | 登录页和业务中心共享 `persist:lzclaw-web`；应用重启后可以恢复有效登录状态；专用 Session 默认拒绝网页权限检查和请求；使用 `@fudanda/electron-persistent-view` 精确版本 `0.5.0` | `package.json`、`src/shared/auth/constants.ts`、`src/main/main.ts`、`src/main/libs/lzclawWebSessionSecurity.ts` |
 | 业务中心 | P0 | 侧边栏在 MCP 下方显示“业务中心”；应用内加载 `http://localhost:3100/users`；切换菜单时只隐藏视图并保留滚动、表单和页面状态；只有持久化视图返回 `opened` 才向当前 IPC 调用报告打开成功 | `src/renderer/components/Sidebar.tsx`、`src/renderer/components/businessCenter/BusinessCenterView.tsx`、`src/main/libs/businessCenterInAppView.ts` |
@@ -48,6 +48,8 @@
 - 业务中心：`http://localhost:3100/users`
 - 桌面登录：本地 HTTP 回调、一次性授权码交换和 `lobsterai://` 深链回退
 - Web Session Cookie：`lzclaw_web_session`，写入专用持久化 Session
+- Web 流程兼容：同源 `/users` 落点可使用 Web Session Cookie 调用
+  `/api/auth/refresh` 恢复桌面原生令牌
 
 如果登录服务修改路由、Cookie 名称、回调参数或授权码交换协议，必须同步更新
 本台账、认证测试和持久化视图架构文档。

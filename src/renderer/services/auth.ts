@@ -464,6 +464,11 @@ class AuthService {
   }
 
   private async handleSessionChanged(event: AuthSessionChangedEvent): Promise<void> {
+    if (event.status === AuthSessionStatus.Authenticated) {
+      writeAuthRendererLog('info', `login session restored (${event.reason})`);
+      await this.refreshAuthState({ clearOnFailure: false });
+      return;
+    }
     if (event.status !== AuthSessionStatus.Expired) return;
     writeAuthRendererLog('warn', `login session expired (${event.reason})`);
     const cleanup = this.applyLoggedOutState(true);

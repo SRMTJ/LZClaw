@@ -18,6 +18,12 @@ state decisions.
 
 - Desktop login still uses the local callback server and exchanges a one-time
   authorization code for native access and refresh tokens.
+- If the login service completes its browser-mode flow and navigates the
+  embedded view to `/users` without invoking the desktop callback, the main
+  process reads the HttpOnly web-session cookie and exchanges it through the
+  refresh endpoint. On success it stores the native tokens, closes the login
+  view, and tells the renderer to restore authenticated state. On failure the
+  view returns to the desktop login URL instead of exposing Business Center.
 - After exchange, the refresh token is stored as the HttpOnly
   `lzclaw_web_session` cookie in the dedicated web Session.
 - The cookie is restored from the native token store during startup before
@@ -65,13 +71,16 @@ renderer content.
   origin-scoped product decision.
 - The login controller keeps its existing `lobsterai://` callback and local
   HTTP callback behavior.
+- Web-session recovery is accepted only for a completed main-frame navigation
+  to the configured portal origin's `/users` route. Cookie and token access
+  remain in the main process.
 
 ## Dependency And Local Development
 
 LZClaw uses the public package with an exact version:
 
 ```json
-"@fudanda/electron-persistent-view": "0.4.0"
+"@fudanda/electron-persistent-view": "0.5.0"
 ```
 
 Install dependencies before compiling or launching LZClaw:

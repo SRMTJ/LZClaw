@@ -2,9 +2,13 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => {
   type Handler = (...args: unknown[]) => void;
+  const handlers = new Map<string, Handler[]>();
 
   const webContents = {
-    on: vi.fn((_event: string, _handler: Handler) => webContents),
+    on: vi.fn((event: string, handler: Handler) => {
+      handlers.set(event, [...(handlers.get(event) ?? []), handler]);
+      return webContents;
+    }),
     setWindowOpenHandler: vi.fn(),
     loadURL: vi.fn(async () => undefined),
   };
@@ -27,6 +31,12 @@ const mocks = vi.hoisted(() => {
     persistentController,
     startAuthLocalCallback,
     webContents,
+    emit: (event: string, ...args: unknown[]) => {
+      for (const handler of handlers.get(event) ?? []) {
+        handler(...args);
+      }
+    },
+    resetHandlers: () => handlers.clear(),
   };
 });
 
@@ -60,7 +70,7 @@ vi.mock('./authLocalCallbackServer', () => ({
 
 import { AuthInAppLoginViewController } from './authInAppLoginView';
 
-const createController = () => {
+const createController = (onAuthenticatedNavigation = vi.fn(async () => true)) => {
   const parentWindow = {
     isDestroyed: () => false,
   };
@@ -69,16 +79,20 @@ const createController = () => {
       getMainWindow: () => parentWindow as never,
       session: {} as never,
       isDev: true,
+      portalOrigin: 'https://example.test',
       onAuthCode: vi.fn(),
       onAuthDeepLink: vi.fn(),
+      onAuthenticatedNavigation,
     }),
     parentWindow,
+    onAuthenticatedNavigation,
   };
 };
 
 describe('AuthInAppLoginViewController', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.resetHandlers();
     mocks.persistentController.open.mockResolvedValue({
       status: 'opened',
     });
@@ -113,5 +127,47 @@ describe('AuthInAppLoginViewController', () => {
 
     expect(mocks.localCallback.close).toHaveBeenCalledOnce();
     expect(mocks.persistentController.close).toHaveBeenCalledTimes(2);
+  });
+
+  test('recovers an authenticated web session when login lands on the users page', async () => {
+    const { controller, onAuthenticatedNavigation } = createController();
+    await controller.open({
+      loginUrl: 'https://example.test/login',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+    });
+
+    mocks.emit('did-navigate', {}, 'https://example.test/users');
+    mocks.emit('did-navigate-in-page', {}, 'https://example.test/users', true);
+
+    await vi.waitFor(() => {
+      expect(onAuthenticatedNavigation).toHaveBeenCalledOnce();
+    });
+  });
+
+  test('restores the desktop login URL when web-session recovery is rejected', async () => {
+    const { controller } = createController(vi.fn(async () => false));
+    await controller.open({
+      loginUrl: 'https://example.test/login',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+    });
+
+    mocks.emit('did-navigate', {}, 'https://example.test/users');
+
+    await vi.waitFor(() => {
+      expect(mocks.webContents.loadURL).toHaveBeenCalledWith('https://example.test/login');
+    });
+  });
+
+  test('ignores authenticated-looking routes from another origin', async () => {
+    const { controller, onAuthenticatedNavigation } = createController();
+    await controller.open({
+      loginUrl: 'https://example.test/login',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+    });
+
+    mocks.emit('did-navigate', {}, 'https://attacker.test/users');
+    await Promise.resolve();
+
+    expect(onAuthenticatedNavigation).not.toHaveBeenCalled();
   });
 });

@@ -57,6 +57,7 @@ export type AuthSessionStatus = typeof AuthSessionStatus[keyof typeof AuthSessio
 export const AuthSessionChangeReason = {
   RefreshRejected: 'refresh_rejected',
   UserLogout: 'user_logout',
+  WebSessionRecovered: 'web_session_recovered',
 } as const;
 
 export type AuthSessionChangeReason =

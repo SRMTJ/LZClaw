@@ -13,6 +13,7 @@ import {
   type AuthLocalCallback,
   startAuthLocalCallback,
 } from './authLocalCallbackServer';
+import { isAuthenticatedPortalNavigation } from './authWebSessionRecovery';
 import { isPersistentViewOpened } from './persistentViewOpenResult';
 
 const AUTH_LOGIN_MIN_WIDTH = 320;
@@ -23,8 +24,10 @@ interface AuthInAppLoginViewControllerOptions {
   getMainWindow: () => BrowserWindow | null;
   session: Session;
   isDev: boolean;
+  portalOrigin: string;
   onAuthCode: (code: string) => void;
   onAuthDeepLink: (url: string) => void;
+  onAuthenticatedNavigation: (url: string) => Promise<boolean>;
 }
 
 interface OpenAuthInAppLoginViewOptions {
@@ -61,6 +64,8 @@ export class AuthInAppLoginViewController {
   private readonly viewController: PersistentViewController;
   private localCallback: AuthLocalCallback | null = null;
   private operationId = 0;
+  private activeLoginUrl: string | null = null;
+  private authenticatedNavigationPending = false;
 
   constructor(private readonly options: AuthInAppLoginViewControllerOptions) {
     this.viewController = new PersistentViewController({
@@ -119,6 +124,7 @@ export class AuthInAppLoginViewController {
         redirect_uri: appendCallbackReturnTo(localCallback.redirectUri, returnTo),
         state: localCallback.state,
       });
+      this.activeLoginUrl = finalUrl;
 
       const openResult = await this.viewController.open({
         parentWindow,
@@ -184,6 +190,42 @@ export class AuthInAppLoginViewController {
     });
     webContents.on('will-navigate', handleNavigation);
     webContents.on('will-redirect', handleNavigation);
+    webContents.on('did-navigate', (_event, url) => {
+      this.handleAuthenticatedNavigation(webContents, url);
+    });
+    webContents.on('did-navigate-in-page', (_event, url, isMainFrame) => {
+      if (isMainFrame) {
+        this.handleAuthenticatedNavigation(webContents, url);
+      }
+    });
+  }
+
+  private handleAuthenticatedNavigation(webContents: WebContents, url: string): void {
+    const retryUrl = this.activeLoginUrl;
+    if (
+      !retryUrl
+      || this.authenticatedNavigationPending
+      || !isAuthenticatedPortalNavigation(url, this.options.portalOrigin)
+    ) {
+      return;
+    }
+
+    const operationId = this.operationId;
+    this.authenticatedNavigationPending = true;
+    void this.options.onAuthenticatedNavigation(url)
+      .then(recovered => {
+        if (operationId !== this.operationId || recovered) return;
+        this.authenticatedNavigationPending = false;
+        return webContents.loadURL(retryUrl);
+      })
+      .catch(error => {
+        if (operationId !== this.operationId) return;
+        this.authenticatedNavigationPending = false;
+        console.warn('[AuthInAppLogin] failed to recover the authenticated web session:', error);
+        return webContents.loadURL(retryUrl).catch(loadError => {
+          console.error('[AuthInAppLogin] failed to restore the embedded login page:', loadError);
+        });
+      });
   }
 
   private async closeLocalCallback(): Promise<void> {
@@ -193,6 +235,8 @@ export class AuthInAppLoginViewController {
   }
 
   private async closeActiveSurface(): Promise<void> {
+    this.activeLoginUrl = null;
+    this.authenticatedNavigationPending = false;
     await this.viewController.close();
     await this.closeLocalCallback();
   }
