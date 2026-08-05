@@ -31,7 +31,7 @@
 | 登录完成后的落点 | P0 | 企业工作站登录成功后只接受固定的管理员/员工门户来源，并通过同源 `/api/v1/me` 复验 HttpOnly Web Session；复验成功后关闭登录视图、隐藏业务中心并进入“新建任务”，不继续显示企业门户；旧登录服务落到同源 `/users` 时仍可恢复原生令牌，任一复验失败都返回桌面登录页 | `src/main/libs/authInAppLoginView.ts`、`src/main/libs/enterpriseWebSessionAuth.ts`、`src/main/libs/authWebSessionRecovery.ts`、`src/main/main.ts`、`src/renderer/services/auth.ts`、`src/renderer/App.tsx` |
 | 退出登录 | P0 | 企业登录尽力携带最新 CSRF 调用同源退出接口，然后清除企业会话引用、原生令牌、用户、服务端模型元数据和专用 Web Session；立即回欢迎页；不因为退出登录而重启 OpenClaw 网关 | `src/main/libs/enterpriseWebSessionAuth.ts`、`src/main/main.ts`、`src/renderer/services/auth.ts` |
 | 持久化网页 Session | P0 | 登录页和业务中心共享 `persist:lzclaw-web`；应用重启后可以恢复有效登录状态；专用 Session 默认拒绝网页权限检查和请求；使用 `@fudanda/electron-persistent-view` 精确版本 `0.5.0` | `package.json`、`src/shared/auth/constants.ts`、`src/main/main.ts`、`src/main/libs/lzclawWebSessionSecurity.ts` |
-| 业务中心 | P0 | 侧边栏在 MCP 下方显示“业务中心”；应用内加载 `http://localhost:3100/users`；切换菜单时只隐藏视图并保留滚动、表单和页面状态；只有持久化视图返回 `opened` 才向当前 IPC 调用报告打开成功 | `src/renderer/components/Sidebar.tsx`、`src/renderer/components/businessCenter/BusinessCenterView.tsx`、`src/main/libs/businessCenterInAppView.ts` |
+| 业务中心 | P0 | 侧边栏在 MCP 下方显示“业务中心”；开发构建固定加载 `http://127.0.0.1:3107`，生产构建固定加载 `https://qiye.srmtj.com`；切换菜单时只隐藏视图并保留滚动、表单和页面状态；只有持久化视图返回 `opened` 才向当前 IPC 调用报告打开成功 | `src/renderer/components/Sidebar.tsx`、`src/renderer/components/businessCenter/BusinessCenterView.tsx`、`src/main/libs/businessCenterInAppView.ts`、`src/shared/businessCenter/constants.ts` |
 | 原生视图覆盖保护 | P0 | 欢迎页、设置、更新、权限等覆盖层出现时隐藏业务中心原生视图；覆盖层关闭后恢复显示且不重载 | `src/renderer/App.tsx`、`src/renderer/components/businessCenter/BusinessCenterView.tsx` |
 | 业务网页会话失效 | P0 | 业务中心普通导航或 SPA 导航到 `/login` 时，隐藏业务视图、清除桌面登录状态并返回欢迎页 | `src/main/libs/businessCenterInAppView.ts`、`src/main/main.ts` |
 | 导航与 Electron 安全 | P0 | 保持 Node 主线程、Worker 和子框架集成关闭，启用 `contextIsolation`、`sandbox` 和 `webSecurity`，禁用不安全混合内容、WebView、实验特性和宿主 Blink 特性；同源业务导航留在应用内，外部 HTTP/HTTPS 使用系统浏览器，其他协议阻止 | `src/main/libs/authInAppLoginView.ts`、`src/main/libs/businessCenterInAppView.ts` |
@@ -62,7 +62,8 @@
 
 其余现有认证和业务中心契约包括：
 
-- 业务中心：`http://localhost:3100/users`
+- 业务中心：开发构建 `http://127.0.0.1:3107`；生产构建
+  `https://qiye.srmtj.com`
 - 桌面登录：本地 HTTP 回调、一次性授权码交换和 `lobsterai://` 深链回退
 - Web Session Cookie：`lzclaw_web_session`，写入专用持久化 Session
 - Web 流程兼容：同源 `/users` 落点可使用 Web Session Cookie 调用
@@ -171,11 +172,11 @@ npm run compile:electron
 2. 已登录启动后直接进入主程序，不显示欢迎页。
 3. 内嵌企业登录成功后复验管理员或员工 Session，关闭网页并进入新建任务，不停留在企业门户。
 4. 系统浏览器登录仍能通过本地回调或深链完成。
-5. 业务中心打开 `/users`，切换菜单后页面状态不丢失。
+5. 业务中心打开当前构建固定的企业门户首页，切换菜单后页面状态不丢失。
 6. 设置、更新、权限和欢迎覆盖层不会被原生网页视图遮挡。
 7. 从应用或业务网页退出后立即回欢迎页，网关不重启。
 8. 重启应用后，有效的企业 Web Session 或旧原生令牌可恢复；退出状态不会恢复成已登录。
-9. `3100` 不可用时业务中心显示错误和重试状态。
+9. 开发环境 `3107` 或生产企业门户不可用时，业务中心显示错误和重试状态。
 10. 登录页和业务中心的摄像头、麦克风、通知等网页权限请求默认被拒绝。
 
 以上自动检查和人工验收完成前，不创建合并提交。用户确认后执行：

@@ -72,7 +72,7 @@ vi.mock('electron', () => ({
 
 import { BusinessCenterInAppViewController } from './businessCenterInAppView';
 
-const createController = () => {
+const createController = (isDev = true) => {
   const statuses: Array<{ status: string; error?: string }> = [];
   const onSessionInvalidated = vi.fn();
   const parentWindow = {
@@ -81,7 +81,7 @@ const createController = () => {
   const controller = new BusinessCenterInAppViewController({
     getMainWindow: () => parentWindow as never,
     session: {} as never,
-    isDev: true,
+    isDev,
     onStatus: update => statuses.push(update),
     onSessionInvalidated,
   });
@@ -100,7 +100,7 @@ describe('BusinessCenterInAppViewController', () => {
     mocks.persistentController.webContents = null;
   });
 
-  test('opens the fixed users page in the persistent controller', async () => {
+  test('opens the fixed development business center in the persistent controller', async () => {
     const { controller, parentWindow, statuses } = createController();
     const bounds = { x: 10, y: 20, width: 800, height: 600 };
 
@@ -108,12 +108,27 @@ describe('BusinessCenterInAppViewController', () => {
 
     expect(mocks.persistentController.open).toHaveBeenCalledWith({
       parentWindow,
-      url: 'http://localhost:3100/users',
+      url: 'http://127.0.0.1:3107',
       bounds,
       visible: true,
       focus: false,
     });
     expect(statuses).toContainEqual({ status: 'loading' });
+  });
+
+  test('opens the fixed production business center in production mode', async () => {
+    const { controller, parentWindow } = createController(false);
+    const bounds = { x: 10, y: 20, width: 800, height: 600 };
+
+    await expect(controller.open(bounds)).resolves.toBe(true);
+
+    expect(mocks.persistentController.open).toHaveBeenCalledWith({
+      parentWindow,
+      url: 'https://qiye.srmtj.com',
+      bounds,
+      visible: true,
+      focus: false,
+    });
   });
 
   test('does not report success when the persistent view closes while opening', async () => {
@@ -172,11 +187,11 @@ describe('BusinessCenterInAppViewController', () => {
     createController();
     const windowOpenHandler = mocks.webContents.setWindowOpenHandler.mock.calls[0][0];
 
-    expect(windowOpenHandler({ url: 'http://localhost:3100/users?page=2' })).toEqual({
+    expect(windowOpenHandler({ url: 'http://127.0.0.1:3107/users?page=2' })).toEqual({
       action: 'deny',
     });
     expect(mocks.webContents.loadURL).toHaveBeenCalledWith(
-      'http://localhost:3100/users?page=2',
+      'http://127.0.0.1:3107/users?page=2',
     );
 
     expect(windowOpenHandler({ url: 'https://example.com/help' })).toEqual({
@@ -202,17 +217,27 @@ describe('BusinessCenterInAppViewController', () => {
     mocks.emit(
       'did-navigate-in-page',
       {},
-      'http://localhost:3100/login',
+      'http://127.0.0.1:3107/login',
     );
     mocks.emit(
       'did-navigate',
       {},
-      'http://localhost:3100/login',
+      'http://127.0.0.1:3107/login',
     );
     mocks.emit('did-finish-load');
 
     expect(mocks.persistentController.hide).toHaveBeenCalledOnce();
     expect(mocks.persistentController.show).not.toHaveBeenCalled();
+    expect(onSessionInvalidated).toHaveBeenCalledOnce();
+  });
+
+  test('invalidates production auth when the admin portal returns to its login route', async () => {
+    const { controller, onSessionInvalidated } = createController(false);
+    await controller.open({ x: 0, y: 0, width: 800, height: 600 });
+
+    mocks.emit('did-navigate', {}, 'https://qiye.srmtj.com/admin/login');
+
+    expect(mocks.persistentController.hide).toHaveBeenCalledOnce();
     expect(onSessionInvalidated).toHaveBeenCalledOnce();
   });
 
@@ -224,7 +249,7 @@ describe('BusinessCenterInAppViewController', () => {
       {},
       -102,
       'Connection refused',
-      'http://localhost:3100/users',
+      'http://127.0.0.1:3107',
       true,
     );
 

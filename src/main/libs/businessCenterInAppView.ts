@@ -6,15 +6,18 @@ import {
   type WebContents,
 } from 'electron';
 
-import type {
-  BusinessCenterStatusUpdate,
-  BusinessCenterViewBounds,
+import {
+  type BusinessCenterStatusUpdate,
+  type BusinessCenterViewBounds,
+  resolveBusinessCenterPageUrl,
 } from '../../shared/businessCenter/constants';
 import { isPersistentViewOpened } from './persistentViewOpenResult';
 
-const BUSINESS_CENTER_URL = 'http://localhost:3100/users';
-const BUSINESS_CENTER_ORIGIN = new URL(BUSINESS_CENTER_URL).origin;
-const BUSINESS_CENTER_LOGIN_PATH = '/login';
+const BUSINESS_CENTER_LOGIN_PATHS = new Set([
+  '/login',
+  '/admin/login',
+  '/employee/login',
+]);
 
 interface BusinessCenterInAppViewControllerOptions {
   getMainWindow: () => BrowserWindow | null;
@@ -33,16 +36,10 @@ const isHttpUrl = (url: string): boolean => {
   }
 };
 
-const isBusinessCenterUrl = (url: string): boolean => {
-  try {
-    return new URL(url).origin === BUSINESS_CENTER_ORIGIN;
-  } catch {
-    return false;
-  }
-};
-
 export class BusinessCenterInAppViewController {
   private readonly viewController: PersistentViewController;
+  private readonly businessCenterUrl: string;
+  private readonly businessCenterOrigin: string;
   private lastBounds: BusinessCenterViewBounds | null = null;
   private lastStatus: BusinessCenterStatusUpdate = { status: 'idle' };
   private sessionInvalidated = false;
@@ -52,6 +49,8 @@ export class BusinessCenterInAppViewController {
   constructor(
     private readonly options: BusinessCenterInAppViewControllerOptions,
   ) {
+    this.businessCenterUrl = resolveBusinessCenterPageUrl(options.isDev);
+    this.businessCenterOrigin = new URL(this.businessCenterUrl).origin;
     this.viewController = new PersistentViewController({
       session: options.session,
       backgroundColor: '#ffffff',
@@ -91,7 +90,7 @@ export class BusinessCenterInAppViewController {
     this.reportStatus({ status: 'loading' });
     const openResult = await this.viewController.open({
       parentWindow,
-      url: BUSINESS_CENTER_URL,
+      url: this.businessCenterUrl,
       bounds,
       visible: this.shouldBeVisible,
       focus: false,
@@ -146,7 +145,7 @@ export class BusinessCenterInAppViewController {
       event: { preventDefault: () => void },
       url: string,
     ): void => {
-      if (url === 'about:blank' || isBusinessCenterUrl(url)) return;
+      if (url === 'about:blank' || this.isBusinessCenterUrl(url)) return;
       event.preventDefault();
       if (isHttpUrl(url)) {
         void shell.openExternal(url).catch(error => {
@@ -158,7 +157,7 @@ export class BusinessCenterInAppViewController {
     };
 
     webContents.setWindowOpenHandler(({ url }) => {
-      if (isBusinessCenterUrl(url)) {
+      if (this.isBusinessCenterUrl(url)) {
         void webContents.loadURL(url).catch(error => {
           console.warn('[BusinessCenter] failed to open internal popup URL:', error);
         });
@@ -182,8 +181,8 @@ export class BusinessCenterInAppViewController {
       try {
         const parsed = new URL(url);
         if (
-          parsed.origin === BUSINESS_CENTER_ORIGIN
-          && parsed.pathname === BUSINESS_CENTER_LOGIN_PATH
+          parsed.origin === this.businessCenterOrigin
+          && BUSINESS_CENTER_LOGIN_PATHS.has(parsed.pathname)
         ) {
           this.sessionInvalidated = true;
           this.shouldBeVisible = false;
@@ -197,6 +196,14 @@ export class BusinessCenterInAppViewController {
 
     webContents.on('did-navigate', handleCompletedNavigation);
     webContents.on('did-navigate-in-page', handleCompletedNavigation);
+  }
+
+  private isBusinessCenterUrl(url: string): boolean {
+    try {
+      return new URL(url).origin === this.businessCenterOrigin;
+    } catch {
+      return false;
+    }
   }
 
   private configureLoadStatus(webContents: WebContents): void {

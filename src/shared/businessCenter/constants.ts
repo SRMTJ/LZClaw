@@ -6,6 +6,17 @@ export const BusinessCenterIpcChannel = {
   Status: 'businessCenter:status',
 } as const;
 
+export const BusinessCenterPageUrl = {
+  Development: 'http://127.0.0.1:3107',
+  Production: 'https://qiye.srmtj.com',
+} as const;
+
+export const resolveBusinessCenterPageUrl = (isDevelopment: boolean): string => (
+  isDevelopment
+    ? BusinessCenterPageUrl.Development
+    : BusinessCenterPageUrl.Production
+);
+
 export interface BusinessCenterViewBounds {
   x: number;
   y: number;
