@@ -21,7 +21,6 @@ import EngineFailureOverlay from './components/cowork/EngineFailureOverlay';
 import EngineStartupOverlay from './components/cowork/EngineStartupOverlay';
 import KitsView from './components/kits/KitsView';
 import { McpView } from './components/mcp';
-import PrivacyDialog from './components/PrivacyDialog';
 import { ScheduledTasksView } from './components/scheduledTasks';
 import Settings, { type SettingsOpenOptions } from './components/Settings';
 import Sidebar from './components/Sidebar';
@@ -29,6 +28,7 @@ import { SitesView } from './components/sites';
 import { SkillsView } from './components/skills';
 import SkinBackdrop, { SkinBackdropVariant } from './components/skin/SkinBackdrop';
 import SkinPresentationScope from './components/skin/SkinPresentationScope';
+import StartupCreditCampaign from './components/StartupCreditCampaign';
 import Toast from './components/Toast';
 import AppUpdateBadge from './components/update/AppUpdateBadge';
 import AppUpdateBlockingPanel from './components/update/AppUpdateBlockingPanel';
@@ -42,6 +42,7 @@ import {
 import AppUpdateModal from './components/update/AppUpdateModal';
 import WelcomeDialog from './components/WelcomeDialog';
 import WindowsAppTitleBar from './components/window/WindowsAppTitleBar';
+import WindowTitleBar from './components/window/WindowTitleBar';
 import { defaultConfig, getProviderDisplayName, ShortcutAction } from './config';
 import { SkinProvider } from './providers/SkinProvider';
 import type { ApiConfig } from './services/api';
@@ -149,7 +150,6 @@ const App: React.FC = () => {
   const [isUpdateCardExpanded, setIsUpdateCardExpanded] = useState(false);
   const [isUserInitiatedUpdateFlowActive, setIsUserInitiatedUpdateFlowActive] = useState(false);
   const [privacyAgreed, setPrivacyAgreed] = useState<boolean | null>(null);
-  const [showWelcome, setShowWelcome] = useState(false);
   const [enterpriseConfig, setEnterpriseConfig] = useState<{
     ui?: Record<string, 'hide' | 'disable' | 'readonly'>;
     disableUpdate?: boolean;
@@ -157,6 +157,7 @@ const App: React.FC = () => {
   const toastTimerRef = useRef<number | null>(null);
   const askAiFocusTimerRef = useRef<number | null>(null);
   const authGatedContentRef = useRef<HTMLDivElement>(null);
+  const welcomeLoginStartedRef = useRef(false);
   const hasInitialized = useRef(false);
   const hasReportedAppStartedRef = useRef(false);
   const previousUpdateStatusRef = useRef<AppUpdateRuntimeState['status']>(AppUpdateStatus.Idle);
@@ -762,62 +763,58 @@ const App: React.FC = () => {
     await handleConfirmUpdate();
   }, [handleConfirmUpdate]);
 
-  const handlePrivacyAccept = useCallback(async () => {
+  // Continuing from the welcome screen (login or custom model) counts as accepting the agreement.
+  const acceptPrivacyAgreement = useCallback(async () => {
     await window.electron.store.set('privacy_agreed', true);
     setPrivacyAgreed(true);
   }, []);
 
-  const handlePrivacyReject = useCallback(() => {
-    // 立刻隐藏窗口，让用户感觉立即关闭
-    window.electron.window.close();
-  }, []);
-
   const handleWelcomeLogin = useCallback(async (bounds: AuthLoginInAppBounds) => {
+    await acceptPrivacyAgreement();
     if (authUser) {
       await window.electron.businessCenter.setVisible(false);
       await window.electron.auth.closeLoginInApp();
-      setShowWelcome(false);
       handleNewChat();
       return;
     }
 
-    await authService.loginInApp(bounds);
-  }, [authUser, handleNewChat]);
+    welcomeLoginStartedRef.current = true;
+    try {
+      await authService.loginInApp(bounds);
+    } catch (error) {
+      welcomeLoginStartedRef.current = false;
+      throw error;
+    }
+  }, [acceptPrivacyAgreement, authUser, handleNewChat]);
+
   const handleWelcomeLoginCancel = useCallback(() => {
+    welcomeLoginStartedRef.current = false;
     void window.electron.auth.closeLoginInApp();
   }, []);
-  const handleWelcomeCustomModel = useCallback(() => {
-    if (!authUser) {
-      setShowWelcome(true);
-      return;
-    }
-    setShowWelcome(false);
-    handleShowSettings({ initialTab: 'model' });
-  }, [authUser, handleShowSettings]);
 
+  const handleWelcomeCustomModel = useCallback(async () => {
+    await acceptPrivacyAgreement();
+    handleShowSettings({ initialTab: 'model' });
+  }, [acceptPrivacyAgreement, handleShowSettings]);
+
+  // A restored session accepts the combined terms/login gate without launching
+  // another login flow.
   useEffect(() => {
-    if (
-      showWelcome
-      && authUser
-    ) {
+    if (privacyAgreed === false && authUser) {
+      void acceptPrivacyAgreement();
+    }
+  }, [privacyAgreed, authUser, acceptPrivacyAgreement]);
+
+  // Only a login started from this welcome gate should force the new-task
+  // landing. Restoring an existing session must preserve the current view.
+  useEffect(() => {
+    if (authUser && welcomeLoginStartedRef.current) {
+      welcomeLoginStartedRef.current = false;
       void window.electron.businessCenter.setVisible(false);
       void window.electron.auth.closeLoginInApp();
-      setShowWelcome(false);
       handleNewChat();
     }
-  }, [authUser, handleNewChat, showWelcome]);
-
-  useEffect(() => {
-    if (
-      privacyAgreed === true
-      && !authIsLoading
-      && !authUser
-    ) {
-      void window.electron.auth.closeLoginInApp();
-      setShowSettings(false);
-      setShowWelcome(true);
-    }
-  }, [authIsLoading, authUser, privacyAgreed]);
+  }, [authUser, handleNewChat]);
 
   useEffect(() => {
     const content = authGatedContentRef.current;
@@ -1274,7 +1271,6 @@ const App: React.FC = () => {
     || showUpdateModal
     || isPermissionModalOpen
     || isUpdateInteractionBlocked
-    || showWelcome
     || isAuthGateActive;
   // Keep the badge visible while downloading so the collapsed-sidebar layouts
   // still surface progress; only a plain re-check hides nothing new.
@@ -1370,6 +1366,34 @@ const App: React.FC = () => {
     );
   }
 
+  if (privacyAgreed === false || isAuthGateActive) {
+    // First-launch and signed-out gates render without app chrome. Login uses
+    // the LZClaw embedded persistent web view inside this full-screen host.
+    return (
+      <div className="relative h-screen overflow-hidden">
+        {toastMessage && (
+          <Toast
+            message={toastMessage}
+            closeLabel={i18nService.t('close')}
+            onClose={() => setToastMessage(null)}
+          />
+        )}
+        <WelcomeDialog
+          loginRequired={!authUser}
+          onLogin={handleWelcomeLogin}
+          onLoginCancel={handleWelcomeLoginCancel}
+          onCustomModel={handleWelcomeCustomModel}
+        />
+        <div className="draggable absolute inset-x-0 top-0 z-[70] h-9" />
+        {isWindows && (
+          <div className="absolute right-0 top-0 z-[80] h-9">
+            <WindowTitleBar inline />
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <SkinProvider>
       <SkinPresentationScope
@@ -1383,6 +1407,11 @@ const App: React.FC = () => {
           onClose={() => setToastMessage(null)}
         />
       )}
+      {/* The welcome screen renders via the early return above, so agreement
+          alone gates the campaign here (no separate showWelcome flag). */}
+      <StartupCreditCampaign
+        enabled={privacyAgreed === true}
+      />
       {windowsStandaloneTitleBar}
       <div
         ref={authGatedContentRef}
@@ -1465,7 +1494,7 @@ const App: React.FC = () => {
               />
             ) : (
               <CoworkView
-                onRequestAppSettings={privacyAgreed === true && !showWelcome ? handleShowSettings : undefined}
+                onRequestAppSettings={handleShowSettings}
                 onShowSkills={handleShowSkills}
                 onShowKits={handleShowKits}
                 isSidebarCollapsed={isSidebarCollapsed}
@@ -1490,8 +1519,8 @@ const App: React.FC = () => {
       </div>
 
       <EngineFailureOverlay
-        onRequestAppSettings={privacyAgreed === true && !showWelcome ? handleShowSettings : undefined}
-        suspended={showSettings || showUpdateModal || isPermissionModalOpen || privacyAgreed === false || showWelcome}
+        onRequestAppSettings={handleShowSettings}
+        suspended={showSettings || showUpdateModal || isPermissionModalOpen}
       />
 
       {/* 设置窗口显示在所有主内容之上，但不影响主界面的交互 */}
@@ -1520,20 +1549,6 @@ const App: React.FC = () => {
         />
       )}
       {permissionModal}
-      {privacyAgreed === false && (
-        <PrivacyDialog
-          onAccept={handlePrivacyAccept}
-          onReject={handlePrivacyReject}
-        />
-      )}
-      {showWelcome && (
-        <WelcomeDialog
-          loginRequired={isAuthGateActive}
-          onLogin={handleWelcomeLogin}
-          onLoginCancel={handleWelcomeLoginCancel}
-          onCustomModel={handleWelcomeCustomModel}
-        />
-      )}
       </SkinPresentationScope>
     </SkinProvider>
   );

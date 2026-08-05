@@ -39,6 +39,12 @@ export interface AuthLoginInAppRequest {
   bounds: AuthLoginInAppBounds;
 }
 
+export interface AuthLoginResult {
+  success: boolean;
+  redirectUrl?: string;
+  error?: string;
+}
+
 export const AuthSessionStatus = {
   Authenticated: 'authenticated',
   Expired: 'expired',

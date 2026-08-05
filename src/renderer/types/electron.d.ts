@@ -1,4 +1,13 @@
 import type { OpenClawSessionPatch } from '../../common/openclawSession';
+import type {
+  ActivityActionResponse,
+  ActivityContextResponse,
+  ActivityHostExecuteActionInput,
+  ActivityHostGetContextInput,
+  ActivityHostGetSlotInput,
+  ActivityResult,
+  ActivitySlotResponse,
+} from '../../shared/activity/constants';
 import type { AppUpdateCheckResult, AppUpdateRuntimeState } from '../../shared/appUpdate/constants';
 import type {
   AsrRealtimeSessionRequest,
@@ -7,6 +16,7 @@ import type {
 import type {
   AuthLifecycleEvent,
   AuthLoginInAppBounds,
+  AuthLoginResult,
   AuthRefreshOutcome,
   AuthSessionChangedEvent,
   AuthSessionStatus,
@@ -1749,8 +1759,19 @@ interface IElectronAPI {
     reload: () => Promise<{ success: boolean; error?: string }>;
     onStatus: (callback: (update: BusinessCenterStatusUpdate) => void) => () => void;
   };
+  activity: {
+    getSlot: (
+      input: ActivityHostGetSlotInput,
+    ) => Promise<ActivityResult<ActivitySlotResponse>>;
+    getContext: (
+      input: ActivityHostGetContextInput,
+    ) => Promise<ActivityResult<ActivityContextResponse>>;
+    executeAction: (
+      input: ActivityHostExecuteActionInput,
+    ) => Promise<ActivityResult<ActivityActionResponse>>;
+  };
   auth: {
-    login: (loginUrl?: string) => Promise<{ success: boolean; error?: string }>;
+    login: (loginUrl?: string) => Promise<AuthLoginResult>;
     loginInApp: (loginUrl: string | undefined, bounds: AuthLoginInAppBounds) => Promise<{ success: boolean; error?: string }>;
     updateLoginInAppBounds: (bounds: AuthLoginInAppBounds) => Promise<{ success: boolean }>;
     closeLoginInApp: () => Promise<{ success: boolean }>;
@@ -1837,7 +1858,7 @@ interface IElectronAPI {
     send: (status: 'online' | 'offline') => void;
   };
   auth: {
-    login: (loginUrl?: string) => Promise<{ success: boolean; error?: string }>;
+    login: (loginUrl?: string) => Promise<AuthLoginResult>;
     loginInApp: (loginUrl: string | undefined, bounds: AuthLoginInAppBounds) => Promise<{ success: boolean; error?: string }>;
     updateLoginInAppBounds: (bounds: AuthLoginInAppBounds) => Promise<{ success: boolean }>;
     closeLoginInApp: () => Promise<{ success: boolean }>;

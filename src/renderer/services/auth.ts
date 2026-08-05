@@ -2,6 +2,7 @@ import type { AuthLoginInAppBounds } from '@shared/auth/constants';
 import {
   type AuthLifecycleEvent,
   AuthLifecycleEventType,
+  type AuthLoginResult,
   type AuthSessionChangedEvent,
   AuthSessionStatus,
 } from '@shared/auth/constants';
@@ -263,7 +264,7 @@ class AuthService {
   /**
    * Initiate login in the system browser.
    */
-  async login() {
+  async login(): Promise<AuthLoginResult> {
     const attemptId = ++this.loginAttemptSequence;
     writeAuthRendererLog('info', `login attempt ${attemptId} started`);
 
@@ -275,6 +276,7 @@ class AuthService {
       } else {
         writeAuthRendererLog('warn', `login attempt ${attemptId} could not open the system browser`);
       }
+      return result;
     } catch (error) {
       writeAuthRendererLog('warn', `login attempt ${attemptId} failed before browser handoff`, error);
       throw error;
