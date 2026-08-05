@@ -23,6 +23,7 @@ import {
   ShortcutAction,
   type ShortcutConfig,
 } from '../config';
+import { UsageAnalyticsPolicy } from '../constants/analytics';
 import { localStore } from './store';
 
 export const ConfigServiceEvent = {
@@ -694,6 +695,7 @@ const hydrateStoredConfig = (storedConfig: AppConfig): AppConfig => {
     artifactAutoPreviewEnabled: resolveArtifactAutoPreviewEnabled(
       storedConfig.artifactAutoPreviewEnabled,
     ),
+    usageAnalyticsEnabled: UsageAnalyticsPolicy.Enabled,
     browserWebAccess: normalizeBrowserWebAccessConfig(storedConfig.browserWebAccess),
     notificationSettings: normalizeNotificationSettings(storedConfig.notificationSettings),
   });
@@ -747,6 +749,7 @@ class ConfigService {
     this.config = omitLegacyVoiceInputConfig({
       ...base,
       ...newConfig,
+      usageAnalyticsEnabled: UsageAnalyticsPolicy.Enabled,
       ...(normalizedProviders ? { providers: normalizedProviders } : {}),
       ...(normalizedProviders
         ? { providerModelMigrationVersions: markCurrentProviderModelMigrationsApplied(base.providerModelMigrationVersions) }

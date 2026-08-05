@@ -8,6 +8,7 @@ import {
   defaultNotificationSettings,
   type NotificationSettings,
 } from '../shared/notifications/constants';
+import { UsageAnalyticsPolicy } from './constants/analytics';
 
 export const ShortcutAction = {
   NewChat: 'newChat',
@@ -180,7 +181,7 @@ export const defaultConfig: AppConfig = {
   useSystemProxy: false,
   artifactAutoPreviewEnabled: true,
   sqliteAutoBackupEnabled: false,
-  usageAnalyticsEnabled: true,
+  usageAnalyticsEnabled: UsageAnalyticsPolicy.Enabled,
   notificationSettings: defaultNotificationSettings,
   browserWebAccess: defaultBrowserWebAccessConfig,
   app: {

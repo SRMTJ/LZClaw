@@ -224,6 +224,31 @@ describe('configService artifact auto-preview persistence', () => {
   });
 });
 
+describe('configService usage analytics policy', () => {
+  test('migrates a previously enabled preference to disabled', async () => {
+    const storedConfig: AppConfig = {
+      ...defaultConfig,
+      usageAnalyticsEnabled: true,
+    };
+    const { configService, storeData } = await loadConfigServiceWithStoredConfig(storedConfig);
+
+    await configService.init();
+
+    expect(configService.getConfig().usageAnalyticsEnabled).toBe(false);
+    expect((storeData[CONFIG_KEYS.APP_CONFIG] as AppConfig).usageAnalyticsEnabled).toBe(false);
+  });
+
+  test('does not allow usage analytics to be re-enabled', async () => {
+    const { configService, storeData } = await loadConfigServiceWithStoredConfig(defaultConfig);
+
+    await configService.init();
+    await configService.updateConfig({ usageAnalyticsEnabled: true });
+
+    expect(configService.getConfig().usageAnalyticsEnabled).toBe(false);
+    expect((storeData[CONFIG_KEYS.APP_CONFIG] as AppConfig).usageAnalyticsEnabled).toBe(false);
+  });
+});
+
 describe('configService shortcut migrations', () => {
   test('normalizes prior agent default shortcuts to unset', async () => {
     const storedConfig: AppConfig = {

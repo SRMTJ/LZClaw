@@ -1390,7 +1390,9 @@ const Settings: React.FC<SettingsProps> = ({
   const [autoLaunch, setAutoLaunchState] = useState(false);
   const [useSystemProxy, setUseSystemProxy] = useState(false);
   const [sqliteAutoBackupEnabled, setSqliteAutoBackupEnabled] = useState(false);
-  const [usageAnalyticsEnabled, setUsageAnalyticsEnabled] = useState(true);
+  const [usageAnalyticsEnabled, setUsageAnalyticsEnabled] = useState(
+    defaultConfig.usageAnalyticsEnabled === true,
+  );
   const [taskCompletionNotificationMode, setTaskCompletionNotificationMode] =
     useState<TaskCompletionNotificationMode>(TaskCompletionNotificationMode.Unfocused);
   const [permissionNotificationsEnabled, setPermissionNotificationsEnabled] = useState(true);
@@ -4976,16 +4978,6 @@ const Settings: React.FC<SettingsProps> = ({
                 />
               </SettingsRow>
 
-              <SettingsRow>
-                <SettingsToggleRow
-                  title={i18nService.t('usageAnalyticsEnabled')}
-                  description={i18nService.t('usageAnalyticsEnabledDescription')}
-                  checked={usageAnalyticsEnabled}
-                  onToggle={() => {
-                    setUsageAnalyticsEnabled((prev) => !prev);
-                  }}
-                />
-              </SettingsRow>
             </SettingsGroup>
           </div>
         );
