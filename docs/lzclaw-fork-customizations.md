@@ -25,7 +25,7 @@
 
 | 功能 | 优先级 | 必须保留的行为 | 主要代码位置 |
 | --- | --- | --- | --- |
-| 应用品牌与兼容标识 | P0 | 用户可见产品名统一为“海豚买买AI工作台”；继续使用 `lobsterai://`、`com.lobsterai.app`、`LobsterAI.exe`、`%APPDATA%/LobsterAI`、数据库文件名、provider ID、请求头和环境变量等旧标识，避免登录态、历史数据、升级、深链和服务端协议断裂 | `src/main/appConstants.ts`、`src/renderer/constants/app.ts`、`electron-builder.json`、`src/main/i18n.ts`、`src/renderer/services/i18n.ts`、`scripts/nsis-installer.nsh` |
+| 应用品牌与兼容标识 | P0 | 用户可见产品名统一为“海豚买买AI工作台”，日志导出文件名使用该显示名称；继续使用 `lobsterai://`、`com.lobsterai.app`、`LobsterAI.exe`、`%APPDATA%/LobsterAI`、数据库文件名、provider ID、请求头和环境变量等旧标识，避免登录态、历史数据、升级、深链和服务端协议断裂 | `src/main/appConstants.ts`、`src/main/main.ts`、`src/renderer/constants/app.ts`、`electron-builder.json`、`src/main/i18n.ts`、`src/renderer/services/i18n.ts`、`scripts/nsis-installer.nsh` |
 | 登录门禁与欢迎页 | P0 | 用户未登录时显示欢迎/登录页并阻止使用主程序；已登录时不显示欢迎页；退出或会话失效后立即回到欢迎页 | `src/renderer/App.tsx`、`src/renderer/components/WelcomeDialog.tsx` |
 | 应用内嵌网页登录 | P0 | 登录在欢迎页内全区域显示，不打开额外 `BrowserWindow`；开发构建固定使用 `http://127.0.0.1:3103/login`，生产构建固定使用 `https://qiye.srmtj.com/login`；同时保留系统浏览器登录和回调能力 | `src/main/libs/authInAppLoginView.ts`、`src/main/libs/authLocalCallbackServer.ts`、`src/renderer/services/endpoints.ts`、`src/renderer/services/auth.ts`、`src/shared/auth/constants.ts` |
 | 登录完成后的落点 | P0 | 企业工作站登录成功后只接受固定的管理员/员工门户来源，并通过同源 `/api/v1/me` 复验 HttpOnly Web Session；复验成功后关闭登录视图、隐藏业务中心并进入“新建任务”，不继续显示企业门户；旧登录服务落到同源 `/users` 时仍可恢复原生令牌，任一复验失败都返回桌面登录页 | `src/main/libs/authInAppLoginView.ts`、`src/main/libs/enterpriseWebSessionAuth.ts`、`src/main/libs/authWebSessionRecovery.ts`、`src/main/main.ts`、`src/renderer/services/auth.ts`、`src/renderer/App.tsx` |
