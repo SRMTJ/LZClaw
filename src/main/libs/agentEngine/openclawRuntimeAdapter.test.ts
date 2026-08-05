@@ -623,7 +623,7 @@ test('resolveOpenClawRuntimeErrorMessage restores recent quota error hidden by O
   expect(consumeRecentOpenClawTokenProxyQuotaError()).toBeNull();
 });
 
-test('resolveOpenClawRuntimeErrorMessage classifies raw LobsterAI quota errors', () => {
+test('resolveOpenClawRuntimeErrorMessage classifies raw 海豚买买AI工作台 quota errors', () => {
   expect(resolveOpenClawRuntimeErrorMessage('本月积分已用完')).toContain('积分额度已用完');
 });
 
@@ -636,7 +636,7 @@ test('resolveOpenClawRuntimeErrorMessage classifies generic error from safe OAut
   })).toContain('OAuth 授权已失效');
 });
 
-test('resolveOpenClawRuntimeErrorMessage identifies expired LobsterAI plan login', () => {
+test('resolveOpenClawRuntimeErrorMessage identifies expired 海豚买买AI工作台 plan login', () => {
   expect(resolveOpenClawRuntimeErrorMessage('LLM request failed.', {
     provider: 'lobsterai-server',
     model: 'MiniMax-M3',
@@ -646,7 +646,7 @@ test('resolveOpenClawRuntimeErrorMessage identifies expired LobsterAI plan login
   })).toContain('登录状态已过期');
 });
 
-test('resolveOpenClawRuntimeErrorMessage keeps LobsterAI HTTP 403 as model access denial', () => {
+test('resolveOpenClawRuntimeErrorMessage keeps 海豚买买AI工作台 HTTP 403 as model access denial', () => {
   expect(resolveOpenClawRuntimeErrorMessage('LLM request failed.', {
     provider: 'lobsterai-server',
     model: 'MiniMax-M3',
@@ -930,10 +930,10 @@ test('outbound prompt injects continuity capsule bridge before the current reque
 
   const prompt = await internal.buildOutboundPrompt('session-1', '继续');
 
-  expect(prompt).toContain('[LobsterAI continuity context after context compaction]');
+  expect(prompt).toContain('[海豚买买AI工作台 continuity context after context compaction]');
   expect(prompt).toContain('Improve compaction continuity.');
   expect(prompt).toContain('src/main/libs/agentEngine/openclawRuntimeAdapter.ts');
-  expect(prompt.indexOf('[LobsterAI continuity context after context compaction]')).toBeLessThan(
+  expect(prompt.indexOf('[海豚买买AI工作台 continuity context after context compaction]')).toBeLessThan(
     prompt.indexOf('[Current user request]'),
   );
 });
@@ -978,10 +978,10 @@ test('outbound prompt injects full capsule first and mini capsule on later turns
   const firstPrompt = await internal.buildOutboundPrompt('session-1', '继续');
   const secondPrompt = await internal.buildOutboundPrompt('session-1', '再继续');
 
-  expect(firstPrompt).toContain('[LobsterAI continuity context after context compaction]');
+  expect(firstPrompt).toContain('[海豚买买AI工作台 continuity context after context compaction]');
   expect(firstPrompt).toContain('Touched files:');
   expect(firstPrompt).toContain('src/main/libs/agentEngine/openclawRuntimeAdapter.ts');
-  expect(secondPrompt).toContain('[LobsterAI brief continuity context after context compaction]');
+  expect(secondPrompt).toContain('[海豚买买AI工作台 brief continuity context after context compaction]');
   expect(secondPrompt).toContain('Improve compaction continuity.');
   expect(secondPrompt).toContain('Inject capsule bridge.');
   expect(secondPrompt).not.toContain('Touched files:');
@@ -1030,9 +1030,9 @@ test('outbound prompt injects workspace rehydration bridge before the current re
 
   const prompt = await internal.buildOutboundPrompt('session-1', '继续');
 
-  expect(prompt).toContain('[LobsterAI workspace state after context compaction]');
+  expect(prompt).toContain('[海豚买买AI工作台 workspace state after context compaction]');
   expect(prompt).toContain('src/main/libs/agentEngine/coworkWorkspaceRehydration.ts');
-  expect(prompt.indexOf('[LobsterAI workspace state after context compaction]')).toBeLessThan(
+  expect(prompt.indexOf('[海豚买买AI工作台 workspace state after context compaction]')).toBeLessThan(
     prompt.indexOf('[Current user request]'),
   );
 });
@@ -1080,8 +1080,8 @@ test('outbound prompt injects workspace rehydration bridge once per compaction',
   const firstPrompt = await internal.buildOutboundPrompt('session-1', '继续');
   const secondPrompt = await internal.buildOutboundPrompt('session-1', '再继续');
 
-  expect(firstPrompt).toContain('[LobsterAI workspace state after context compaction]');
-  expect(secondPrompt).not.toContain('[LobsterAI workspace state after context compaction]');
+  expect(firstPrompt).toContain('[海豚买买AI工作台 workspace state after context compaction]');
+  expect(secondPrompt).not.toContain('[海豚买买AI工作台 workspace state after context compaction]');
 });
 
 test('outbound prompt injects top-k evidence bridge before the current request', async () => {
@@ -1140,9 +1140,9 @@ test('outbound prompt injects top-k evidence bridge before the current request',
 
   const prompt = await internal.buildOutboundPrompt('session-1', '继续处理 src/pages/Bakery.tsx 的 npm test failed');
 
-  expect(prompt).toContain('[LobsterAI retrieved evidence after context compaction]');
+  expect(prompt).toContain('[海豚买买AI工作台 retrieved evidence after context compaction]');
   expect(prompt).toContain('npm test failed in src/pages/Bakery.tsx');
-  expect(prompt.indexOf('[LobsterAI retrieved evidence after context compaction]')).toBeLessThan(
+  expect(prompt.indexOf('[海豚买买AI工作台 retrieved evidence after context compaction]')).toBeLessThan(
     prompt.indexOf('[Current user request]'),
   );
 });
@@ -1184,7 +1184,7 @@ test('outbound prompt skips continuity capsule bridge before compaction', async 
 
   const prompt = await internal.buildOutboundPrompt('session-1', 'hello');
 
-  expect(prompt).not.toContain('[LobsterAI continuity context after context compaction]');
+  expect(prompt).not.toContain('[海豚买买AI工作台 continuity context after context compaction]');
 });
 
 test('context usage ignores non-checkpoint compactionCount', () => {
@@ -4320,10 +4320,10 @@ test('reconcileWithHistory: content mismatch — triggers replace', async () => 
 });
 
 test('subagent history sync preserves visible local user text instead of raw outbound prompt', async () => {
-  const rawOutboundPrompt = `[LobsterAI system instructions]
+  const rawOutboundPrompt = `[海豚买买AI工作台 system instructions]
 hidden setup
 
-[Context bridge from previous LobsterAI conversation]
+[Context bridge from previous 海豚买买AI工作台 conversation]
 previous context
 
 [Current user request]

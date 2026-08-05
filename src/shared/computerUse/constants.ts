@@ -37,7 +37,7 @@ export const ComputerUseKitMetadata = {
     zh: '电脑操作',
   } satisfies LocalizedText,
   SkillDescription: {
-    en: 'Use LobsterAI Computer Use tools to inspect and control Windows desktop applications.',
-    zh: '使用 LobsterAI 电脑操作工具检查和操作 Windows 桌面应用。',
+    en: 'Use 海豚买买AI工作台 Computer Use tools to inspect and control Windows desktop applications.',
+    zh: '使用海豚买买AI工作台电脑操作工具检查和操作 Windows 桌面应用。',
   } satisfies LocalizedText,
 } as const;

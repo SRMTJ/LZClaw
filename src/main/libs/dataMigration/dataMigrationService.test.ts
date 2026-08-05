@@ -397,7 +397,7 @@ test('inspectMigrationArchive rejects legacy Windows PowerShell archive root', (
     cwd: root,
   }, ['AppData']);
 
-  expect(() => inspectMigrationArchiveSync(archivePath)).toThrow(/does not contain LobsterAI user data/);
+  expect(() => inspectMigrationArchiveSync(archivePath)).toThrow(/does not contain the expected legacy application data directory/);
 });
 
 test('inspectMigrationArchive rejects archives without a migration manifest', () => {

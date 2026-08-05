@@ -1,13 +1,13 @@
 <h1 align="center">
-  <img src="public/logo.png" alt="LobsterAI" width="96"><br>
-  LobsterAI
+  <img src="public/logo.png" alt="海豚买买AI工作台" width="96"><br>
+  海豚买买AI工作台
 </h1>
 
 <p align="center">
   <a href="https://github.com/netease-youdao/LobsterAI/stargazers"><img src="https://badgen.net/github/stars/netease-youdao/LobsterAI?label=%E2%98%85" alt="GitHub stars" /></a>
   <a href="LICENSE"><img src="https://badgen.net/github/license/netease-youdao/LobsterAI" alt="License" /></a>
-  <a href="https://x.com/LobsterAIYoudao"><img src="https://img.shields.io/badge/-000000?logo=x&logoColor=white" alt="Follow LobsterAI on X" /></a>
-  <a href="https://shared.ydstatic.com/market/souti/fihserChatWeb/online/2.0.7/dist/assets/wechat_group-B34qRm1G.png"><img src="https://img.shields.io/badge/-000000?logo=wechat&logoColor=white" alt="Follow LobsterAI on X" /></a>
+  <a href="https://x.com/LobsterAIYoudao"><img src="https://img.shields.io/badge/-000000?logo=x&logoColor=white" alt="Follow 海豚买买AI工作台 on X" /></a>
+  <a href="https://shared.ydstatic.com/market/souti/fihserChatWeb/online/2.0.7/dist/assets/wechat_group-B34qRm1G.png"><img src="https://img.shields.io/badge/-000000?logo=wechat&logoColor=white" alt="Follow 海豚买买AI工作台 on WeChat" /></a>
   <br>
   <img src="https://img.shields.io/badge/macOS%20%7C%20Windows-4493F8?style=flat-square" alt="Supported platforms: macOS and Windows" />
   <img src="https://img.shields.io/badge/Electron-40-47848F?style=flat-square&logo=electron&logoColor=white" alt="Electron 40" />
@@ -31,21 +31,21 @@
   <a href="#community--support"><strong>Community</strong></a>
 </p>
 
-<h3 align="center"><a href="https://lobsterai.youdao.com/#/download-list"><ins>Download LobsterAI</ins></a></h3>
+<h3 align="center"><a href="https://lobsterai.youdao.com/#/download-list"><ins>Download 海豚买买AI工作台</ins></a></h3>
 
 <p align="center">
   <img src="docs/res/mainpage_en.png" alt="main page" />
 </p>
 
-LobsterAI is a desktop Agent that can operate in your real working environment: local files, terminal commands, browser workflows, documents, spreadsheets, slides, IM channels, scheduled jobs, and project workspaces.
+海豚买买AI工作台 is a desktop Agent that can operate in your real working environment: local files, terminal commands, browser workflows, documents, spreadsheets, slides, IM channels, scheduled jobs, and project workspaces.
 
-Cowork is the LobsterAI product/session layer. OpenClaw is the runtime and gateway underneath it. That split lets LobsterAI keep local persistence, permissions, UI state, artifacts, agents, memory, and IM bindings in the desktop app while using OpenClaw for agent execution.
+Cowork is the 海豚买买AI工作台 product/session layer. OpenClaw is the runtime and gateway underneath it. That split lets 海豚买买AI工作台 keep local persistence, permissions, UI state, artifacts, agents, memory, and IM bindings in the desktop app while using OpenClaw for agent execution.
 
 ## Features
 
 ### Desktop Cowork Sessions
 
-Run long-form Agent tasks against local projects and files. LobsterAI streams progress, keeps session history, renders tool output, and asks for approval before sensitive actions such as file operations, terminal commands, or network access.
+Run long-form Agent tasks against local projects and files. 海豚买买AI工作台 streams progress, keeps session history, renders tool output, and asks for approval before sensitive actions such as file operations, terminal commands, or network access.
 
 ### Multi-Agent Workflows
 
@@ -57,11 +57,11 @@ Install scenario-oriented Expert Kits that package capability selections and ref
 
 ### Skills
 
-LobsterAI ships with 28 built-in skills configured in `SKILLs/skills.config.json`, including web search, Word documents, spreadsheets, PowerPoint, PDF processing, Remotion video generation, browser automation, image/video generation, stock research, content writing, email, weather, and skill creation.
+海豚买买AI工作台 ships with 28 built-in skills configured in `SKILLs/skills.config.json`, including web search, Word documents, spreadsheets, PowerPoint, PDF processing, Remotion video generation, browser automation, image/video generation, stock research, content writing, email, weather, and skill creation.
 
 ### MCP Servers
 
-Connect external tools and data sources through Model Context Protocol servers. LobsterAI stores user-configured servers locally and syncs enabled servers into OpenClaw.
+Connect external tools and data sources through Model Context Protocol servers. 海豚买买AI工作台 stores user-configured servers locally and syncs enabled servers into OpenClaw.
 
 ### Scheduled Tasks
 
@@ -93,12 +93,12 @@ Sessions and app data live locally in SQLite. OpenClaw workspace memory uses fil
 ## How It Works
 
 <p align="center">
-  <img src="docs/res/architecture_v2_en.png" alt="LobsterAI architecture" width="640">
+  <img src="docs/res/architecture_v2_en.png" alt="海豚买买AI工作台 architecture" width="640">
 </p>
 
 - **Renderer**: React, Redux Toolkit, Tailwind, artifact renderers, settings, agent/session UI, skills, MCP, scheduled tasks, and IM configuration.
 - **Main process**: Electron lifecycle, IPC, SQLite persistence, auth, logging, OpenClaw startup, runtime repair, skill sync, IM gateways, and artifact services.
-- **OpenClaw integration**: `openclawEngineManager`, `openclawConfigSync`, `openclawRuntimeAdapter`, and `coworkEngineRouter` translate LobsterAI state into OpenClaw runtime behavior.
+- **OpenClaw integration**: `openclawEngineManager`, `openclawConfigSync`, `openclawRuntimeAdapter`, and `coworkEngineRouter` translate 海豚买买AI工作台 state into OpenClaw runtime behavior.
 
 ## Install
 
@@ -207,7 +207,7 @@ Offline or private-source packaging can use:
 | --- | --- |
 | `src/main/main.ts` | Electron lifecycle, IPC registration, auth, logging, runtime startup, and service wiring |
 | `src/main/libs/openclawEngineManager.ts` | OpenClaw gateway process, runtime state, ports, logs, restart, and repair |
-| `src/main/libs/openclawConfigSync.ts` | Renders LobsterAI providers, models, agents, IM bindings, skills, MCP, and workspace instructions into OpenClaw config |
+| `src/main/libs/openclawConfigSync.ts` | Renders 海豚买买AI工作台 providers, models, agents, IM bindings, skills, MCP, and workspace instructions into OpenClaw config |
 | `src/main/libs/agentEngine/openclawRuntimeAdapter.ts` | Translates OpenClaw gateway events into Cowork stream events |
 | `src/main/coworkStore.ts` | Cowork sessions, messages, config, agents, memory metadata, and SQLite CRUD |
 | `src/renderer/components/cowork/` | Main Cowork UI, prompt input, session detail, permissions, thinking/tool display, media, and voice input |
@@ -216,7 +216,7 @@ Offline or private-source packaging can use:
 | `src/renderer/components/mcp/` | MCP server management UI |
 | `src/renderer/components/scheduledTasks/` | Scheduled task list, form, detail, run history, and templates |
 | `src/renderer/services/i18n.ts` | Renderer i18n dictionary and `t()` helper |
-| `SKILLs/` | Bundled LobsterAI skills |
+| `SKILLs/` | Bundled 海豚买买AI工作台 skills |
 
 ## Security And Data
 

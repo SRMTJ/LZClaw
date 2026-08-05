@@ -35,11 +35,11 @@ const descriptor: StartupCreditDescriptor = {
   loginRequired: true,
   periodLabel: '测试服活动',
   cardTitle: '网易用户回馈',
-  modalTitle: '欢迎使用 LobsterAI',
+  modalTitle: '欢迎使用海豚买买AI工作台',
   modalDescription: '登录即可领取限时积分',
   actionText: '领取 5000 积分',
   posterUrl: 'https://nos.example.test/reward.png',
-  posterAlt: 'LobsterAI 用户回馈活动',
+  posterAlt: '海豚买买AI工作台用户回馈活动',
   autoPopupStartAt: '2026-07-31T00:00:00Z',
   autoPopupEndAt: '2026-08-15T00:00:00Z',
 };

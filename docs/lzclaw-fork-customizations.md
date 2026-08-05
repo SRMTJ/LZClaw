@@ -25,6 +25,7 @@
 
 | 功能 | 优先级 | 必须保留的行为 | 主要代码位置 |
 | --- | --- | --- | --- |
+| 应用品牌与兼容标识 | P0 | 用户可见产品名统一为“海豚买买AI工作台”；继续使用 `lobsterai://`、`com.lobsterai.app`、`LobsterAI.exe`、`%APPDATA%/LobsterAI`、数据库文件名、provider ID、请求头和环境变量等旧标识，避免登录态、历史数据、升级、深链和服务端协议断裂 | `src/main/appConstants.ts`、`src/renderer/constants/app.ts`、`electron-builder.json`、`src/main/i18n.ts`、`src/renderer/services/i18n.ts`、`scripts/nsis-installer.nsh` |
 | 登录门禁与欢迎页 | P0 | 用户未登录时显示欢迎/登录页并阻止使用主程序；已登录时不显示欢迎页；退出或会话失效后立即回到欢迎页 | `src/renderer/App.tsx`、`src/renderer/components/WelcomeDialog.tsx` |
 | 应用内嵌网页登录 | P0 | 登录在欢迎页内全区域显示，不打开额外 `BrowserWindow`；固定使用 LZClaw 登录地址；同时保留系统浏览器登录和回调能力 | `src/main/libs/authInAppLoginView.ts`、`src/renderer/services/auth.ts`、`src/shared/auth/constants.ts` |
 | 登录完成后的落点 | P0 | 登录成功后关闭登录视图，隐藏业务中心，进入“新建任务”状态并聚焦任务输入，而不是跳到 `/users`；若登录服务误走 Web 流程落到同源 `/users`，主进程从 HttpOnly Cookie 恢复原生令牌，失败则回到桌面登录页 | `src/main/libs/authInAppLoginView.ts`、`src/main/libs/authWebSessionRecovery.ts`、`src/main/main.ts`、`src/renderer/services/auth.ts`、`src/renderer/App.tsx` |
@@ -58,6 +59,7 @@
 
 | 冲突文件 | 默认处理原则 | 合并后重点检查 |
 | --- | --- | --- |
+| `src/main/appConstants.ts`、`src/renderer/constants/app.ts`、`electron-builder.json` | 保留“海豚买买AI工作台”显示名；不得顺手改动旧协议、App ID、可执行文件名或数据目录 | 窗口、欢迎页、设置、托盘与安装器显示名；旧用户数据和深链仍可用 |
 | `src/main/main.ts` | 接收上游基础设施、更新器和运行时改进，再接回共享 Session、登录视图、业务中心和无网关重启的退出清理 | 初始化与关闭顺序、认证 IPC、Session 清理、上游新增监听器 |
 | `src/main/preload.ts` | 合并上游新增 API，同时保留 `auth.loginInApp` 和完整 `businessCenter` 暴露 | channel 名称、参数类型、取消订阅函数 |
 | `src/renderer/App.tsx` | 接收上游页面结构，再恢复认证门禁、登录成功进入新建任务、业务中心入口和覆盖层隐藏规则 | 未登录不可操作、已登录无欢迎页、overlay 状态完整 |

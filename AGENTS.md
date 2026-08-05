@@ -22,6 +22,12 @@ product is a desktop agent experience that can work with local projects,
 files, browser previews, IM channels, skills, MCP servers, scheduled tasks,
 and rich artifacts.
 
+The `dev-htmm-v1` fork's user-visible product name is `海豚买买AI工作台`.
+Preserve legacy compatibility identifiers including the `lobsterai://` scheme,
+`com.lobsterai.app`, the `LobsterAI` executable and application-data directory,
+database filenames, provider IDs, headers, and environment variables unless a
+separate migration is explicitly approved.
+
 ### Cowork vs OpenClaw
 
 `Cowork` is LobsterAI's product/session layer. The name is historical: it
@@ -521,7 +527,8 @@ the upstream baseline.
   sides and preserve the required behavior from each side.
 - During an upstream merge, prefer `origin/main` for general infrastructure,
   dependency, build, and runtime updates. Preserve `dev-htmm-v1` behavior for
-  LZClaw branding, onboarding, and product-specific login experiences.
+  the `海豚买买AI工作台` display brand, onboarding, and product-specific login
+  experiences while retaining the legacy compatibility identifiers above.
 - Review authentication, tokens, cookies, permissions, preload exposure, and
   Electron security settings manually whenever either side changes them.
 - Before merging, inspect whether `origin/main` changes any authentication

@@ -2,9 +2,11 @@ import crypto from 'crypto';
 import { BrowserWindow } from 'electron';
 import http from 'http';
 
+import { APP_NAME } from '../appConstants';
+
 const QICHACHA_ISSUER = 'https://agent.qcc.com';
 const QICHACHA_RESOURCE = 'https://agent.qcc.com/mcp/company/stream';
-const QICHACHA_CLIENT_NAME = 'LobsterAI';
+const QICHACHA_CLIENT_NAME = APP_NAME;
 const QICHACHA_AUTH_TIMEOUT_MS = 5 * 60 * 1000;
 
 type QichachaRegistrationResponse = {
@@ -87,7 +89,7 @@ function startCallbackServer(expectedState: string): Promise<{ redirectUri: stri
         return;
       }
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      res.end('<h1>Qichacha authorization complete</h1><p>You can return to LobsterAI.</p>');
+      res.end(`<h1>Qichacha authorization complete</h1><p>You can return to ${APP_NAME}.</p>`);
     });
 
     server.once('error', reject);

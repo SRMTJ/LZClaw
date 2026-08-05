@@ -9,6 +9,7 @@ import {
 import { ProviderName } from '@shared/providers';
 import type { ModelRuntimeProfile } from '@shared/providers/modelRuntimeProfiles';
 
+import { APP_NAME } from '../constants/app';
 import { store } from '../store';
 import {
   setAuthExpired,
@@ -83,6 +84,15 @@ const readPositiveNumber = (value: unknown): number | undefined => (
     : undefined
 );
 
+const LEGACY_PRODUCT_PROVIDER_LABELS = new Set(['lobsterai', 'lobsterai plan']);
+
+const readProductProviderLabel = (model: PricingCatalogTextModel): string => {
+  const label = readString(model.providerLabel) || readString(model.provider);
+  return !label || LEGACY_PRODUCT_PROVIDER_LABELS.has(label.toLowerCase())
+    ? APP_NAME
+    : label;
+};
+
 type AuthRendererLogLevel = 'debug' | 'info' | 'warn';
 
 const writeAuthRendererLog = (
@@ -131,9 +141,7 @@ export function mapPricingCatalogTextModelsToServerModels(
     if (!modelId) return [];
 
     const modelName = readString(model.modelName) || modelId;
-    const provider = readString(model.providerLabel)
-      || readString(model.provider)
-      || 'LobsterAI';
+    const provider = readProductProviderLabel(model);
     const contextWindow = readPositiveNumber(model.contextWindow);
     const costMultiplier = readPositiveNumber(model.costMultiplier);
 

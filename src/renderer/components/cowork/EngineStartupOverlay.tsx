@@ -1,6 +1,7 @@
 import { LightBulbIcon } from '@heroicons/react/24/outline';
 import React, { useEffect, useRef, useState } from 'react';
 
+import { APP_NAME } from '../../constants/app';
 import { coworkService } from '../../services/cowork';
 import { i18nService } from '../../services/i18n';
 import type { OpenClawEngineStatus } from '../../types/cowork';
@@ -179,7 +180,7 @@ const EngineStartupOverlay: React.FC<EngineStartupOverlayProps> = ({ bootstrappi
           <div className="absolute -inset-2 rounded-3xl bg-primary/20 blur-xl animate-pulse" aria-hidden="true" />
           <img
             src="logo.png"
-            alt="LobsterAI"
+            alt={APP_NAME}
             width={72}
             height={72}
             className="relative rounded-2xl select-none"

@@ -1,6 +1,7 @@
 import type { AuthLoginInAppBounds } from '@shared/auth/constants';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
+import { APP_NAME } from '@/constants/app';
 import { i18nService } from '@/services/i18n';
 
 const SERVICE_TERMS_URL = 'https://c.youdao.com/dict/hardware/lobsterai/lobsterai_service.html';
@@ -144,7 +145,7 @@ const WelcomeDialog: React.FC<WelcomeDialogProps> = ({
           </div>
           <img
             src="logo.png"
-            alt="LobsterAI"
+            alt={APP_NAME}
             width={72}
             height={72}
             className="relative rounded-2xl select-none"

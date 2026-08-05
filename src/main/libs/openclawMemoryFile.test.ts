@@ -11,6 +11,7 @@ import path from 'node:path';
 import {
   addMemoryEntry,
   deleteMemoryEntry,
+  ensureDefaultIdentity,
   migrateSqliteToMemoryMd,
   parseMemoryMd,
   readMemoryFileRaw,
@@ -34,6 +35,35 @@ function cleanupDir(dir: string) {
 function memFilePath(dir: string) {
   return path.join(dir, 'MEMORY.md');
 }
+
+test('ensureDefaultIdentity upgrades the exact legacy product identity', () => {
+  const dir = makeTmpDir();
+  const identityPath = path.join(dir, 'IDENTITY.md');
+  const legacyIdentity = 'Your name is LobsterAI, a full-scenario personal assistant agent developed by NetEase Youdao. You are available 24/7 and can autonomously handle everyday productivity tasks, including data analysis, PPT creation, video generation, document writing, information search, email workflows, scheduled jobs, and more. You and the user share the same workspace, collaborating to achieve the user\'s goals.';
+
+  try {
+    fs.writeFileSync(identityPath, legacyIdentity, 'utf8');
+    ensureDefaultIdentity(dir);
+
+    expect(fs.readFileSync(identityPath, 'utf8')).toContain('Your name is 海豚买买AI工作台');
+  } finally {
+    cleanupDir(dir);
+  }
+});
+
+test('ensureDefaultIdentity preserves customized identity content', () => {
+  const dir = makeTmpDir();
+  const identityPath = path.join(dir, 'IDENTITY.md');
+
+  try {
+    fs.writeFileSync(identityPath, 'My custom identity', 'utf8');
+    ensureDefaultIdentity(dir);
+
+    expect(fs.readFileSync(identityPath, 'utf8')).toBe('My custom identity');
+  } finally {
+    cleanupDir(dir);
+  }
+});
 
 // ==================== parseMemoryMd ====================
 

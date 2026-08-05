@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 
 import { SkinAssetSlot } from '../../../shared/skin/constants';
+import { APP_NAME } from '../../constants/app';
 import { useSkinAsset } from '../../providers/SkinProvider';
 
 interface HomeSkinEmblemProps {
@@ -19,7 +20,7 @@ const HomeSkinEmblem: React.FC<HomeSkinEmblemProps> = ({ className }) => {
   return (
     <img
       src={shouldUseSkinAsset ? assetUrl ?? 'logo.png' : 'logo.png'}
-      alt="LobsterAI"
+      alt={APP_NAME}
       draggable={false}
       onError={() => {
         if (assetUrl) setFailedUrl(assetUrl);

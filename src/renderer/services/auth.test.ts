@@ -6,6 +6,7 @@ import {
 import { ProviderName } from '@shared/providers';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
+import { APP_NAME } from '../constants/app';
 import { store } from '../store';
 import { setLoggedIn } from '../store/slices/authSlice';
 import {
@@ -40,7 +41,7 @@ describe('pricing catalog model mapping', () => {
     expect(model).toMatchObject({
       id: 'qwen3.7-plus',
       name: 'Qwen3.7-Plus',
-      provider: 'LobsterAI Plan',
+      provider: APP_NAME,
       providerKey: ProviderName.LobsteraiServer,
       isServerModel: true,
       accessible: false,
