@@ -47,6 +47,41 @@ function die(msg) {
   process.exit(1);
 }
 
+function isSafePluginId(value) {
+  return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value);
+}
+
+function pruneRetiredPlugins({ retiredPlugins, pluginCacheBase, runtimeExtensionsDir, logger = log }) {
+  if (!Array.isArray(retiredPlugins)) {
+    throw new Error('openclaw.retiredPlugins must be an array.');
+  }
+
+  for (const retiredPlugin of retiredPlugins) {
+    const packageId = retiredPlugin && retiredPlugin.packageId;
+    const pluginIds = retiredPlugin && retiredPlugin.pluginIds;
+    if (!isSafePluginId(packageId) || !Array.isArray(pluginIds) || !pluginIds.every(isSafePluginId)) {
+      throw new Error(
+        `Invalid retired plugin declaration: ${JSON.stringify(retiredPlugin)}. ` +
+        'Each entry must have a safe "packageId" and a "pluginIds" array.'
+      );
+    }
+
+    const targets = [
+      path.join(pluginCacheBase, packageId),
+      ...Array.from(
+        new Set([packageId, ...pluginIds]),
+        id => path.join(runtimeExtensionsDir, id),
+      ),
+    ];
+
+    for (const target of targets) {
+      if (!fs.existsSync(target)) continue;
+      fs.rmSync(target, { recursive: true, force: true });
+      logger(`Removed retired plugin: ${path.relative(rootDir, target)}`);
+    }
+  }
+}
+
 function copyDirRecursive(src, dest) {
   const linkedOpenClawPeer = path.join(src, 'node_modules', 'openclaw');
   const shouldExcludeLinkedPeer =
@@ -563,11 +598,7 @@ function main() {
   // Read plugin declarations from package.json
   const pkg = require(path.join(rootDir, 'package.json'));
   const plugins = (pkg.openclaw && pkg.openclaw.plugins) || [];
-
-  if (!Array.isArray(plugins) || plugins.length === 0) {
-    log('No plugins declared in package.json, nothing to do.');
-    process.exit(0);
-  }
+  const retiredPlugins = (pkg.openclaw && pkg.openclaw.retiredPlugins) || [];
 
   // Validate plugin declarations
   for (const plugin of plugins) {
@@ -594,6 +625,22 @@ function main() {
 
   ensureDir(runtimeExtensionsDir);
   ensureDir(pluginCacheBase);
+
+  try {
+    const retiredPackageIds = new Set(retiredPlugins.map(plugin => plugin && plugin.packageId));
+    const redeclaredPlugin = plugins.find(plugin => plugin && retiredPackageIds.has(plugin.id));
+    if (redeclaredPlugin) {
+      throw new Error(`Plugin ${redeclaredPlugin.id} cannot be both active and retired.`);
+    }
+    pruneRetiredPlugins({ retiredPlugins, pluginCacheBase, runtimeExtensionsDir });
+  } catch (error) {
+    die(error.message);
+  }
+
+  if (!Array.isArray(plugins) || plugins.length === 0) {
+    log('No active plugins declared in package.json.');
+    return;
+  }
 
   log(`Processing ${plugins.length} plugin(s)...`);
 
@@ -761,6 +808,7 @@ module.exports = {
   main,
   npmPack,
   parseGitSpec,
+  pruneRetiredPlugins,
   resolveGitPackSpec,
   resolvePluginInstallSource,
 };

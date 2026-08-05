@@ -16,6 +16,7 @@ import { COWORK_TEMP_DIR_NAME } from '../../shared/cowork/constants';
 import { CoworkErrorModelSource } from '../../shared/cowork/errorDetail';
 import { normalizeMcpServerUrlInput } from '../../shared/mcp/url';
 import { OpenClawTranscriptSafetyLimit } from '../../shared/openclawTranscript/constants';
+import { PlatformRegistry } from '../../shared/platform';
 import type {
   ModelRuntimeProfile as ModelRuntimeProfileType,
 } from '../../shared/providers';
@@ -1570,6 +1571,24 @@ const readPreinstalledPluginIds = (): string[] => {
   }
 };
 
+const readRetiredOpenClawPluginIds = (): ReadonlySet<string> => {
+  try {
+    const pkgPath = path.join(app.getAppPath(), 'package.json');
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    const retiredPlugins = pkg.openclaw?.retiredPlugins;
+    if (!Array.isArray(retiredPlugins)) return new Set();
+
+    return new Set(
+      retiredPlugins.flatMap((plugin: { packageId?: unknown; pluginIds?: unknown }) => [
+        plugin.packageId,
+        ...(Array.isArray(plugin.pluginIds) ? plugin.pluginIds : []),
+      ]).filter((id: unknown): id is string => typeof id === 'string' && id.length > 0),
+    );
+  } catch {
+    return new Set();
+  }
+};
+
 type PreinstalledOpenClawPlugin = {
   packageId: string;
   pluginId: string;
@@ -2189,13 +2208,17 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
 
     const wecomInstances = this.getWecomInstances();
 
-    const popoInstances = this.getPopoInstances();
+    const popoInstances = PlatformRegistry.isRetired('popo') ? [] : this.getPopoInstances();
 
-    const emailConfig = this.getEmailOpenClawConfig?.();
+    const emailConfig = PlatformRegistry.isRetired('email')
+      ? undefined
+      : this.getEmailOpenClawConfig?.();
 
-    const nimInstances = this.getNimInstances();
+    const nimInstances = PlatformRegistry.isRetired('nim') ? [] : this.getNimInstances();
 
-    const neteaseBeeChanConfig = this.getNeteaseBeeChanConfig();
+    const neteaseBeeChanConfig = PlatformRegistry.isRetired('netease-bee')
+      ? null
+      : this.getNeteaseBeeChanConfig();
 
     const weixinConfig = this.getWeixinConfig();
 
@@ -2325,6 +2348,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
         sessionRetention: '7d',
       },
       ...((() => {
+        const retiredPluginIds = readRetiredOpenClawPluginIds();
         // Remove legacy package/directory ids from plugin entries.  OpenClaw
         // validates entries by the manifest `id`, so aliases like
         // `clawemail-email` and `openclaw-nim-channel` produce noisy
@@ -2339,6 +2363,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
           'qwen-portal-auth',
           'openclaw-qqbot',
           ...packageAliasPluginIds,
+          ...retiredPluginIds,
         ];
         const transientPluginIds = [
           ...(hasPreinstalledPlugin('openclaw-lark') ? ['feishu'] : []),
@@ -2351,7 +2376,8 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
         );
         const qqbotPluginEnabled = qqInstances.some(i => i.enabled && i.appId);
         const discordPluginEnabled = discordInstances.some(i => i.enabled && i.botToken);
-        const userPlugins = this.getUserPlugins();
+        const userPlugins = this.getUserPlugins()
+          .filter(plugin => !retiredPluginIds.has(plugin.pluginId));
 
         const pluginEntries: Record<string, unknown> = {
           // Preserve ALL existing plugin entries so runtime auto-injected
@@ -2419,6 +2445,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
           ? ((existingPlugins as Record<string, unknown>).allow as unknown[])
               .filter((id): id is string => typeof id === 'string' && id.length > 0)
               .filter(id => id !== OPENCLAW_MODEL_COMPAT_PLUGIN_ID)
+              .filter(id => !retiredPluginIds.has(id))
           : [];
         const trustedPluginAllow = Array.from(new Set([
           ...existingAllow,
@@ -3234,7 +3261,9 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
     }
 
     // POPO — per-instance secrets (must match sync() indexing: enabled instances only)
-    const enabledPopo = this.getPopoInstances().filter(i => i.enabled && i.appSecret);
+    const enabledPopo = PlatformRegistry.isRetired('popo')
+      ? []
+      : this.getPopoInstances().filter(i => i.enabled && i.appSecret);
     for (let idx = 0; idx < enabledPopo.length; idx++) {
       if (idx === 0) {
         env.LOBSTER_POPO_APP_SECRET = enabledPopo[idx].appSecret;
@@ -3257,7 +3286,9 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
     }
 
     // Email credentials
-    const emailConfig = this.getEmailOpenClawConfig?.();
+    const emailConfig = PlatformRegistry.isRetired('email')
+      ? undefined
+      : this.getEmailOpenClawConfig?.();
     if (emailConfig?.instances) {
       for (const inst of emailConfig.instances) {
         if (!inst.enabled || !inst.email) continue;
@@ -3275,7 +3306,9 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
     }
 
     // NIM — indexes must match the enabled instances written to channels.nim.accounts.
-    const nimInstances = this.getNimInstances().filter(isEnabledNimRuntimeInstance);
+    const nimInstances = PlatformRegistry.isRetired('nim')
+      ? []
+      : this.getNimInstances().filter(isEnabledNimRuntimeInstance);
     for (let idx = 0; idx < nimInstances.length; idx++) {
       const inst = nimInstances[idx];
       if (inst.nimToken?.trim() || !inst.token) continue;
@@ -3702,6 +3735,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
     };
 
     for (const [platform, { channel, getInstances }] of Object.entries(multiInstanceChannels)) {
+      if (PlatformRegistry.isRetired(platform)) continue;
       try {
         const instances = getInstances();
         for (const inst of instances) {
@@ -3745,6 +3779,7 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
     ];
 
     for (const { getter, channel, platform } of singleInstanceChannels) {
+      if (PlatformRegistry.isRetired(platform)) continue;
       const agentId = platformBindings[platform];
       if (!agentId || agentId === 'main') continue;
 

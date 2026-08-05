@@ -37,6 +37,7 @@
 | 导航与 Electron 安全 | P0 | 保持 Node 主线程、Worker 和子框架集成关闭，启用 `contextIsolation`、`sandbox` 和 `webSecurity`，禁用不安全混合内容、WebView、实验特性和宿主 Blink 特性；同源业务导航留在应用内，外部 HTTP/HTTPS 使用系统浏览器，其他协议阻止 | `src/main/libs/authInAppLoginView.ts`、`src/main/libs/businessCenterInAppView.ts` |
 | IPC 契约集中管理 | P1 | 登录和业务中心 IPC 名称、请求类型、状态类型继续放在 `src/shared`，主进程、preload 和 renderer 不各自写字符串 | `src/shared/auth/constants.ts`、`src/shared/businessCenter/constants.ts`、`src/main/preload.ts`、`src/renderer/types/electron.d.ts` |
 | 本地开发隔离 | P2 | 忽略 `.codex-run/`；项目 `.npmrc` 清空继承的用户级 `allow-scripts`，避免嵌套 npm 安装被本机配置污染 | `.gitignore`、`.npmrc` |
+| IM 通道精简 | P1 | “IM 机器人”、智能体绑定和定时任务只提供当前产品支持的通道；云信、小蜜蜂、POPO、龙虾邮箱保留旧数据识别能力但不可再配置、不会同步到 OpenClaw，且对应第三方插件不安装、不打包并会从已有运行时清理 | `src/shared/platform/constants.ts`、`src/renderer/utils/regionFilter.ts`、`src/main/libs/openclawConfigSync.ts`、`scripts/ensure-openclaw-plugins.cjs`、`package.json` |
 
 持久化网页视图的详细架构和生命周期见
 [`architecture-persistent-web-views.md`](./architecture-persistent-web-views.md)。

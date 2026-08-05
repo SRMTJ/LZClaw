@@ -13,11 +13,28 @@ const {
   isGitSpec,
   isLocalPathSpec,
   parseGitSpec,
+  pruneRetiredPlugins,
   resolveGitPackSpec,
   resolvePluginInstallSource,
 } = require('../scripts/ensure-openclaw-plugins.cjs');
 
 describe('ensure-openclaw-plugins', () => {
+  test('declares retired IM plugins only in the cleanup manifest', () => {
+    const packageJson = require('../package.json');
+    const activePluginIds = packageJson.openclaw.plugins.map((plugin: { id: string }) => plugin.id);
+    const retiredPackageIds = packageJson.openclaw.retiredPlugins
+      .map((plugin: { packageId: string }) => plugin.packageId);
+    const expectedRetiredPackageIds = [
+      'moltbot-popo',
+      'openclaw-nim-channel',
+      'openclaw-netease-bee',
+      'clawemail-email',
+    ];
+
+    expect(activePluginIds).not.toEqual(expect.arrayContaining(expectedRetiredPackageIds));
+    expect(retiredPackageIds).toEqual(expect.arrayContaining(expectedRetiredPackageIds));
+  });
+
   test('detects local path specs', () => {
     expect(isLocalPathSpec('/tmp/openclaw-nim-channel')).toBe(true);
     expect(isLocalPathSpec('./plugins/openclaw-nim-channel')).toBe(true);
@@ -215,5 +232,42 @@ describe('ensure-openclaw-plugins', () => {
     expect(fs.existsSync(path.join(cacheDir, 'node_modules', 'openclaw'))).toBe(false);
 
     fs.rmSync(stagingDir, { recursive: true, force: true });
+  });
+
+  test('removes retired plugins from the cache and runtime without touching active plugins', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'openclaw-plugin-retired-'));
+    const cacheDir = path.join(tempDir, 'cache');
+    const runtimeDir = path.join(tempDir, 'runtime');
+    const retiredPackageId = 'legacy-package';
+    const retiredManifestId = 'legacy-manifest';
+    const activePluginId = 'active-plugin';
+
+    for (const target of [
+      path.join(cacheDir, retiredPackageId),
+      path.join(runtimeDir, retiredPackageId),
+      path.join(runtimeDir, retiredManifestId),
+      path.join(cacheDir, activePluginId),
+      path.join(runtimeDir, activePluginId),
+    ]) {
+      fs.mkdirSync(target, { recursive: true });
+    }
+
+    pruneRetiredPlugins({
+      retiredPlugins: [{
+        packageId: retiredPackageId,
+        pluginIds: [retiredManifestId],
+      }],
+      pluginCacheBase: cacheDir,
+      runtimeExtensionsDir: runtimeDir,
+      logger: () => undefined,
+    });
+
+    expect(fs.existsSync(path.join(cacheDir, retiredPackageId))).toBe(false);
+    expect(fs.existsSync(path.join(runtimeDir, retiredPackageId))).toBe(false);
+    expect(fs.existsSync(path.join(runtimeDir, retiredManifestId))).toBe(false);
+    expect(fs.existsSync(path.join(cacheDir, activePluginId))).toBe(true);
+    expect(fs.existsSync(path.join(runtimeDir, activePluginId))).toBe(true);
+
+    fs.rmSync(tempDir, { recursive: true, force: true });
   });
 });

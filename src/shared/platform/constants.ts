@@ -148,6 +148,21 @@ export type ChannelName =
   | (typeof DEFINITIONS)[number]['channel']
   | (typeof DEFINITIONS)[number]['channelAliases'][number];
 
+/**
+ * Channels kept in the registry for persisted-data compatibility but no longer
+ * offered or activated by this product fork.
+ */
+export const RetiredIMPlatform = {
+  Nim: 'nim',
+  NeteaseBee: 'netease-bee',
+  Popo: 'popo',
+  Email: 'email',
+} as const satisfies Record<string, Platform>;
+
+const RETIRED_IM_PLATFORMS: ReadonlySet<string> = new Set(
+  Object.values(RetiredIMPlatform),
+);
+
 // ═══════════════════════════════════════════════════════
 // 4. Platform Definition Interface (public)
 // ═══════════════════════════════════════════════════════
@@ -214,9 +229,26 @@ class PlatformRegistryImpl {
     return this._platforms;
   }
 
+  /** Product-configurable platform ids. Retired ids remain available for legacy data lookups. */
+  get configurablePlatforms(): readonly Platform[] {
+    return this._platforms.filter(platform => !this.isRetired(platform));
+  }
+
   /** Platforms filtered by region, preserving definition order. */
   platformsByRegion(region: 'china' | 'global'): readonly Platform[] {
     return this.defs.filter(d => d.region === region).map(d => d.id);
+  }
+
+  /** Product-configurable platforms filtered by region. */
+  configurablePlatformsByRegion(region: 'china' | 'global'): readonly Platform[] {
+    return this.defs
+      .filter(d => d.region === region && !this.isRetired(d.id))
+      .map(d => d.id);
+  }
+
+  /** Check whether a legacy platform has been retired from product configuration. */
+  isRetired(platform: string): boolean {
+    return RETIRED_IM_PLATFORMS.has(platform);
   }
 
   // ── Single Platform Queries ──
@@ -258,6 +290,13 @@ class PlatformRegistryImpl {
   /** Channel options for scheduled task delivery target dropdown. */
   channelOptions(): readonly { value: ChannelName; label: string }[] {
     return this.defs.map(d => ({ value: d.channel, label: d.label }));
+  }
+
+  /** Channel options that can still be configured by users. */
+  configurableChannelOptions(): readonly { value: ChannelName; label: string }[] {
+    return this.defs
+      .filter(d => !this.isRetired(d.id))
+      .map(d => ({ value: d.channel, label: d.label }));
   }
 }
 

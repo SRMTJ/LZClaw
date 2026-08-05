@@ -58,7 +58,7 @@ export function listScheduledTaskChannels(): Array<{
   const manager = deps?.getIMGatewayManager();
   const config = manager?.getConfig();
   if (!config) {
-    return [...PlatformRegistry.channelOptions()];
+    return [...PlatformRegistry.configurableChannelOptions()];
   }
 
   const configRecord = config as unknown as Record<string, unknown>;
@@ -104,7 +104,7 @@ export function listScheduledTaskChannels(): Array<{
     filterAccountId?: string;
   }> = [];
 
-  for (const option of PlatformRegistry.channelOptions()) {
+  for (const option of PlatformRegistry.configurableChannelOptions()) {
     const platform = PlatformRegistry.platformOfChannel(option.value);
     if (platform === undefined || !enabledPlatforms.has(platform)) continue;
 

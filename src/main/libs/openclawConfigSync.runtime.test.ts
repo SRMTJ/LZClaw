@@ -2427,7 +2427,7 @@ describe('OpenClawConfigSync runtime config output', () => {
     expect(config.plugins.allow).toContain('discord');
   });
 
-  test('writes plugin entries using manifest ids and removes stale package ids', async () => {
+  test('removes retired IM plugins and channels from existing runtime config', async () => {
     const { OpenClawConfigSync } = await import('./openclawConfigSync');
 
     fs.writeFileSync(configPath, JSON.stringify({
@@ -2435,7 +2435,23 @@ describe('OpenClawConfigSync runtime config output', () => {
         entries: {
           'clawemail-email': { enabled: true },
           'openclaw-nim-channel': { enabled: true },
+          email: { enabled: true },
+          'nimsuite-openclaw-nim-channel': { enabled: true },
+          'openclaw-netease-bee': { enabled: true },
+          'moltbot-popo': { enabled: true },
         },
+        allow: [
+          'email',
+          'nimsuite-openclaw-nim-channel',
+          'openclaw-netease-bee',
+          'moltbot-popo',
+        ],
+      },
+      channels: {
+        email: { enabled: true },
+        nim: { accounts: {} },
+        'netease-bee': { enabled: true },
+        'moltbot-popo': { enabled: true, accounts: {} },
       },
     }, null, 2));
 
@@ -2466,7 +2482,13 @@ describe('OpenClawConfigSync runtime config output', () => {
       getQQInstances: () => [],
       getWecomConfig: () => null,
       getWecomInstances: () => [],
-      getPopoInstances: () => [],
+      getPopoInstances: () => [{
+        instanceId: 'popo-work',
+        instanceName: 'POPO Work',
+        enabled: true,
+        appKey: 'popo-key',
+        appSecret: 'popo-secret',
+      }],
       getEmailOpenClawConfig: () => ({
         instances: [{
           instanceId: 'email-work',
@@ -2486,7 +2508,11 @@ describe('OpenClawConfigSync runtime config output', () => {
         account: 'nim-account',
         token: 'nim-token',
       }],
-      getNeteaseBeeChanConfig: () => null,
+      getNeteaseBeeChanConfig: () => ({
+        enabled: true,
+        clientId: 'bee-client',
+        secret: 'bee-secret',
+      }),
       getWeixinConfig: () => null,
       getIMSettings: () => null,
       getSkillsList: () => [],
@@ -2497,13 +2523,23 @@ describe('OpenClawConfigSync runtime config output', () => {
     expect(result.ok).toBe(true);
 
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(config.plugins.entries).not.toHaveProperty('clawemail-email');
-    expect(config.plugins.entries).not.toHaveProperty('openclaw-nim-channel');
-    expect(config.plugins.entries.email).toEqual({ enabled: true });
-    expect(config.plugins.entries['nimsuite-openclaw-nim-channel']).toEqual({ enabled: true });
+    for (const pluginId of [
+      'clawemail-email',
+      'openclaw-nim-channel',
+      'email',
+      'nimsuite-openclaw-nim-channel',
+      'openclaw-netease-bee',
+      'moltbot-popo',
+    ]) {
+      expect(config.plugins.entries).not.toHaveProperty(pluginId);
+      expect(config.plugins.allow).not.toContain(pluginId);
+    }
+    for (const channel of ['email', 'nim', 'netease-bee', 'moltbot-popo']) {
+      expect(config.channels).not.toHaveProperty(channel);
+    }
   });
 
-  test('writes NIM env vars with the same indexes as enabled channel accounts', async () => {
+  test('does not sync retired NIM channel config or secret env vars', async () => {
     const sync = await createSync({
       getNimInstances: () => [
         {
@@ -2535,17 +2571,11 @@ describe('OpenClawConfigSync runtime config output', () => {
     expect(result.ok).toBe(true);
 
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(config.channels.nim.accounts).not.toHaveProperty('nim-disa');
-    expect(config.channels.nim.accounts['nim-pack'].nimToken).toBe(
-      'packed-app|packed-account|packed-token',
-    );
-    expect(config.channels.nim.accounts['nim-work'].nimToken).toBe(
-      'work-app|work-account|${LOBSTER_NIM_TOKEN_1}',
-    );
+    expect(config.channels).not.toHaveProperty('nim');
 
     const env = sync.collectSecretEnvVars();
     expect(env).not.toHaveProperty('LOBSTER_NIM_TOKEN');
-    expect(env.LOBSTER_NIM_TOKEN_1).toBe('work-token');
+    expect(env).not.toHaveProperty('LOBSTER_NIM_TOKEN_1');
   });
 
   test('writes weixin channel config using dmPolicy and allowFrom instead of unsupported accountId', async () => {

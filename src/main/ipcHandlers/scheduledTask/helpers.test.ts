@@ -3,11 +3,27 @@ import { describe, expect, test } from 'vitest';
 import {
   dedupeConversationMappings,
   filterConversationMappingsForSelectedAccount,
+  initScheduledTaskHelpers,
+  listScheduledTaskChannels,
   resolveConversationAgentIdFromMappings,
   resolveGroupDeliveryTargetFromSessions,
   resolveImDeliveryHintsFromSessions,
   resolveWecomGroupDeliveryTargetFromSessions,
 } from './helpers';
+
+describe('listScheduledTaskChannels', () => {
+  test('does not offer retired IM channels when gateway config is unavailable', () => {
+    initScheduledTaskHelpers({ getIMGatewayManager: () => null });
+
+    const channels = listScheduledTaskChannels().map(channel => channel.value);
+    expect(channels).not.toEqual(expect.arrayContaining([
+      'nim',
+      'netease-bee',
+      'moltbot-popo',
+      'email',
+    ]));
+  });
+});
 
 const TRUE_CASE_PEER = 'WxId_ZhangSan@im.wechat';
 const LOWER_PEER = TRUE_CASE_PEER.toLowerCase();
