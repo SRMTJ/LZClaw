@@ -20,7 +20,7 @@
 
 <p align="center">
   <strong>All-scenario office assistant Agent.</strong><br/>
-  The first open-source desktop-grade Agent among major Chinese tech companies, built by NetEase Youdao.
+  The first open-source desktop-grade Agent among major Chinese tech companies, built by 海豚买买.
 </p>
 
 <p align="center">
@@ -244,4 +244,4 @@ Please use the repository issue templates for bugs and feature requests. For pul
 
 [MIT License](LICENSE)
 
-Built and maintained by [NetEase Youdao](https://www.youdao.com/).
+Built and maintained by 海豚买买.

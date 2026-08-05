@@ -20,7 +20,7 @@
 
 <p align="center">
   <strong>全场景办公助手 Agent。</strong><br/>
-  国内大厂首个开源桌面级 Agent，网易有道出品。
+  国内大厂首个开源桌面级 Agent，海豚买买出品。
 </p>
 
 <p align="center">
@@ -245,4 +245,4 @@ Bug 和功能建议请使用仓库 issue 模板。提交 PR 时请包含简要�
 
 [MIT License](LICENSE)
 
-由[网易有道](https://www.youdao.com/)开发维护。
+由海豚买买开发维护。
