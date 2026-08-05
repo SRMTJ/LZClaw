@@ -955,11 +955,6 @@ interface ProvidersImportPayload {
   providers?: Record<string, ProvidersImportEntry>;
 }
 
-const ABOUT_CONTACT_EMAIL = 'lobsterai.project@rd.netease.com';
-const ABOUT_USER_MANUAL_URL = 'https://lobsterai.youdao.com/#/docs/lobsterai_user_manual';
-const ABOUT_USER_COMMUNITY_URL = 'https://lobsterai.youdao.com/#/about';
-const ABOUT_SERVICE_TERMS_URL = 'https://c.youdao.com/dict/hardware/lobsterai/lobsterai_service.html';
-
 // MiniMax Portal OAuth constants
 const MINIMAX_OAUTH_CLIENT_ID = '78257093-7e40-4613-99e0-527b14b39113';
 const MINIMAX_OAUTH_SCOPE = 'group_id profile model.completion';
@@ -1503,7 +1498,6 @@ const Settings: React.FC<SettingsProps> = ({
   // 内容区下方仍有未滚出的内容时，在底部按钮区上方显示渐隐遮罩
   const [footerFadeVisible, setFooterFadeVisible] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
-  const emailCopiedTimerRef = useRef<number | null>(null);
   const openClawGatewayCopiedTimerRef = useRef<number | null>(null);
   const updateCheckTimerRef = useRef<number | null>(null);
 
@@ -1532,7 +1526,6 @@ const Settings: React.FC<SettingsProps> = ({
 
   // About tab
   const [appVersion, setAppVersion] = useState('');
-  const [emailCopied, setEmailCopied] = useState(false);
   const [isExportingLogs, setIsExportingLogs] = useState(false);
   const [testMode, setTestMode] = useState(false);
   const [logoClickCount, setLogoClickCount] = useState(0);
@@ -1583,21 +1576,6 @@ const Settings: React.FC<SettingsProps> = ({
       mounted = false;
       unsubscribe();
     };
-  }, []);
-
-  const handleCopyContactEmail = useCallback(async () => {
-    const copied = await copyTextToClipboard(ABOUT_CONTACT_EMAIL);
-    reportAboutAction('copy_contact_email', copied ? 'success' : 'failed');
-    if (copied) {
-      setEmailCopied(true);
-      if (emailCopiedTimerRef.current != null) {
-        window.clearTimeout(emailCopiedTimerRef.current);
-      }
-      emailCopiedTimerRef.current = window.setTimeout(() => {
-        setEmailCopied(false);
-        emailCopiedTimerRef.current = null;
-      }, 1200);
-    }
   }, []);
 
   const authUser = useSelector((state: RootState) => state.auth.user);
@@ -1666,21 +1644,6 @@ const Settings: React.FC<SettingsProps> = ({
     if (updateCheckStatus === 'error') return i18nService.t('updateCheckFailed');
     return i18nService.t('checkForUpdate');
   }, [appUpdateState?.progress?.percent, updateCheckStatus]);
-
-  const handleOpenUserManual = useCallback(() => {
-    reportAboutAction('open_user_manual', 'success');
-    void window.electron.shell.openExternal(ABOUT_USER_MANUAL_URL);
-  }, []);
-
-  const handleOpenUserCommunity = useCallback(() => {
-    reportAboutAction('open_user_community', 'success');
-    void window.electron.shell.openExternal(ABOUT_USER_COMMUNITY_URL);
-  }, []);
-
-  const handleOpenServiceTerms = useCallback(() => {
-    reportAboutAction('open_service_terms', 'success');
-    void window.electron.shell.openExternal(ABOUT_SERVICE_TERMS_URL);
-  }, []);
 
   const handleExportLogs = useCallback(async () => {
     if (isExportingLogs) {
@@ -1897,9 +1860,6 @@ const Settings: React.FC<SettingsProps> = ({
   }, [isCleaningTempStorage, refreshTempStorageUsage, tempCleanSelectedDirs]);
 
   useEffect(() => () => {
-    if (emailCopiedTimerRef.current != null) {
-      window.clearTimeout(emailCopiedTimerRef.current);
-    }
     if (openClawGatewayCopiedTimerRef.current != null) {
       window.clearTimeout(openClawGatewayCopiedTimerRef.current);
     }
@@ -5751,7 +5711,7 @@ const Settings: React.FC<SettingsProps> = ({
 
             {/* Info Card */}
             <div className="w-full mt-8 rounded-xl border border-border overflow-hidden">
-              <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 border-b border-border">
+              <div className={`flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3${testModeUnlocked ? ' border-b border-border' : ''}`}>
                 <span className="shrink-0 text-sm text-foreground">{i18nService.t('aboutVersion')}</span>
                 <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
                   <span className="text-sm text-secondary">{appVersion}</span>
@@ -5774,53 +5734,6 @@ const Settings: React.FC<SettingsProps> = ({
                   </span>
                   )}
                 </div>
-              </div>
-              <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 border-b border-border">
-                <span className="shrink-0 text-sm text-foreground">{i18nService.t('aboutContactEmail')}</span>
-                <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void handleCopyContactEmail();
-                    }}
-                    title={i18nService.t('copyToClipboard')}
-                    className="min-w-0 break-all text-right text-sm text-secondary bg-transparent border-none appearance-none p-0 m-0 cursor-pointer focus:outline-none"
-                  >
-                    {ABOUT_CONTACT_EMAIL}
-                  </button>
-                  {emailCopied && (
-                    <span className="text-[11px] leading-4 text-emerald-600 dark:text-emerald-400">
-                      {i18nService.t('copied')}
-                    </span>
-                  )}
-                </div>
-              </div>
-              <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 border-b border-border">
-                <span className="shrink-0 text-sm text-foreground">{i18nService.t('aboutUserCommunity')}</span>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleOpenUserCommunity();
-                  }}
-                  className="min-w-0 break-all text-right text-sm text-secondary hover:text-primary dark:hover:text-primary bg-transparent border-none appearance-none px-1.5 py-0.5 -mx-1.5 -my-0.5 rounded-md cursor-pointer focus:outline-none hover:bg-surface-raised transition-colors"
-                >
-                  {ABOUT_USER_COMMUNITY_URL}
-                </button>
-              </div>
-              <div className={`flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3${testModeUnlocked ? ' border-b border-border' : ''}`}>
-                <span className="shrink-0 text-sm text-foreground">{i18nService.t('aboutUserManual')}</span>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleOpenUserManual();
-                  }}
-                  className="min-w-0 break-all text-right text-sm text-secondary hover:text-primary dark:hover:text-primary bg-transparent border-none appearance-none px-1.5 py-0.5 -mx-1.5 -my-0.5 rounded-md cursor-pointer focus:outline-none hover:bg-surface-raised transition-colors"
-                >
-                  {ABOUT_USER_MANUAL_URL}
-                </button>
               </div>
               {testModeUnlocked && (
                 <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
@@ -5851,17 +5764,6 @@ const Settings: React.FC<SettingsProps> = ({
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    handleOpenServiceTerms();
-                  }}
-                  className="bg-transparent border-none appearance-none px-1.5 py-0.5 -mx-1.5 -my-0.5 rounded-md cursor-pointer hover:text-primary dark:hover:text-primary transition-colors"
-                >
-                  {i18nService.t('aboutServiceTerms')}
-                </button>
-                <span className="text-xs opacity-40">|</span>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
                     void handleExportLogs();
                   }}
                   disabled={isExportingLogs}
@@ -5870,13 +5772,6 @@ const Settings: React.FC<SettingsProps> = ({
                   {isExportingLogs ? i18nService.t('aboutExportingLogs') : i18nService.t('aboutExportLogs')}
                 </button>
               </div>
-
-              <p className="mt-5 text-center text-xs text-secondary">
-                {i18nService.t('copyrightHolder')}
-              </p>
-              <p className="mt-1 text-center text-xs text-secondary">
-                Copyright &copy; {new Date().getFullYear()} NetEase Youdao. All Rights Reserved.
-              </p>
             </div>
           </div>
         );
