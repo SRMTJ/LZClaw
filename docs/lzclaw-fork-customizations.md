@@ -80,6 +80,13 @@ git status --short --branch
 git fetch origin
 git rev-list --left-right --count HEAD...origin/main
 git log --oneline HEAD..origin/main
+git diff --name-status HEAD..origin/main -- `
+  src/main/main.ts `
+  src/main/libs/authInAppLoginView.ts `
+  src/main/libs/businessCenterInAppView.ts `
+  src/renderer/services/auth.ts `
+  src/renderer/App.tsx `
+  src/shared/auth/constants.ts
 ```
 
 工作区不干净时，先确认修改归属。需要临时保存时使用带说明的 stash，并包含
@@ -99,12 +106,20 @@ git config rerere.autoupdate true
 ### 2. 执行合并
 
 ```powershell
-git merge --no-edit origin/main
+git merge --no-commit --no-ff origin/main
 git diff --name-only --diff-filter=U
 ```
 
 先阅读冲突文件的 base、ours 和 theirs，再按照“冲突处理矩阵”合并行为。
 不要通过移动本地 `main`、强制推送或重写 `dev-htmm-v1` 历史完成同步。
+如果上一步的热点检查有输出，本次合并按“认证敏感合并”处理，必须同时保留：
+
+1. 内嵌登录完成后关闭网页登录视图并进入主任务界面，不直接暴露 `/users`。
+2. 登录服务误走 Web 流程进入同源 `/users` 时，可以从 HttpOnly Web Session
+   恢复桌面原生令牌；恢复失败时回到桌面登录页。
+3. `/users` 作为业务中心页面，只能通过业务中心入口正常显示。
+
+禁止删除、跳过或弱化对应测试来让合并通过。测试文件缺失视为合并阻塞。
 
 ### 3. 合并验证
 
@@ -114,9 +129,14 @@ git diff --name-only --diff-filter=U
 npx eslint --ext ts,tsx --report-unused-disable-directives --max-warnings 0 <本次冲突文件>
 npx tsc --project electron-tsconfig.json --noEmit
 npx tsc --noEmit
-npx vitest run src/main/libs/authLocalCallbackServer.test.ts src/main/libs/authCallbackRouter.test.ts src/main/libs/businessCenterInAppView.test.ts src/renderer/services/auth.test.ts
+npx vitest run `
+  src/main/libs/authWebSessionRecovery.test.ts `
+  src/main/libs/authInAppLoginView.test.ts `
+  src/main/libs/authLocalCallbackServer.test.ts `
+  src/main/libs/authCallbackRouter.test.ts `
+  src/main/libs/businessCenterInAppView.test.ts `
+  src/renderer/services/auth.test.ts
 git diff --check
-git merge-base --is-ancestor origin/main HEAD
 git status --short --branch
 ```
 
@@ -139,6 +159,17 @@ npm run compile:electron
 8. 重启应用后，有效登录可恢复；退出状态不会恢复成已登录。
 9. `3100` 不可用时业务中心显示错误和重试状态。
 10. 登录页和业务中心的摄像头、麦克风、通知等网页权限请求默认被拒绝。
+
+以上自动检查和人工验收完成前，不创建合并提交。用户确认后执行：
+
+```powershell
+git commit --no-edit
+git merge-base --is-ancestor origin/main HEAD
+git status --short --branch
+```
+
+如果当前环境无法完成登录运行时验收，应保持合并未提交并报告缺失门禁，不能把
+“代码已无冲突”视为“合并已经完成”。
 
 ### 4. 合并后维护
 

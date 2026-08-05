@@ -524,6 +524,17 @@ the upstream baseline.
   LZClaw branding, onboarding, and product-specific login experiences.
 - Review authentication, tokens, cookies, permissions, preload exposure, and
   Electron security settings manually whenever either side changes them.
+- Before merging, inspect whether `origin/main` changes any authentication
+  hotspot: `src/main/main.ts`, `src/main/libs/authInAppLoginView.ts`,
+  `src/main/libs/businessCenterInAppView.ts`, `src/renderer/services/auth.ts`,
+  `src/renderer/App.tsx`, or `src/shared/auth/constants.ts`. If it does, treat
+  the merge as authentication-sensitive and apply the gate below.
+- Authentication-sensitive merges must preserve all three fork contracts:
+  embedded login closes into the main task UI instead of exposing `/users`;
+  same-origin `/users` fallback can recover native tokens from the HttpOnly
+  Web Session; and `/users` remains directly accessible only through Business
+  Center. Removing or weakening the corresponding tests is a blocking change,
+  not a conflict-resolution shortcut.
 - For a pushed long-lived branch, merge `origin/main` into `dev-htmm-v1`
   instead of rewriting shared history with rebase.
 - Do not push, open a PR, or create a commit until the user requests or confirms
@@ -536,7 +547,8 @@ git switch dev-htmm-v1
 git status --short --branch
 git fetch origin
 git rev-list --left-right --count HEAD...origin/main
-git merge --no-edit origin/main
+git diff --name-status HEAD..origin/main -- src/main/main.ts src/main/libs/authInAppLoginView.ts src/main/libs/businessCenterInAppView.ts src/renderer/services/auth.ts src/renderer/App.tsx src/shared/auth/constants.ts
+git merge --no-commit --no-ff origin/main
 ```
 
 After resolving an upstream merge, run the verification appropriate to the
@@ -546,12 +558,22 @@ changed areas. The default Electron/authentication gate is:
 npx eslint --ext ts,tsx --report-unused-disable-directives --max-warnings 0 <files>
 npm run compile:electron
 npx tsc --project tsconfig.json --noEmit
-npx vitest run src/main/libs/authLocalCallbackServer.test.ts src/main/libs/authCallbackRouter.test.ts
+npx vitest run \
+  src/main/libs/authWebSessionRecovery.test.ts \
+  src/main/libs/authInAppLoginView.test.ts \
+  src/main/libs/authLocalCallbackServer.test.ts \
+  src/main/libs/authCallbackRouter.test.ts \
+  src/main/libs/businessCenterInAppView.test.ts \
+  src/renderer/services/auth.test.ts
 git diff --check
 ```
 
-Do not create commits until the user has tested and confirmed, unless they
-explicitly asked you to commit.
+Do not create the merge commit until these checks pass and the user has tested
+and confirmed the authentication acceptance flow, unless they explicitly asked
+you to commit without manual validation. After approval, finish the pending
+merge with `git commit --no-edit`. If runtime validation is unavailable, leave
+the merge uncommitted and report the missing gate instead of treating the merge
+as complete.
 
 Commit messages must follow Conventional Commits and be written in English:
 
