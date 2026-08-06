@@ -7,9 +7,9 @@
 
 - 定制分支：`dev-htmm-v1`
 - 上游基线：`origin/main`
-- 最近同步的上游提交：`29f513b29ad94d7b10ec2520c7801af27dd7d2ce`
-- 最近合并提交：`3ab19172066e41f3793bb34db2fde9f2f74774bc`
-- 最近更新：2026-08-05
+- 最近同步的上游提交：`fb2963523a3fa7d913f5f5140f5d342b3694cfdb`
+- 最近合并提交：`5039f8f812f037a668253c2e4005fb9ea1daccc9`
+- 最近更新：2026-08-06
 - 合并策略：只把 `origin/main` 合并到 `dev-htmm-v1`，不修改或推送 `main`
 
 每次合并上游后都要更新以上两个提交号。功能实现可以随上游结构调整，
@@ -28,11 +28,12 @@
 | 应用品牌与兼容标识 | P0 | 用户可见产品名统一为“海豚买买AI工作台”，日志导出文件名使用该显示名称；继续使用 `lobsterai://`、`com.lobsterai.app`、`LobsterAI.exe`、`%APPDATA%/LobsterAI`、数据库文件名、provider ID、请求头和环境变量等旧标识，避免登录态、历史数据、升级、深链和服务端协议断裂 | `src/main/appConstants.ts`、`src/main/main.ts`、`src/renderer/constants/app.ts`、`electron-builder.json`、`src/main/i18n.ts`、`src/renderer/services/i18n.ts`、`scripts/nsis-installer.nsh` |
 | 登录门禁与欢迎页 | P0 | 用户未登录时显示欢迎/登录页并阻止使用主程序；已登录时不显示欢迎页；退出或会话失效后立即回到欢迎页 | `src/renderer/App.tsx`、`src/renderer/components/WelcomeDialog.tsx` |
 | 应用内嵌网页登录 | P0 | 登录在欢迎页内全区域显示，不打开额外 `BrowserWindow`；开发构建固定使用 `http://127.0.0.1:3103/login`，生产构建固定使用 `https://qiye.srmtj.com/login`；同时保留系统浏览器登录和回调能力 | `src/main/libs/authInAppLoginView.ts`、`src/main/libs/authLocalCallbackServer.ts`、`src/renderer/services/endpoints.ts`、`src/renderer/services/auth.ts`、`src/shared/auth/constants.ts` |
-| 登录完成后的落点 | P0 | 企业工作站登录成功后只接受固定的管理员/员工门户来源；系统浏览器和内嵌登录均通过严格回环回调、服务端绑定的 `state` 与短时单次授权码回到桌面，交换时在专用 Electron Session 中安装对应 Portal 的 HttpOnly Session，并通过同源 `/api/v1/me` 复验；复验成功后关闭登录视图、隐藏业务中心并进入“新建任务”，不继续显示企业门户；旧登录服务落到同源 `/users` 时仍可恢复原生令牌，任一复验失败都返回桌面登录页 | `src/main/libs/authInAppLoginView.ts`、`src/main/libs/enterpriseDesktopAuth.ts`、`src/main/libs/enterpriseWebSessionAuth.ts`、`src/main/libs/authWebSessionRecovery.ts`、`src/main/main.ts`、`src/renderer/services/auth.ts`、`src/renderer/App.tsx` |
+| 登录完成后的落点 | P0 | 企业工作站登录成功后只接受固定的管理员/员工门户来源；系统浏览器和内嵌登录均通过严格回环回调、服务端绑定的 `state`、S256 PKCE 与短时单次授权码回到桌面，交换时在专用 Electron Session 中安装对应 Portal 的 HttpOnly Session，并通过同源 `/api/v1/me` 复验；复验成功后关闭登录视图、隐藏业务中心并进入“新建任务”，不继续显示企业门户；旧登录服务落到同源 `/users` 时仍可恢复原生令牌，任一复验失败都返回桌面登录页 | `src/main/libs/authInAppLoginView.ts`、`src/main/libs/enterpriseDesktopAuth.ts`、`src/main/libs/enterpriseWebSessionAuth.ts`、`src/main/libs/authWebSessionRecovery.ts`、`src/main/main.ts`、`src/renderer/services/auth.ts`、`src/renderer/App.tsx` |
 | 退出登录 | P0 | 企业登录尽力携带最新 CSRF 调用同源退出接口，然后清除企业会话引用、原生令牌、用户、服务端模型元数据和专用 Web Session；立即回欢迎页；不因为退出登录而重启 OpenClaw 网关 | `src/main/libs/enterpriseWebSessionAuth.ts`、`src/main/main.ts`、`src/renderer/services/auth.ts` |
 | 持久化网页 Session | P0 | 登录页和业务中心共享 `persist:lzclaw-web`；应用重启后可以恢复有效登录状态；专用 Session 默认拒绝网页权限检查和请求；使用 `@fudanda/electron-persistent-view` 精确版本 `0.5.0` | `package.json`、`src/shared/auth/constants.ts`、`src/main/main.ts`、`src/main/libs/lzclawWebSessionSecurity.ts` |
 | 业务中心 | P0 | 侧边栏在 MCP 下方显示“业务中心”；开发构建固定加载 `http://127.0.0.1:3107`，生产构建固定加载 `https://qiye.srmtj.com`；切换菜单时只隐藏视图并保留滚动、表单和页面状态；只有持久化视图返回 `opened` 才向当前 IPC 调用报告打开成功 | `src/renderer/components/Sidebar.tsx`、`src/renderer/components/businessCenter/BusinessCenterView.tsx`、`src/main/libs/businessCenterInAppView.ts`、`src/shared/businessCenter/constants.ts` |
 | 原生视图覆盖保护 | P0 | 欢迎页、设置、更新、权限等覆盖层出现时隐藏业务中心原生视图；覆盖层关闭后恢复显示且不重载 | `src/renderer/App.tsx`、`src/renderer/components/businessCenter/BusinessCenterView.tsx` |
+| 版本更新分发 | P0 | 更新检查固定使用中台 `lzclaw` 应用：开发构建请求本地 `127.0.0.1:8080` 的 `test` 通道，生产构建请求 `https://zhongtai.srmtj.com` 的 `prod` 通道；自动与手动检查共享同一环境解析逻辑，不能由用户可修改的 testMode 让生产包回连本机 | `src/shared/appUpdate/endpoints.ts`、`src/main/libs/endpoints.ts`、`src/renderer/services/endpoints.ts` |
 | 业务网页会话失效 | P0 | 业务中心普通导航或 SPA 导航到 `/login` 时，隐藏业务视图、清除桌面登录状态并返回欢迎页 | `src/main/libs/businessCenterInAppView.ts`、`src/main/main.ts` |
 | 导航与 Electron 安全 | P0 | 保持 Node 主线程、Worker 和子框架集成关闭，启用 `contextIsolation`、`sandbox` 和 `webSecurity`，禁用不安全混合内容、WebView、实验特性和宿主 Blink 特性；同源业务导航留在应用内，外部 HTTP/HTTPS 使用系统浏览器，其他协议阻止 | `src/main/libs/authInAppLoginView.ts`、`src/main/libs/businessCenterInAppView.ts` |
 | IPC 契约集中管理 | P1 | 登录和业务中心 IPC 名称、请求类型、状态类型继续放在 `src/shared`，主进程、preload 和 renderer 不各自写字符串 | `src/shared/auth/constants.ts`、`src/shared/businessCenter/constants.ts`、`src/main/preload.ts`、`src/renderer/types/electron.d.ts` |
@@ -45,6 +46,15 @@
 [`architecture-persistent-web-views.md`](./architecture-persistent-web-views.md)。
 
 ## 外部服务契约
+
+版本更新由 `D:\AI-AI\AIZhongtai\grit-platform-admin` 提供：
+
+- 开发自动检查：`http://127.0.0.1:8080/api/client-updates/lzclaw/test/update`
+- 开发手动检查：`http://127.0.0.1:8080/api/client-updates/lzclaw/test/update-manual`
+- 生产自动检查：`https://zhongtai.srmtj.com/api/client-updates/lzclaw/prod/update`
+- 生产手动检查：`https://zhongtai.srmtj.com/api/client-updates/lzclaw/prod/update-manual`
+- 开发/生产选择以 Electron 是否为打包构建和 renderer 构建环境为准；应用设置中的
+  testMode 不改变更新服务环境。
 
 登录页面由 `D:\AI-AI\AIZhongtai\grit-enterprise-admin\apps\workstation-web`
 提供：
@@ -59,8 +69,10 @@
   `http://127.0.0.1:3103/auth/workstation-desktop-exchange`，生产构建
   `https://qiye.srmtj.com/auth/workstation-desktop-exchange`；授权码短时单次有效，
   企业桌面码使用 `ent_` 协议前缀，交换响应只能安装服务端绑定的管理员或员工
-  Portal Session；企业桌面码只接受当前回环服务器完成 `state` 校验后的回调，
-  必须拒绝从旧 `lobsterai://` 深链注入；无此前缀的旧授权码继续交给原有交换端点
+  Portal Session；登录请求只携带 S256 `code_challenge`，`codeVerifier` 只保存在 Electron
+  主进程并在授权码交换请求体中一次性使用，不得进入 renderer、回调 URL、日志或本地记录；
+  企业桌面码只接受当前回环服务器完成 `state` 校验后的回调，必须拒绝从旧
+  `lobsterai://` 深链注入；无此前缀的旧授权码继续交给原有交换端点
 - 内嵌登录导航仅额外放行当前登录操作创建的精确
   `http://127.0.0.1:<随机端口>/auth/callback` 目标；其他回环端口或路径仍须拦截
 
