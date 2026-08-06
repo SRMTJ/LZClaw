@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 
 import {
   appendCallbackReturnTo,
@@ -56,6 +56,18 @@ describe('appendCallbackReturnTo', () => {
 });
 
 describe('startAuthLocalCallback', () => {
+  test('keeps the default callback alive for a fifteen-minute interactive login', async () => {
+    const timeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+    const callback = await startAuthLocalCallback({ onCode: () => {} });
+
+    try {
+      expect(timeoutSpy).toHaveBeenCalledWith(expect.any(Function), 15 * 60 * 1000);
+    } finally {
+      await callback.close();
+      timeoutSpy.mockRestore();
+    }
+  });
+
   test('starts on 127.0.0.1 with a dynamic callback port', async () => {
     const callback = await startAuthLocalCallback({ onCode: () => {} });
 
