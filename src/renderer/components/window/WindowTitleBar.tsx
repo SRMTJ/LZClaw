@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 
+import { i18nService } from '../../services/i18n';
+
 interface WindowTitleBarProps {
   isOverlayActive?: boolean;
   inline?: boolean;
@@ -26,7 +28,7 @@ const WindowControlAction = {
 } as const;
 type WindowControlAction = typeof WindowControlAction[keyof typeof WindowControlAction];
 
-const WINDOW_CAPTION_BUTTON_CLASS_NAME = 'non-draggable inline-flex h-full w-[46px] shrink-0 items-center justify-center text-foreground/90 outline-none transition-colors duration-100 hover:bg-surface focus-visible:bg-surface active:bg-surface/80';
+const WINDOW_CAPTION_BUTTON_CLASS_NAME = 'non-draggable inline-flex h-full w-[46px] shrink-0 items-center justify-center text-foreground/80 outline-none transition-colors duration-100 hover:bg-black/[0.10] hover:text-foreground focus-visible:bg-black/[0.10] focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/45 active:bg-black/[0.16] dark:hover:bg-white/[0.12] dark:focus-visible:bg-white/[0.12] dark:active:bg-white/[0.18]';
 const WINDOW_CLOSE_CAPTION_BUTTON_CLASS_NAME = 'non-draggable inline-flex h-full w-[46px] shrink-0 items-center justify-center text-foreground/90 outline-none transition-colors duration-100 hover:bg-[#c42b1c] hover:text-white focus-visible:bg-[#c42b1c] focus-visible:text-white active:bg-[#b1261a] active:text-white';
 
 const reportWindowControlAction = (action: WindowControlAction): void => {
@@ -103,6 +105,12 @@ const WindowTitleBar: React.FC<WindowTitleBarProps> = ({
     return null;
   }
 
+  const minimizeLabel = i18nService.t('windowMinimize');
+  const maximizeLabel = i18nService.t('windowMaximize');
+  const restoreLabel = i18nService.t('windowRestore');
+  const toggleMaximizeLabel = state.isMaximized ? restoreLabel : maximizeLabel;
+  const closeLabel = i18nService.t('close');
+
   const containerClassName = inline
     ? `window-controls-floating non-draggable flex h-full items-stretch transition-opacity ${!state.isFocused ? 'opacity-70' : 'opacity-100'} ${className}`.trim()
     : `window-controls-floating non-draggable absolute top-0 right-0 z-[55] flex h-9 items-stretch transition-opacity ${
@@ -123,8 +131,8 @@ const WindowTitleBar: React.FC<WindowTitleBarProps> = ({
         type="button"
         onClick={handleMinimize}
         className={WINDOW_CAPTION_BUTTON_CLASS_NAME}
-        aria-label="Minimize"
-        title="Minimize"
+        aria-label={minimizeLabel}
+        title={minimizeLabel}
       >
         <svg aria-hidden="true" viewBox="0 0 12 12" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round">
           <path d="M2 6.5h8" />
@@ -134,8 +142,8 @@ const WindowTitleBar: React.FC<WindowTitleBarProps> = ({
         type="button"
         onClick={handleToggleMaximize}
         className={WINDOW_CAPTION_BUTTON_CLASS_NAME}
-        aria-label={state.isMaximized ? 'Restore' : 'Maximize'}
-        title={state.isMaximized ? 'Restore' : 'Maximize'}
+        aria-label={toggleMaximizeLabel}
+        title={toggleMaximizeLabel}
       >
         {state.isMaximized ? (
           <svg aria-hidden="true" viewBox="0 0 12 12" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1" strokeLinejoin="round">
@@ -152,8 +160,8 @@ const WindowTitleBar: React.FC<WindowTitleBarProps> = ({
         type="button"
         onClick={handleClose}
         className={WINDOW_CLOSE_CAPTION_BUTTON_CLASS_NAME}
-        aria-label="Close"
-        title="Close"
+        aria-label={closeLabel}
+        title={closeLabel}
       >
         <svg aria-hidden="true" viewBox="0 0 12 12" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round">
           <path d="M2 2l8 8" />
