@@ -43,26 +43,50 @@ describe('AuthCallbackRouter', () => {
     expect(router.markListenerReadyAndConsumePending()).toBeNull();
   });
 
-  test('direct auth code delivery uses the same ready listener path', () => {
+  test('state-verified loopback auth code delivery uses the ready listener path', () => {
     const { target, sent } = createTarget();
     const router = new AuthCallbackRouter({ getTarget: () => target });
 
     router.markListenerReadyAndConsumePending();
-    router.handleAuthCode('local-code');
+    router.handleVerifiedLoopbackAuthCode('local-code');
 
     expect(sent).toEqual([
       { channel: AuthIpcChannel.Callback, payload: { code: 'local-code' } },
     ]);
   });
 
-  test('direct auth code delivery buffers before renderer listener is ready', () => {
+  test('state-verified loopback auth code buffers before renderer listener is ready', () => {
     const { target, sent } = createTarget();
     const router = new AuthCallbackRouter({ getTarget: () => target });
 
-    router.handleAuthCode('local-pending-code');
+    router.handleVerifiedLoopbackAuthCode('local-pending-code');
 
     expect(sent).toEqual([]);
     expect(router.markListenerReadyAndConsumePending()).toBe('local-pending-code');
+  });
+
+  test('accepts enterprise codes only from the state-verified loopback callback', () => {
+    const { target, sent } = createTarget();
+    const router = new AuthCallbackRouter({ getTarget: () => target });
+    const enterpriseCode = `ent_${'a'.repeat(43)}`;
+
+    router.markListenerReadyAndConsumePending();
+    router.handleVerifiedLoopbackAuthCode(enterpriseCode);
+
+    expect(sent).toEqual([
+      { channel: AuthIpcChannel.Callback, payload: { code: enterpriseCode } },
+    ]);
+  });
+
+  test('rejects enterprise codes injected through the legacy deep-link protocol', () => {
+    const { target, sent } = createTarget();
+    const router = new AuthCallbackRouter({ getTarget: () => target });
+
+    router.markListenerReadyAndConsumePending();
+    router.handleDeepLink(`lobsterai://auth/callback?code=ent_${'a'.repeat(43)}`);
+
+    expect(sent).toEqual([]);
+    expect(router.markListenerReadyAndConsumePending()).toBeNull();
   });
 
   test('keeps renderer listener ready for child frame artifact loads', () => {

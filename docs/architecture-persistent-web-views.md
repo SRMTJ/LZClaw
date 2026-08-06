@@ -16,8 +16,16 @@ state decisions.
 
 ## Session And Authentication
 
-- Desktop login still uses the local callback server and exchanges a one-time
-  authorization code for native access and refresh tokens.
+- Desktop login uses the local callback server. Enterprise login binds the
+  validated loopback URI and `state` to the verified identity and tenant
+  selection, creates the target Portal Session, and only then issues a short
+  lived single-use authorization code. LZClaw exchanges that code through the
+  unified login origin inside `persist:lzclaw-web`, installs the server-selected
+  Portal HttpOnly Session cookie, and revalidates `/api/v1/me` before entering
+  the workspace. Enterprise authorization codes are accepted only from the
+  active, state-validated loopback callback and are rejected on the legacy
+  `lobsterai://` deep-link route. The legacy login service can still exchange
+  its own codes for native access and refresh tokens.
 - If the login service completes its browser-mode flow and navigates the
   embedded view to `/users` without invoking the desktop callback, the main
   process reads the HttpOnly web-session cookie and exchanges it through the
@@ -28,10 +36,12 @@ state decisions.
   `lzclaw_web_session` cookie in the dedicated web Session.
 - The cookie is restored from the native token store during startup before
   either web view can open.
-- Browser login remains independent. The browser receives its own cookie from
-  `lzclaw-login-v1`; Electron does not copy cookies into an external browser.
+- System-browser login remains independent while credentials are entered. The
+  local callback carries only the short-lived code; the subsequent main-process
+  exchange creates the Electron-side Portal Session without copying browser
+  cookies.
 - Native logout closes both views and clears the entire dedicated Session.
-- A Business Center navigation to `http://localhost:3100/login` means its web
+- A Business Center navigation to the configured enterprise Portal `/login` means its web
   session was revoked or expired. Main clears native auth and notifies the
   renderer, which returns to the blocking welcome page.
 - Logout and token refresh do not restart the OpenClaw gateway.
@@ -61,8 +71,9 @@ renderer content.
   subframes; enables sandboxing, context isolation, and web security; and
   disables insecure mixed content, WebView tags, experimental features, and
   host-provided Blink feature flags.
-- Business Center navigation stays in-app only for
-  `http://localhost:3100`.
+- Business Center navigation stays in-app only for the current build's fixed
+  enterprise Portal origins (`127.0.0.1:3107`/`:3108` in development and the
+  path-isolated `qiye.srmtj.com` Portal routes in production).
 - External HTTP and HTTPS links open in the system browser.
 - Unsupported protocols and popup windows are blocked.
 - The dedicated `persist:lzclaw-web` Session denies permission checks and

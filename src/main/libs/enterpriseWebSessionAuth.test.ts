@@ -5,6 +5,7 @@ import {
   isEnterpriseWebSessionReference,
   logoutEnterpriseWebSession,
   recoverEnterpriseWebSession,
+  resolveEnterpriseWebSessionReference,
   resolveEnterpriseWebSessionTarget,
   validateEnterpriseWebSession,
 } from './enterpriseWebSessionAuth';
@@ -37,6 +38,19 @@ const activeAdminContext = {
 };
 
 describe('resolveEnterpriseWebSessionTarget', () => {
+  test('resolves only a server-selected entry type for the active environment', () => {
+    expect(resolveEnterpriseWebSessionReference('employee', true)).toEqual({
+      entryType: 'employee',
+      origin: 'http://127.0.0.1:3108',
+      profileUrl: 'http://127.0.0.1:3108/api/v1/me',
+      logoutUrl: 'http://127.0.0.1:3108/auth/logout',
+    });
+    expect(resolveEnterpriseWebSessionReference('admin', false)).toMatchObject({
+      entryType: 'admin',
+      profileUrl: 'https://qiye.srmtj.com/admin/api/v1/me',
+    });
+  });
+
   test('recognizes authenticated development and production portal routes', () => {
     expect(resolveEnterpriseWebSessionTarget('http://127.0.0.1:3107/', true)).toMatchObject({
       entryType: 'admin',

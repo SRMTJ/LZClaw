@@ -1,4 +1,7 @@
-import { AuthIpcChannel } from '../../shared/auth/constants';
+import {
+  AuthIpcChannel,
+  EnterpriseDesktopAuthorizationCodePrefix,
+} from '../../shared/auth/constants';
 
 export interface AuthCallbackTarget {
   isDestroyed(): boolean;
@@ -28,6 +31,7 @@ export class AuthCallbackRouter {
 
       const code = parsed.searchParams.get('code');
       if (!code) return;
+      if (code.startsWith(EnterpriseDesktopAuthorizationCodePrefix)) return;
 
       this.deliverOrBuffer(code);
     } catch (error) {
@@ -35,7 +39,7 @@ export class AuthCallbackRouter {
     }
   }
 
-  handleAuthCode(code: string): void {
+  handleVerifiedLoopbackAuthCode(code: string): void {
     if (!code) return;
     this.deliverOrBuffer(code);
   }

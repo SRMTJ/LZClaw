@@ -140,6 +140,17 @@ const publicReference = (target: EnterpriseWebSessionTarget): EnterpriseWebSessi
   logoutUrl: target.logoutUrl,
 });
 
+export const resolveEnterpriseWebSessionReference = (
+  entryType: EnterpriseWebSessionEntryType,
+  isDevelopment: boolean,
+): EnterpriseWebSessionReference | null => {
+  const target = ENTERPRISE_WEB_SESSION_TARGETS.find(candidate => (
+    candidate.entryType === entryType
+    && candidate.isDevelopment === isDevelopment
+  ));
+  return target ? publicReference(target) : null;
+};
+
 const matchesTargetReference = (
   value: EnterpriseWebSessionReference,
   target: EnterpriseWebSessionTarget,

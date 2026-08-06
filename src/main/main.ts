@@ -312,12 +312,18 @@ import {
   syncEnterpriseConfig,
 } from './libs/enterpriseConfigSync';
 import {
+  EnterpriseDesktopExchangeStatus,
+  exchangeEnterpriseDesktopAuthorization,
+  shouldUseLegacyDesktopAuthorizationExchange,
+} from './libs/enterpriseDesktopAuth';
+import {
   type EnterpriseWebSessionReference,
   EnterpriseWebSessionValidationStatus,
   getEnterpriseWebSessionOrigins,
   isEnterpriseWebSessionReference,
   logoutEnterpriseWebSession,
   recoverEnterpriseWebSession,
+  resolveEnterpriseWebSessionReference,
   resolveEnterpriseWebSessionTarget,
   validateEnterpriseWebSession,
 } from './libs/enterpriseWebSessionAuth';
@@ -4024,7 +4030,7 @@ if (!gotTheLock) {
       session: lzclawWebSession,
       isDev,
       onAuthCode: code => {
-        authCallbackRouter.handleAuthCode(code);
+        authCallbackRouter.handleVerifiedLoopbackAuthCode(code);
         void authInAppLoginView?.close().catch(error => {
           console.warn('[Auth] failed to close embedded login after callback:', error);
         });
@@ -5937,14 +5943,13 @@ if (!gotTheLock) {
 
   ipcMain.handle(AuthIpcChannel.Login, async () => {
     const baseUrl = resolveAuthLoginPageUrl(isDev);
-    const fallbackUrl = appendLoginParams(baseUrl, { source: 'electron' });
     let localCallback: Awaited<ReturnType<typeof startAuthLocalCallback>> | null = null;
 
     try {
       console.log('[Auth] starting browser login with local callback server');
       localCallback = await startAuthLocalCallback({
         onCode: code => {
-          authCallbackRouter.handleAuthCode(code);
+          authCallbackRouter.handleVerifiedLoopbackAuthCode(code);
           focusMainWindow('local auth callback');
         },
       });
@@ -5962,17 +5967,11 @@ if (!gotTheLock) {
       return { success: true, redirectUrl: finalUrl };
     } catch (error) {
       // The callback may be shared by another login page and will clean itself up on timeout.
-      console.warn('[Auth] local callback login failed, falling back to deep link login:', error);
-      try {
-        await shell.openExternal(fallbackUrl);
-        return { success: true, redirectUrl: fallbackUrl };
-      } catch (fallbackError) {
-        console.error('[Auth] login failed:', fallbackError);
-        return {
-          success: false,
-          error: fallbackError instanceof Error ? fallbackError.message : 'Failed to open login',
-        };
-      }
+      console.error('[Auth] local callback login failed:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to open login',
+      };
     }
   });
 
@@ -6018,6 +6017,36 @@ if (!gotTheLock) {
 
   ipcMain.handle(AuthIpcChannel.Exchange, async (_event, { code }: { code: string }) => {
     try {
+      const enterpriseExchange = await exchangeEnterpriseDesktopAuthorization({
+        authCode: code,
+        fetch: (url, options) => getLzclawWebSession().fetch(url, options),
+        isDevelopment: isDev,
+      });
+      if (enterpriseExchange.status === EnterpriseDesktopExchangeStatus.Exchanged) {
+        const reference = resolveEnterpriseWebSessionReference(
+          enterpriseExchange.entryType,
+          isDev,
+        );
+        if (!reference) {
+          return { success: false, error: 'Enterprise Session target is invalid' };
+        }
+        const enterpriseSession = await validateEnterpriseWebSession({
+          reference,
+          fetch: (url, options) => getLzclawWebSession().fetch(url, options),
+          isDevelopment: isDev,
+        });
+        if (enterpriseSession.status !== EnterpriseWebSessionValidationStatus.Authenticated) {
+          return { success: false, error: 'Enterprise Session validation failed' };
+        }
+        await saveEnterpriseAuthSession(reference, enterpriseSession.user);
+        const quota = normalizeQuota({});
+        console.log('[Auth] enterprise desktop authorization exchange succeeded');
+        return { success: true, user: enterpriseSession.user, quota };
+      }
+      if (!shouldUseLegacyDesktopAuthorizationExchange(code, enterpriseExchange)) {
+        return { success: false, error: 'Enterprise authorization exchange failed' };
+      }
+
       const serverBaseUrl = getAuthApiBaseUrl();
       const exchangeUrl = `${serverBaseUrl}/api/auth/exchange`;
       console.log(`[Auth] requesting auth exchange at ${exchangeUrl}`);

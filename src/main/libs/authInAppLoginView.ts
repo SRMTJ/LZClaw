@@ -169,7 +169,10 @@ export class AuthInAppLoginViewController {
 
       if (
         url !== 'about:blank'
-        && (!isHttpUrl(url) || !this.options.isAllowedNavigation(url))
+        && (!isHttpUrl(url) || (
+          !this.options.isAllowedNavigation(url)
+          && !this.isActiveLocalCallbackNavigation(url)
+        ))
       ) {
         event.preventDefault();
         console.warn(`[AuthInAppLogin] blocked untrusted navigation: ${url}`);
@@ -182,7 +185,13 @@ export class AuthInAppLoginViewController {
         void this.closeLocalCallback();
         return { action: 'deny' };
       }
-      if (isHttpUrl(url) && this.options.isAllowedNavigation(url)) {
+      if (
+        isHttpUrl(url)
+        && (
+          this.options.isAllowedNavigation(url)
+          || this.isActiveLocalCallbackNavigation(url)
+        )
+      ) {
         void webContents.loadURL(url).catch(error => {
           console.error('[AuthInAppLogin] failed to load login popup in the embedded view:', error);
         });
@@ -201,6 +210,22 @@ export class AuthInAppLoginViewController {
         this.handleAuthenticatedNavigation(webContents, url);
       }
     });
+  }
+
+  private isActiveLocalCallbackNavigation(url: string): boolean {
+    const redirectUri = this.localCallback?.redirectUri;
+    if (!redirectUri) return false;
+    try {
+      const candidate = new URL(url);
+      const expected = new URL(redirectUri);
+      return candidate.origin === expected.origin
+        && candidate.pathname === expected.pathname
+        && candidate.username === ''
+        && candidate.password === ''
+        && candidate.hash === '';
+    } catch {
+      return false;
+    }
   }
 
   private handleAuthenticatedNavigation(webContents: WebContents, url: string): void {

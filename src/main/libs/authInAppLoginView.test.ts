@@ -20,7 +20,7 @@ const mocks = vi.hoisted(() => {
     setBounds: vi.fn(() => true),
   };
   const localCallback = {
-    redirectUri: 'http://127.0.0.1:54321/callback',
+    redirectUri: 'http://127.0.0.1:54321/auth/callback',
     state: 'test-state',
     close: vi.fn(async () => undefined),
   };
@@ -217,5 +217,37 @@ describe('AuthInAppLoginViewController', () => {
     expect(preventDefault).toHaveBeenCalledOnce();
     expect(popupResult).toEqual({ action: 'deny' });
     expect(mocks.webContents.loadURL).not.toHaveBeenCalledWith('https://attacker.test/login');
+  });
+
+  test('allows only the exact active loopback callback target', async () => {
+    const { controller } = createController();
+    await controller.open({
+      loginUrl: 'https://example.test/login',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+    });
+
+    const allowedEvent = { preventDefault: vi.fn() };
+    mocks.emit(
+      'will-navigate',
+      allowedEvent,
+      'http://127.0.0.1:54321/auth/callback?code=ent_code&state=test-state',
+    );
+    expect(allowedEvent.preventDefault).not.toHaveBeenCalled();
+
+    const wrongPortEvent = { preventDefault: vi.fn() };
+    mocks.emit(
+      'will-navigate',
+      wrongPortEvent,
+      'http://127.0.0.1:54322/auth/callback?code=ent_code&state=test-state',
+    );
+    expect(wrongPortEvent.preventDefault).toHaveBeenCalledOnce();
+
+    const wrongPathEvent = { preventDefault: vi.fn() };
+    mocks.emit(
+      'will-redirect',
+      wrongPathEvent,
+      'http://127.0.0.1:54321/other?code=ent_code&state=test-state',
+    );
+    expect(wrongPathEvent.preventDefault).toHaveBeenCalledOnce();
   });
 });
