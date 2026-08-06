@@ -3,6 +3,7 @@
  * 后续新增的业务接口也应在此文件中配置。
  */
 
+import { resolveLzClawUpdateUrl } from '../../shared/appUpdate/endpoints';
 import { resolveAuthLoginPageUrl } from '../../shared/auth/constants';
 import { configService } from './config';
 
@@ -11,14 +12,10 @@ export const isTestModeEnabled = () => {
 };
 
 // 自动更新
-export const getUpdateCheckUrl = () => isTestModeEnabled()
-  ? 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/test/update'
-  : 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/prod/update';
+export const getUpdateCheckUrl = () => resolveLzClawUpdateUrl(import.meta.env.DEV, false);
 
 // 手动检查更新
-export const getManualUpdateCheckUrl = () => isTestModeEnabled()
-  ? 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/test/update-manual'
-  : 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/prod/update-manual';
+export const getManualUpdateCheckUrl = () => resolveLzClawUpdateUrl(import.meta.env.DEV, true);
 
 export const getFallbackDownloadUrl = () => isTestModeEnabled()
   ? 'https://lobsterai.inner.youdao.com/#/download-list'

@@ -1,5 +1,6 @@
 import { app } from 'electron';
 
+import { resolveLzClawUpdateUrl } from '../../shared/appUpdate/endpoints';
 import { HtmlSharePublicRoute } from '../../shared/htmlShare/constants';
 import type { SqliteStore } from '../sqliteStore';
 
@@ -58,15 +59,11 @@ export const getHtmlSharePublicBaseUrl = (): string => {
 };
 
 export const getUpdateCheckUrl = (): string => (
-  isTestModeEnabled()
-    ? 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/test/update'
-    : 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/prod/update'
+  resolveLzClawUpdateUrl(!app.isPackaged, false)
 );
 
 export const getManualUpdateCheckUrl = (): string => (
-  isTestModeEnabled()
-    ? 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/test/update-manual'
-    : 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/prod/update-manual'
+  resolveLzClawUpdateUrl(!app.isPackaged, true)
 );
 
 export const getFallbackDownloadUrl = (): string => (
