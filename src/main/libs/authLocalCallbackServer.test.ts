@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { describe, expect, test, vi } from 'vitest';
 
 import {
@@ -74,6 +75,8 @@ describe('startAuthLocalCallback', () => {
     try {
       expect(callback.redirectUri).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/auth\/callback$/);
       expect(callback.state).toHaveLength(32);
+      expect(callback.codeChallenge).toHaveLength(43);
+      expect(callback).not.toHaveProperty('codeVerifier');
     } finally {
       await callback.close();
     }
@@ -88,6 +91,7 @@ describe('startAuthLocalCallback', () => {
 
     expect(secondCallback.redirectUri).toBe(firstCallback.redirectUri);
     expect(secondCallback.state).toBe(firstCallback.state);
+    expect(secondCallback.codeChallenge).toBe(firstCallback.codeChallenge);
 
     const response = await fetch(
       `${firstCallback.redirectUri}?code=first-page-code&state=${firstCallback.state}`,
@@ -113,9 +117,9 @@ describe('startAuthLocalCallback', () => {
   });
 
   test('delivers code when callback path and state are valid', async () => {
-    const codes: string[] = [];
+    const delivered: Array<{ code: string; codeVerifier: string }> = [];
     const callback = await startAuthLocalCallback({
-      onCode: code => codes.push(code),
+      onCode: (code, codeVerifier) => delivered.push({ code, codeVerifier }),
     });
 
     const response = await fetch(`${callback.redirectUri}?code=abc123&state=${callback.state}`);
@@ -123,7 +127,15 @@ describe('startAuthLocalCallback', () => {
 
     expect(response.status).toBe(200);
     expect(body).toContain('登录成功');
-    expect(codes).toEqual(['abc123']);
+    expect(delivered).toEqual([{
+      code: 'abc123',
+      codeVerifier: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+    }]);
+    const expectedChallenge = crypto
+      .createHash('sha256')
+      .update(delivered[0].codeVerifier, 'ascii')
+      .digest('base64url');
+    expect(callback.codeChallenge).toBe(expectedChallenge);
   });
 
   test('returns a success page that redirects back to the portal when return_to is safe', async () => {
@@ -191,9 +203,9 @@ describe('startAuthLocalCallback', () => {
   });
 
   test('rejects callback when state does not match', async () => {
-    const codes: string[] = [];
+    const delivered: Array<{ code: string; codeVerifier: string }> = [];
     const callback = await startAuthLocalCallback({
-      onCode: code => codes.push(code),
+      onCode: (code, codeVerifier) => delivered.push({ code, codeVerifier }),
     });
 
     const response = await fetch(`${callback.redirectUri}?code=abc123&state=wrong-state`);
@@ -201,7 +213,7 @@ describe('startAuthLocalCallback', () => {
 
     expect(response.status).toBe(400);
     expect(body).toContain('登录失败');
-    expect(codes).toEqual([]);
+    expect(delivered).toEqual([]);
   });
 
   test('returns 404 for non-callback paths', async () => {

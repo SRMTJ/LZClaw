@@ -313,6 +313,7 @@ import {
 } from './libs/enterpriseConfigSync';
 import {
   EnterpriseDesktopExchangeStatus,
+  EnterpriseDesktopVerifierStore,
   exchangeEnterpriseDesktopAuthorization,
   shouldUseLegacyDesktopAuthorizationExchange,
 } from './libs/enterpriseDesktopAuth';
@@ -4036,6 +4037,12 @@ if (!gotTheLock) {
       console.error('[Main] Failed to parse deep link:', error);
     },
   });
+  const enterpriseDesktopVerifierStore = new EnterpriseDesktopVerifierStore();
+
+  const handleVerifiedLoopbackAuthCode = (code: string, codeVerifier: string): void => {
+    enterpriseDesktopVerifierStore.bind(code, codeVerifier);
+    authCallbackRouter.handleVerifiedLoopbackAuthCode(code);
+  };
 
   /**
    * Parse a lobsterai:// deep link and send (or buffer) the auth code.
@@ -4130,8 +4137,8 @@ if (!gotTheLock) {
       getMainWindow: () => mainWindow,
       session: lzclawWebSession,
       isDev,
-      onAuthCode: code => {
-        authCallbackRouter.handleVerifiedLoopbackAuthCode(code);
+      onAuthCode: (code, codeVerifier) => {
+        handleVerifiedLoopbackAuthCode(code, codeVerifier);
         void authInAppLoginView?.close().catch(error => {
           console.warn('[Auth] failed to close embedded login after callback:', error);
         });
@@ -6049,8 +6056,8 @@ if (!gotTheLock) {
     try {
       console.log('[Auth] starting browser login with local callback server');
       localCallback = await startAuthLocalCallback({
-        onCode: code => {
-          authCallbackRouter.handleVerifiedLoopbackAuthCode(code);
+        onCode: (code, codeVerifier) => {
+          handleVerifiedLoopbackAuthCode(code, codeVerifier);
           focusMainWindow('local auth callback');
         },
       });
@@ -6062,6 +6069,7 @@ if (!gotTheLock) {
         source: 'electron',
         redirect_uri: appendCallbackReturnTo(localCallback.redirectUri, returnTo),
         state: localCallback.state,
+        code_challenge: localCallback.codeChallenge,
       });
       console.log('[Auth] opening portal login with local callback redirect');
       await shell.openExternal(finalUrl);
@@ -6120,6 +6128,7 @@ if (!gotTheLock) {
     try {
       const enterpriseExchange = await exchangeEnterpriseDesktopAuthorization({
         authCode: code,
+        codeVerifier: enterpriseDesktopVerifierStore.consume(code) ?? undefined,
         fetch: (url, options) => getLzclawWebSession().fetch(url, options),
         isDevelopment: isDev,
       });

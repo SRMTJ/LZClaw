@@ -23,7 +23,7 @@ interface AuthInAppLoginViewControllerOptions {
   getMainWindow: () => BrowserWindow | null;
   session: Session;
   isDev: boolean;
-  onAuthCode: (code: string) => void;
+  onAuthCode: (code: string, codeVerifier: string) => void;
   onAuthDeepLink: (url: string) => void;
   isAllowedNavigation: (url: string) => boolean;
   isAuthenticatedNavigation: (url: string) => boolean;
@@ -104,8 +104,8 @@ export class AuthInAppLoginViewController {
     let localCallback: AuthLocalCallback | null = null;
     try {
       localCallback = await startAuthLocalCallback({
-        onCode: code => {
-          this.options.onAuthCode(code);
+        onCode: (code, codeVerifier) => {
+          this.options.onAuthCode(code, codeVerifier);
         },
       });
 
@@ -123,6 +123,7 @@ export class AuthInAppLoginViewController {
         source: 'electron',
         redirect_uri: appendCallbackReturnTo(localCallback.redirectUri, returnTo),
         state: localCallback.state,
+        code_challenge: localCallback.codeChallenge,
       });
       this.activeLoginUrl = finalUrl;
 

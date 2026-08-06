@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => {
     setBounds: vi.fn(() => true),
   };
   const localCallback = {
+    codeChallenge: 'test-code-challenge',
     redirectUri: 'http://127.0.0.1:54321/auth/callback',
     state: 'test-state',
     close: vi.fn(async () => undefined),
@@ -63,8 +64,18 @@ vi.mock('@fudanda/electron-persistent-view', () => ({
 }));
 
 vi.mock('./authLocalCallbackServer', () => ({
-  appendCallbackReturnTo: (callbackUrl: string) => callbackUrl,
-  appendLoginParams: (url: string) => url,
+  appendCallbackReturnTo: (callbackUrl: string, returnTo: string) => {
+    const parsed = new URL(callbackUrl);
+    parsed.searchParams.set('return_to', returnTo);
+    return parsed.toString();
+  },
+  appendLoginParams: (url: string, params: Record<string, string>) => {
+    const parsed = new URL(url);
+    for (const [key, value] of Object.entries(params)) {
+      parsed.searchParams.set(key, value);
+    }
+    return parsed.toString();
+  },
   startAuthLocalCallback: mocks.startAuthLocalCallback,
 }));
 
@@ -74,12 +85,13 @@ const createController = (onAuthenticatedNavigation = vi.fn(async () => true)) =
   const parentWindow = {
     isDestroyed: () => false,
   };
+  const onAuthCode = vi.fn();
   return {
     controller: new AuthInAppLoginViewController({
       getMainWindow: () => parentWindow as never,
       session: {} as never,
       isDev: true,
-      onAuthCode: vi.fn(),
+      onAuthCode,
       onAuthDeepLink: vi.fn(),
       isAllowedNavigation: url => new URL(url).origin === 'https://example.test',
       isAuthenticatedNavigation: url => {
@@ -90,6 +102,7 @@ const createController = (onAuthenticatedNavigation = vi.fn(async () => true)) =
       onAuthenticatedNavigation,
     }),
     parentWindow,
+    onAuthCode,
     onAuthenticatedNavigation,
   };
 };
@@ -111,12 +124,37 @@ describe('AuthInAppLoginViewController', () => {
       bounds: { x: 0, y: 0, width: 800, height: 600 },
     })).resolves.toBeUndefined();
 
-    expect(mocks.persistentController.open).toHaveBeenCalledWith({
+    expect(mocks.persistentController.open).toHaveBeenCalledOnce();
+    const openRequest = mocks.persistentController.open.mock.calls[0]?.[0];
+    expect(openRequest).toMatchObject({
       parentWindow,
-      url: 'https://example.test/login',
       bounds: { x: 0, y: 0, width: 800, height: 600 },
       focus: true,
     });
+    const openedUrl = new URL(openRequest?.url ?? '');
+    expect(openedUrl.searchParams.get('state')).toBe('test-state');
+    expect(openedUrl.searchParams.get('code_challenge')).toBe('test-code-challenge');
+    expect(openedUrl.searchParams.has('code_verifier')).toBe(false);
+    expect(openedUrl.searchParams.get('redirect_uri')).toContain(
+      'http://127.0.0.1:54321/auth/callback',
+    );
+  });
+
+  test('keeps the verifier out of the login URL and forwards it with the callback code', async () => {
+    const { controller, onAuthCode } = createController();
+    await controller.open({
+      loginUrl: 'https://example.test/login',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+    });
+
+    const callbackOptions = mocks.startAuthLocalCallback.mock.calls[0]?.[0] as {
+      onCode: (code: string, codeVerifier: string) => void;
+    };
+    callbackOptions.onCode(`ent_${'d'.repeat(43)}`, 'v'.repeat(43));
+
+    expect(onAuthCode).toHaveBeenCalledWith(`ent_${'d'.repeat(43)}`, 'v'.repeat(43));
+    const openedUrl = mocks.persistentController.open.mock.calls[0]?.[0]?.url ?? '';
+    expect(openedUrl).not.toContain('v'.repeat(43));
   });
 
   test('closes the callback when the persistent view does not open', async () => {
@@ -173,8 +211,14 @@ describe('AuthInAppLoginViewController', () => {
     mocks.emit('did-navigate', {}, 'https://example.test/users');
 
     await vi.waitFor(() => {
-      expect(mocks.webContents.loadURL).toHaveBeenCalledWith('https://example.test/login');
+      expect(mocks.webContents.loadURL).toHaveBeenCalledOnce();
     });
+    const restoredUrl = new URL(mocks.webContents.loadURL.mock.calls[0]?.[0] ?? '');
+    expect(restoredUrl.origin).toBe('https://example.test');
+    expect(restoredUrl.pathname).toBe('/login');
+    expect(restoredUrl.searchParams.get('state')).toBe('test-state');
+    expect(restoredUrl.searchParams.get('code_challenge')).toBe('test-code-challenge');
+    expect(restoredUrl.searchParams.has('code_verifier')).toBe(false);
   });
 
   test('ignores authenticated-looking routes from another origin', async () => {

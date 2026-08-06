@@ -9,11 +9,12 @@ const AUTH_LOCAL_CALLBACK_HOST = '127.0.0.1';
 const AUTH_LOCAL_CALLBACK_TIMEOUT_MS = 15 * 60 * 1000;
 
 interface AuthLocalCallbackOptions {
-  onCode: (code: string) => void;
+  onCode: (code: string, codeVerifier: string) => void;
   timeoutMs?: number;
 }
 
 export interface AuthLocalCallback {
+  codeChallenge: string;
   redirectUri: string;
   state: string;
   close: () => Promise<void>;
@@ -148,11 +149,17 @@ async function createAuthLocalCallback(
   options: AuthLocalCallbackOptions,
 ): Promise<ActiveAuthLocalCallback> {
   const state = crypto.randomBytes(24).toString('base64url');
+  const codeVerifier = crypto.randomBytes(32).toString('base64url');
+  const codeChallenge = crypto
+    .createHash('sha256')
+    .update(codeVerifier, 'ascii')
+    .digest('base64url');
   const server = http.createServer();
   let closed = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
 
   const callback: ActiveAuthLocalCallback = {
+    codeChallenge,
     redirectUri: '',
     state,
     refreshTimeout: (timeoutMs: number) => {
@@ -213,7 +220,7 @@ async function createAuthLocalCallback(
 
     try {
       console.log('[AuthLocalCallback] received login callback, delivering auth code');
-      options.onCode(code);
+      options.onCode(code, codeVerifier);
       sendHtmlWithRedirect(
         res,
         200,

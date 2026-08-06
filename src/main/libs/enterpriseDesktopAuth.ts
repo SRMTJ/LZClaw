@@ -41,9 +41,22 @@ export const shouldUseLegacyDesktopAuthorizationExchange = (
 
 interface EnterpriseDesktopExchangeOptions {
   authCode: string;
+  codeVerifier?: string;
   fetch: (url: string, options: RequestInit) => Promise<Response>;
   isDevelopment: boolean;
 }
+
+interface EnterpriseDesktopVerifierStoreOptions {
+  now?: () => number;
+  ttlMs?: number;
+}
+
+interface EnterpriseDesktopVerifierEntry {
+  codeVerifier: string;
+  expiresAt: number;
+}
+
+const ENTERPRISE_DESKTOP_VERIFIER_TTL_MS = 15 * 60 * 1000;
 
 const asRecord = (value: unknown): Record<string, unknown> | null => (
   value !== null && typeof value === 'object'
@@ -62,6 +75,57 @@ const validOpaqueCode = (value: string): boolean => {
     return code < 0x20 || code === 0x7f;
   });
 };
+
+export const isValidEnterpriseDesktopCodeVerifier = (value: string): boolean => (
+  value.length >= 43
+  && value.length <= 128
+  && /^[A-Za-z0-9._~-]+$/.test(value)
+);
+
+export class EnterpriseDesktopVerifierStore {
+  private readonly entries = new Map<string, EnterpriseDesktopVerifierEntry>();
+  private readonly now: () => number;
+  private readonly ttlMs: number;
+
+  constructor(options: EnterpriseDesktopVerifierStoreOptions = {}) {
+    this.now = options.now ?? Date.now;
+    this.ttlMs = options.ttlMs ?? ENTERPRISE_DESKTOP_VERIFIER_TTL_MS;
+  }
+
+  bind(authCode: string, codeVerifier: string): boolean {
+    this.pruneExpired();
+    if (
+      !authCode.startsWith(EnterpriseDesktopAuthorizationCodePrefix)
+      || !validOpaqueCode(authCode)
+      || !isValidEnterpriseDesktopCodeVerifier(codeVerifier)
+    ) {
+      return false;
+    }
+    this.entries.set(authCode, {
+      codeVerifier,
+      expiresAt: this.now() + this.ttlMs,
+    });
+    return true;
+  }
+
+  consume(authCode: string): string | null {
+    const entry = this.entries.get(authCode);
+    this.entries.delete(authCode);
+    if (!entry || entry.expiresAt <= this.now()) {
+      return null;
+    }
+    return entry.codeVerifier;
+  }
+
+  private pruneExpired(): void {
+    const now = this.now();
+    for (const [authCode, entry] of this.entries) {
+      if (entry.expiresAt <= now) {
+        this.entries.delete(authCode);
+      }
+    }
+  }
+}
 
 export const resolveEnterpriseDesktopExchangeUrl = (isDevelopment: boolean): string => (
   new URL(
@@ -82,6 +146,12 @@ export const exchangeEnterpriseDesktopAuthorization = async (
       httpStatus: 400,
     };
   }
+  if (!options.codeVerifier || !isValidEnterpriseDesktopCodeVerifier(options.codeVerifier)) {
+    return {
+      status: EnterpriseDesktopExchangeStatus.Rejected,
+      httpStatus: 400,
+    };
+  }
   try {
     const response = await options.fetch(
       resolveEnterpriseDesktopExchangeUrl(options.isDevelopment),
@@ -92,7 +162,10 @@ export const exchangeEnterpriseDesktopAuthorization = async (
           Accept: 'application/json',
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ authCode: options.authCode }),
+        body: JSON.stringify({
+          authCode: options.authCode,
+          codeVerifier: options.codeVerifier,
+        }),
       },
     );
     if (!response.ok) {
