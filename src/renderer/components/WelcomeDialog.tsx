@@ -4,8 +4,6 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { APP_NAME } from '@/constants/app';
 import { i18nService } from '@/services/i18n';
 
-const SERVICE_TERMS_URL = 'https://c.youdao.com/dict/hardware/lobsterai/lobsterai_service.html';
-
 const LOGO_RINGS: Array<{ size: number; opacity: number }> = [
   { size: 150, opacity: 0.55 },
   { size: 255, opacity: 0.4 },
@@ -87,14 +85,6 @@ const WelcomeDialog: React.FC<WelcomeDialogProps> = ({
     };
   }, [loginActive, onLogin, onLoginCancel, syncLoginBounds]);
 
-  const handleTermsClick = async (event: React.MouseEvent) => {
-    event.preventDefault();
-    await window.electron.shell.openExternal(SERVICE_TERMS_URL);
-  };
-
-  const notice = i18nService.t('welcomeAgreementNotice');
-  const linkText = i18nService.t('welcomeAgreementLinkText');
-  const [noticeBefore, noticeAfter] = notice.split('{link}');
   const copyright = i18nService
     .t('welcomeCopyright')
     .replace('{year}', String(new Date().getFullYear()));
@@ -158,10 +148,6 @@ const WelcomeDialog: React.FC<WelcomeDialogProps> = ({
         </h1>
 
         <div className="flex min-h-[140px] w-full flex-col items-center">
-          <div className="mb-3 px-3 py-1 rounded-full border text-xs font-medium select-none text-[#E5482C] bg-[#FF5A36]/10 border-[#FF5A36]/20 dark:text-[#FF9275] dark:bg-[#FF6D4A]/[0.14] dark:border-[#FF6D4A]/30">
-            {i18nService.t('welcomePromo')}
-          </div>
-
           <div className="relative w-full overflow-visible">
             <img
               src="hand.png"
@@ -202,17 +188,6 @@ const WelcomeDialog: React.FC<WelcomeDialogProps> = ({
       </div>
 
       <div className="relative z-10 flex flex-col items-center gap-1 pb-8 px-8 text-center">
-        <p className="text-xs text-secondary leading-relaxed">
-          {noticeBefore}
-          <a
-            href={SERVICE_TERMS_URL}
-            onClick={handleTermsClick}
-            className="underline underline-offset-2 hover:text-foreground outline-none"
-          >
-            {linkText}
-          </a>
-          {noticeAfter}
-        </p>
         <p className="text-xs text-secondary/70">{copyright}</p>
       </div>
     </div>

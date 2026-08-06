@@ -3120,16 +3120,13 @@ const translations: Record<LanguageType, Record<string, string>> = {
     scheduledTasksDataAnomalyWarning:
       '定时任务「{name}」存在异常数据，已自动修正显示，建议重新编辑该任务',
 
-    // 首次启动欢迎页（协议 + 登录合并）
-    welcomeTitle: '登录到海豚买买AI工作台',
-    welcomePromo: '登录即送百万Token',
+    // 首次启动欢迎页
+    welcomeTitle: '海豚买买AI工作台',
     welcomeLogin: '登录',
     welcomeLoginBack: '返回',
     welcomeLoginLoading: '正在打开登录页面...',
     welcomeLoginOpenFailed: '登录页面打开失败，请重试',
     welcomeCustomModel: '自定义模型',
-    welcomeAgreementNotice: '继续即表示您已阅读并同意{link}',
-    welcomeAgreementLinkText: '《海豚买买AI工作台服务协议》',
     welcomeCopyright: '© {year} 海豚买买',
     welcomeLoginWaiting: '请在浏览器中完成登录',
     welcomeLoginFailed: '登录发起失败，请重试',
@@ -6563,16 +6560,13 @@ const translations: Record<LanguageType, Record<string, string>> = {
     scheduledTasksDataAnomalyWarning:
       'Scheduled task "{name}" has abnormal data. Display has been auto-corrected. Consider re-editing this task',
 
-    // First-launch welcome screen (terms + login merged)
-    welcomeTitle: 'Log in to 海豚买买AI工作台',
-    welcomePromo: 'Log in for 1M free tokens',
+    // First-launch welcome screen
+    welcomeTitle: '海豚买买AI工作台',
     welcomeLogin: 'Log in',
     welcomeLoginBack: 'Back',
     welcomeLoginLoading: 'Opening the login page...',
     welcomeLoginOpenFailed: 'Unable to open the login page. Please try again.',
     welcomeCustomModel: 'Custom Model',
-    welcomeAgreementNotice: 'By continuing, you agree to the {link}',
-    welcomeAgreementLinkText: '海豚买买AI工作台 Terms of Service',
     welcomeCopyright: '© {year} 海豚买买',
     welcomeLoginWaiting: 'Complete the sign-in in your browser',
     welcomeLoginFailed: 'Could not start sign-in. Please try again.',
