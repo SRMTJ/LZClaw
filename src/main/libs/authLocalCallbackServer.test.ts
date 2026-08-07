@@ -82,6 +82,44 @@ describe('startAuthLocalCallback', () => {
     }
   });
 
+  test('notifies the owner when the interactive login times out', async () => {
+    const onTimeout = vi.fn();
+    const callback = await startAuthLocalCallback({
+      onCode: () => {},
+      onTimeout,
+      timeoutMs: 10,
+    });
+
+    try {
+      await vi.waitFor(() => {
+        expect(onTimeout).toHaveBeenCalledOnce();
+      });
+    } finally {
+      await callback.close();
+    }
+  });
+
+  test('notifies a reused callback owner when the shared login times out', async () => {
+    const callback = await startAuthLocalCallback({
+      onCode: () => {},
+      timeoutMs: 1_000,
+    });
+    const onTimeout = vi.fn();
+    await startAuthLocalCallback({
+      onCode: () => {},
+      onTimeout,
+      timeoutMs: 10,
+    });
+
+    try {
+      await vi.waitFor(() => {
+        expect(onTimeout).toHaveBeenCalledOnce();
+      });
+    } finally {
+      await callback.close();
+    }
+  });
+
   test('reuses the active callback so a repeated login does not invalidate the first page', async () => {
     const codes: string[] = [];
     const firstCallback = await startAuthLocalCallback({

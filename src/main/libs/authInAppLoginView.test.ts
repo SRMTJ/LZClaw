@@ -294,4 +294,32 @@ describe('AuthInAppLoginViewController', () => {
     );
     expect(wrongPathEvent.preventDefault).toHaveBeenCalledOnce();
   });
+
+  test('closes the embedded login and revokes callback navigation when the callback times out', async () => {
+    const { controller } = createController();
+    await controller.open({
+      loginUrl: 'https://example.test/login',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+    });
+    mocks.persistentController.close.mockClear();
+    mocks.localCallback.close.mockClear();
+
+    const callbackOptions = mocks.startAuthLocalCallback.mock.calls[0]?.[0] as {
+      onTimeout?: () => void;
+    };
+    callbackOptions.onTimeout?.();
+
+    const staleCallbackEvent = { preventDefault: vi.fn() };
+    mocks.emit(
+      'will-navigate',
+      staleCallbackEvent,
+      'http://127.0.0.1:54321/auth/callback?code=ent_code&state=test-state',
+    );
+
+    expect(staleCallbackEvent.preventDefault).toHaveBeenCalledOnce();
+    await vi.waitFor(() => {
+      expect(mocks.persistentController.close).toHaveBeenCalledOnce();
+      expect(mocks.localCallback.close).toHaveBeenCalledOnce();
+    });
+  });
 });

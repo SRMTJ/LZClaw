@@ -107,6 +107,13 @@ export class AuthInAppLoginViewController {
         onCode: (code, codeVerifier) => {
           this.options.onAuthCode(code, codeVerifier);
         },
+        onTimeout: () => {
+          if (operationId !== this.operationId) return;
+          console.warn('[AuthInAppLogin] local callback expired; closing embedded login view');
+          void this.close().catch(error => {
+            console.error('[AuthInAppLogin] failed to close expired embedded login view:', error);
+          });
+        },
       });
 
       if (operationId !== this.operationId) {
@@ -266,7 +273,11 @@ export class AuthInAppLoginViewController {
   private async closeActiveSurface(): Promise<void> {
     this.activeLoginUrl = null;
     this.authenticatedNavigationPending = false;
-    await this.viewController.close();
-    await this.closeLocalCallback();
+    const localCallback = this.localCallback;
+    this.localCallback = null;
+    await Promise.all([
+      this.viewController.close(),
+      localCallback?.close() ?? Promise.resolve(),
+    ]);
   }
 }

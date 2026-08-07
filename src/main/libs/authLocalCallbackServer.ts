@@ -10,6 +10,7 @@ const AUTH_LOCAL_CALLBACK_TIMEOUT_MS = 15 * 60 * 1000;
 
 interface AuthLocalCallbackOptions {
   onCode: (code: string, codeVerifier: string) => void;
+  onTimeout?: () => void;
   timeoutMs?: number;
 }
 
@@ -21,7 +22,7 @@ export interface AuthLocalCallback {
 }
 
 interface ActiveAuthLocalCallback extends AuthLocalCallback {
-  refreshTimeout: (timeoutMs: number) => void;
+  refreshTimeout: (timeoutMs: number, onTimeout?: () => void) => void;
 }
 
 let activeCallback: ActiveAuthLocalCallback | null = null;
@@ -157,18 +158,29 @@ async function createAuthLocalCallback(
   const server = http.createServer();
   let closed = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeoutHandlers = new Set<() => void>();
 
   const callback: ActiveAuthLocalCallback = {
     codeChallenge,
     redirectUri: '',
     state,
-    refreshTimeout: (timeoutMs: number) => {
+    refreshTimeout: (timeoutMs: number, onTimeout?: () => void) => {
       if (closed) return;
+      if (onTimeout) {
+        timeoutHandlers.add(onTimeout);
+      }
       if (timer) {
         clearTimeout(timer);
       }
       timer = setTimeout(() => {
         console.warn(`[AuthLocalCallback] login callback timed out at ${callback.redirectUri}`);
+        for (const handleTimeout of timeoutHandlers) {
+          try {
+            handleTimeout();
+          } catch (error) {
+            console.error('[AuthLocalCallback] login callback timeout handler failed:', error);
+          }
+        }
         void callback.close();
       }, timeoutMs);
     },
@@ -182,6 +194,7 @@ async function createAuthLocalCallback(
       if (activeCallback === callback) {
         activeCallback = null;
       }
+      timeoutHandlers.clear();
       await closeServer(server);
       console.debug(`[AuthLocalCallback] closed local callback server at ${callback.redirectUri}`);
     },
@@ -264,7 +277,7 @@ async function createAuthLocalCallback(
   });
   console.log(`[AuthLocalCallback] started local callback server on ${AUTH_LOCAL_CALLBACK_HOST}:${address.port}`);
 
-  callback.refreshTimeout(options.timeoutMs ?? AUTH_LOCAL_CALLBACK_TIMEOUT_MS);
+  callback.refreshTimeout(options.timeoutMs ?? AUTH_LOCAL_CALLBACK_TIMEOUT_MS, options.onTimeout);
 
   return callback;
 }
@@ -276,7 +289,7 @@ export async function startAuthLocalCallback(
 
   if (activeCallback) {
     // Existing browser tabs still target this URL, so keep it valid across repeated login clicks.
-    activeCallback.refreshTimeout(timeoutMs);
+    activeCallback.refreshTimeout(timeoutMs, options.onTimeout);
     console.log(`[AuthLocalCallback] reusing active local callback server at ${activeCallback.redirectUri}`);
     return activeCallback;
   }
@@ -284,7 +297,7 @@ export async function startAuthLocalCallback(
   if (startingCallback) {
     // Coalesce clicks that arrive before the first server has finished binding its port.
     const callback = await startingCallback;
-    callback.refreshTimeout(timeoutMs);
+    callback.refreshTimeout(timeoutMs, options.onTimeout);
     console.log(`[AuthLocalCallback] reusing starting local callback server at ${callback.redirectUri}`);
     return callback;
   }
