@@ -18,7 +18,12 @@ export type WindowsInstallerUrlPolicyResult =
   | { trusted: true; url: URL }
   | { trusted: false; reason: WindowsInstallerUrlPolicyFailure };
 
-export const WINDOWS_INSTALLER_URL_POLICY_VERSION = 2 as const;
+export const WINDOWS_INSTALLER_URL_POLICY_VERSION = 3 as const;
+
+export interface WindowsInstallerUrlPolicyOptions {
+  /** Allow HTTP only for local development installers served from loopback. */
+  allowInsecureLoopback?: boolean;
+}
 
 export interface WindowsInstallerUrlPolicyReceipt {
   policyVersion: typeof WINDOWS_INSTALLER_URL_POLICY_VERSION;
@@ -38,6 +43,7 @@ export interface WindowsInstallerUrlPolicyReceipt {
  */
 export function validateWindowsInstallerUrl(
   rawUrl: string,
+  options?: WindowsInstallerUrlPolicyOptions,
 ): WindowsInstallerUrlPolicyResult {
   let url: URL;
   try {
@@ -46,7 +52,11 @@ export function validateWindowsInstallerUrl(
     return { trusted: false, reason: WindowsInstallerUrlPolicyFailure.InvalidUrl };
   }
 
-  if (url.protocol !== 'https:') {
+  const allowedDevelopmentLoopback =
+    options?.allowInsecureLoopback === true
+    && url.protocol === 'http:'
+    && (url.hostname === '127.0.0.1' || url.hostname === 'localhost' || url.hostname === '[::1]');
+  if (url.protocol !== 'https:' && !allowedDevelopmentLoopback) {
     return { trusted: false, reason: WindowsInstallerUrlPolicyFailure.InsecureProtocol };
   }
   if (url.username || url.password) {
@@ -57,7 +67,7 @@ export function validateWindowsInstallerUrl(
   }
 
   // WHATWG URL normalizes an explicit :443 to the default empty port.
-  if (url.port) {
+  if (url.protocol === 'https:' && url.port) {
     return { trusted: false, reason: WindowsInstallerUrlPolicyFailure.UnapprovedPort };
   }
   if (path.posix.extname(url.pathname).toLowerCase() !== '.exe') {
@@ -68,14 +78,21 @@ export function validateWindowsInstallerUrl(
 }
 
 /** Validate a canonical origin previously emitted by URL.origin. */
-export function isSecureWindowsInstallerOrigin(rawOrigin: string): boolean {
+export function isSecureWindowsInstallerOrigin(
+  rawOrigin: string,
+  options?: WindowsInstallerUrlPolicyOptions,
+): boolean {
   try {
     const url = new URL(rawOrigin);
     return (
-      url.protocol === 'https:'
+      (url.protocol === 'https:' || (
+        options?.allowInsecureLoopback === true
+        && url.protocol === 'http:'
+        && (url.hostname === '127.0.0.1' || url.hostname === 'localhost' || url.hostname === '[::1]')
+      ))
       && !url.username
       && !url.password
-      && !url.port
+      && (url.protocol !== 'https:' || !url.port)
       && !url.search
       && !url.hash
       && url.pathname === '/'
@@ -98,8 +115,9 @@ export class AppUpdateUrlUntrustedError extends Error {
 
 export function assertTrustedWindowsInstallerUrl(
   rawUrl: string,
+  options?: WindowsInstallerUrlPolicyOptions,
 ): URL {
-  const result = validateWindowsInstallerUrl(rawUrl);
+  const result = validateWindowsInstallerUrl(rawUrl, options);
   if ('reason' in result) {
     throw new AppUpdateUrlUntrustedError(result.reason);
   }

@@ -17,10 +17,6 @@ export const getUpdateCheckUrl = () => resolveLzClawUpdateUrl(import.meta.env.DE
 // 手动检查更新
 export const getManualUpdateCheckUrl = () => resolveLzClawUpdateUrl(import.meta.env.DEV, true);
 
-export const getFallbackDownloadUrl = () => isTestModeEnabled()
-  ? 'https://lobsterai.inner.youdao.com/#/download-list'
-  : 'https://lobsterai.youdao.com/#/download-list';
-
 // Skill 商店
 export const getSkillStoreUrl = () => isTestModeEnabled()
   ? 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/test/skill-store'

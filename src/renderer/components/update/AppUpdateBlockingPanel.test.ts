@@ -16,6 +16,7 @@ const createState = (status: AppUpdateRuntimeState['status']): AppUpdateRuntimeS
       en: { title: 'Release notes', content: ['First change', 'Second change', 'Third change'] },
     },
     url: 'https://updates.example.com/lobsterai.exe',
+    sha256: '0'.repeat(64),
   },
   progress: null,
   readyFilePath: null,

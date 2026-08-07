@@ -33,7 +33,7 @@
 | 持久化网页 Session | P0 | 登录页和业务中心共享 `persist:lzclaw-web`；应用重启后可以恢复有效登录状态；专用 Session 默认拒绝网页权限检查和请求；使用 `@fudanda/electron-persistent-view` 精确版本 `0.5.0` | `package.json`、`src/shared/auth/constants.ts`、`src/main/main.ts`、`src/main/libs/lzclawWebSessionSecurity.ts` |
 | 业务中心 | P0 | 侧边栏在 MCP 下方显示“业务中心”；开发构建固定加载 `http://127.0.0.1:3107`，生产构建固定加载 `https://qiye.srmtj.com`；切换菜单时只隐藏视图并保留滚动、表单和页面状态；只有持久化视图返回 `opened` 才向当前 IPC 调用报告打开成功 | `src/renderer/components/Sidebar.tsx`、`src/renderer/components/businessCenter/BusinessCenterView.tsx`、`src/main/libs/businessCenterInAppView.ts`、`src/shared/businessCenter/constants.ts` |
 | 原生视图覆盖保护 | P0 | 欢迎页、设置、更新、权限等覆盖层出现时隐藏业务中心原生视图；覆盖层关闭后恢复显示且不重载 | `src/renderer/App.tsx`、`src/renderer/components/businessCenter/BusinessCenterView.tsx` |
-| 版本更新分发 | P0 | 更新检查固定使用中台 `lzclaw` 应用：开发构建请求本地 `127.0.0.1:8080` 的 `test` 通道，生产构建请求 `https://zhongtai.srmtj.com` 的 `prod` 通道；自动与手动检查共享同一环境解析逻辑，不能由用户可修改的 testMode 让生产包回连本机 | `src/shared/appUpdate/endpoints.ts`、`src/main/libs/endpoints.ts`、`src/renderer/services/endpoints.ts` |
+| 版本更新分发 | P0 | 更新检查固定使用中台 `claw` 应用且只有一个发布通道：开发构建请求本地 `127.0.0.1:8080`，生产构建请求 `https://zhongtai.srmtj.com`；自动与手动检查共享同一环境解析逻辑，不能由用户可修改的 testMode 让生产包回连本机；安装包下载全平台禁止重定向、限制为 1 GiB，并在进入可安装状态前验证发布清单 SHA-256 | `src/shared/appUpdate/endpoints.ts`、`src/main/libs/endpoints.ts`、`src/renderer/services/endpoints.ts`、`src/main/libs/appUpdateInstaller.ts`、`src/main/libs/appUpdateCoordinator.ts` |
 | 业务网页会话失效 | P0 | 业务中心普通导航或 SPA 导航到 `/login` 时，隐藏业务视图、清除桌面登录状态并返回欢迎页 | `src/main/libs/businessCenterInAppView.ts`、`src/main/main.ts` |
 | 导航与 Electron 安全 | P0 | 保持 Node 主线程、Worker 和子框架集成关闭，启用 `contextIsolation`、`sandbox` 和 `webSecurity`，禁用不安全混合内容、WebView、实验特性和宿主 Blink 特性；同源业务导航留在应用内，外部 HTTP/HTTPS 使用系统浏览器，其他协议阻止 | `src/main/libs/authInAppLoginView.ts`、`src/main/libs/businessCenterInAppView.ts` |
 | IPC 契约集中管理 | P1 | 登录和业务中心 IPC 名称、请求类型、状态类型继续放在 `src/shared`，主进程、preload 和 renderer 不各自写字符串 | `src/shared/auth/constants.ts`、`src/shared/businessCenter/constants.ts`、`src/main/preload.ts`、`src/renderer/types/electron.d.ts` |
@@ -49,10 +49,18 @@
 
 版本更新由 `D:\AI-AI\AIZhongtai\grit-platform-admin` 提供：
 
-- 开发自动检查：`http://127.0.0.1:8080/api/client-updates/lzclaw/test/update`
-- 开发手动检查：`http://127.0.0.1:8080/api/client-updates/lzclaw/test/update-manual`
-- 生产自动检查：`https://zhongtai.srmtj.com/api/client-updates/lzclaw/prod/update`
-- 生产手动检查：`https://zhongtai.srmtj.com/api/client-updates/lzclaw/prod/update-manual`
+- 开发自动检查：`http://127.0.0.1:8080/api/client-updates/claw/update`
+- 开发手动检查：`http://127.0.0.1:8080/api/client-updates/claw/update-manual`
+- 生产自动检查：`https://zhongtai.srmtj.com/api/client-updates/claw/update`
+- 生产手动检查：`https://zhongtai.srmtj.com/api/client-updates/claw/update-manual`
+- 更新发布只有一个通道，不读取应用 testMode，也不在服务端数据或 URL 中区分
+  test/prod；开发/生产只切换 API 主机。
+- 新版本缺少当前平台安装包时自动检查保持静默，手动检查显示“当前平台暂无可用更新”，
+  且不得回退到旧有道下载页。未打包开发版仅允许从 `127.0.0.1`、`localhost`
+  回环 HTTP 地址下载 `.exe`；正式版 Windows 安装包继续强制 HTTPS。所有平台下载均
+  禁止重定向、要求有效 `Content-Length`，并同时按响应头和实际接收字节执行 1 GiB
+  上限；服务端清单还必须提供 64 位十六进制 SHA-256，实际文件不一致时删除临时文件
+  且禁止安装。
 - 开发/生产选择以 Electron 是否为打包构建和 renderer 构建环境为准；应用设置中的
   testMode 不改变更新服务环境。
 

@@ -66,12 +66,6 @@ export const getManualUpdateCheckUrl = (): string => (
   resolveLzClawUpdateUrl(!app.isPackaged, true)
 );
 
-export const getFallbackDownloadUrl = (): string => (
-  isTestModeEnabled()
-    ? 'https://lobsterai.inner.youdao.com/#/download-list'
-    : 'https://lobsterai.youdao.com/#/download-list'
-);
-
 export const getSkillStoreUrl = (): string => (
   isTestModeEnabled()
     ? 'https://api-overmind.youdao.com/openapi/get/luna/hardware/lobsterai/test/skill-store'

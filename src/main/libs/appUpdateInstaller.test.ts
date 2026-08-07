@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   relaunch: vi.fn(),
   getPath: vi.fn(),
   fetch: vi.fn(),
+  isPackaged: false,
 }));
 
 const cpMocks = vi.hoisted(() => ({
@@ -24,6 +25,9 @@ vi.mock('electron', () => ({
     getPath: mocks.getPath,
     quit: mocks.quit,
     relaunch: mocks.relaunch,
+    get isPackaged() {
+      return mocks.isPackaged;
+    },
   },
   session: {
     defaultSession: {
@@ -48,6 +52,7 @@ vi.mock('child_process', async (importOriginal) => {
 
 import { APP_UPDATE_ELEVATION_DECLINED_ERROR } from '../../shared/appUpdate/constants';
 import {
+  APP_UPDATE_MAX_DOWNLOAD_SIZE_BYTES,
   buildMacSwapInstallCommand,
   buildMacSwapPaths,
   buildWindowsInstallerLaunchScript,
@@ -326,6 +331,7 @@ describe('Windows update download URL enforcement', () => {
     mocks.getPath.mockReset();
     mocks.getPath.mockReturnValue(tmpDir);
     mocks.fetch.mockReset();
+    mocks.isPackaged = false;
     Object.defineProperty(process, 'platform', { value: 'win32' });
   });
 
@@ -344,6 +350,40 @@ describe('Windows update download URL enforcement', () => {
 
     expect(mocks.fetch).not.toHaveBeenCalled();
     expect(fs.existsSync(path.join(tmpDir, 'updates'))).toBe(false);
+  });
+
+  test('allows a loopback HTTP installer only in an unpackaged development build', async () => {
+    const bytes = new TextEncoder().encode('development-installer-placeholder');
+    mocks.fetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      headers: new Headers({ 'content-length': String(bytes.byteLength) }),
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(bytes);
+          controller.close();
+        },
+      }),
+    });
+    const url = 'http://127.0.0.1:8080/api/client-updates/artifacts/id/LZClaw.exe';
+
+    const result = await downloadUpdate(url, 'manual', () => {});
+
+    expect(fs.readFileSync(result.filePath)).toEqual(Buffer.from(bytes));
+    expect(result.windowsInstallerUrlPolicyReceipt?.inputOrigin).toBe('http://127.0.0.1:8080');
+  });
+
+  test('rejects the loopback HTTP development exception in a packaged build', async () => {
+    mocks.isPackaged = true;
+
+    await expect(downloadUpdate(
+      'http://127.0.0.1:8080/api/client-updates/artifacts/id/LZClaw.exe',
+      'manual',
+      () => {},
+    )).rejects.toThrow('update-url-untrusted');
+
+    expect(mocks.fetch).not.toHaveBeenCalled();
   });
 
   test('downloads directly without relying on Electron response.url', async () => {
@@ -388,6 +428,52 @@ describe('Windows update download URL enforcement', () => {
     expect(logSpy.mock.calls.flat().join(' ')).not.toContain('do-not-log');
   });
 
+  test('rejects an oversized Content-Length before creating a partial file', async () => {
+    mocks.fetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      headers: new Headers({
+        'content-length': String(APP_UPDATE_MAX_DOWNLOAD_SIZE_BYTES + 1),
+      }),
+      body: new ReadableStream<Uint8Array>(),
+    });
+
+    await expect(downloadUpdate(
+      'https://downloads.example.com/LobsterAI.exe',
+      'manual',
+      () => {},
+    )).rejects.toThrow('exceeds maximum allowed size');
+
+    expect(fs.existsSync(path.join(tmpDir, 'updates'))).toBe(false);
+  });
+
+  test('aborts when streamed bytes exceed the declared bounded size', async () => {
+    const bytes = new TextEncoder().encode('three');
+    mocks.fetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      headers: new Headers({ 'content-length': '4' }),
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(bytes);
+          controller.close();
+        },
+      }),
+    });
+
+    await expect(downloadUpdate(
+      'https://downloads.example.com/LobsterAI.exe',
+      'manual',
+      () => {},
+      { maxDownloadSizeBytes: 4 },
+    )).rejects.toThrow('exceeds maximum allowed size');
+
+    const updateDir = path.join(tmpDir, 'updates');
+    expect(fs.existsSync(updateDir) ? fs.readdirSync(updateDir) : []).toEqual([]);
+  });
+
   test('leaves no cached file when the Windows fetch rejects a redirect', async () => {
     mocks.fetch.mockRejectedValue(new TypeError('Failed to fetch'));
 
@@ -402,6 +488,22 @@ describe('Windows update download URL enforcement', () => {
       expect.objectContaining({ redirect: 'error' }),
     );
     expect(fs.existsSync(path.join(tmpDir, 'updates'))).toBe(false);
+  });
+
+  test('rejects redirects for macOS downloads too', async () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    mocks.fetch.mockRejectedValue(new TypeError('Failed to fetch'));
+
+    await expect(downloadUpdate(
+      'https://downloads.example.com/LobsterAI.dmg',
+      'auto',
+      () => {},
+    )).rejects.toThrow('Failed to fetch');
+
+    expect(mocks.fetch).toHaveBeenCalledWith(
+      'https://downloads.example.com/LobsterAI.dmg',
+      expect.objectContaining({ redirect: 'error' }),
+    );
   });
 });
 

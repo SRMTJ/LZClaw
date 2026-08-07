@@ -53,4 +53,27 @@ describe('Windows installer URL policy', () => {
       assertTrustedWindowsInstallerUrl('http://downloads.example.com/setup.exe'),
     ).toThrow(APP_UPDATE_URL_UNTRUSTED_ERROR);
   });
+
+  test.each([
+    'http://127.0.0.1:8080/api/client-updates/artifacts/id/LZClaw.exe',
+    'http://localhost:8080/api/client-updates/artifacts/id/LZClaw.exe',
+    'http://[::1]:8080/api/client-updates/artifacts/id/LZClaw.exe',
+  ])('allows loopback HTTP only when explicitly enabled for development: %s', url => {
+    expect(validateWindowsInstallerUrl(url)).toEqual({
+      trusted: false,
+      reason: WindowsInstallerUrlPolicyFailure.InsecureProtocol,
+    });
+    expect(validateWindowsInstallerUrl(url, { allowInsecureLoopback: true })).toMatchObject({
+      trusted: true,
+    });
+  });
+
+  test('does not extend the development exception to non-loopback HTTP', () => {
+    expect(validateWindowsInstallerUrl('http://192.168.1.10/setup.exe', {
+      allowInsecureLoopback: true,
+    })).toEqual({
+      trusted: false,
+      reason: WindowsInstallerUrlPolicyFailure.InsecureProtocol,
+    });
+  });
 });

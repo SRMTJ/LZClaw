@@ -3,7 +3,7 @@ import React, { useCallback,useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
 import { AppSettingsAutoLaunchErrorCode } from '../../shared/appSettings/constants';
-import { type AppUpdateInfo,type AppUpdateRuntimeState,AppUpdateSource,AppUpdateStatus } from '../../shared/appUpdate/constants';
+import { type AppUpdateInfo,AppUpdateNoUpdateReason,type AppUpdateRuntimeState,AppUpdateSource,AppUpdateStatus } from '../../shared/appUpdate/constants';
 import {
   type BrowserWebAccessConfig,
   defaultBrowserWebAccessConfig,
@@ -1532,7 +1532,7 @@ const Settings: React.FC<SettingsProps> = ({
   const [testMode, setTestMode] = useState(false);
   const [logoClickCount, setLogoClickCount] = useState(0);
   const [testModeUnlocked, setTestModeUnlocked] = useState(false);
-  const [updateCheckStatus, setUpdateCheckStatus] = useState<'idle' | 'checking' | 'upToDate' | 'error' | 'downloading' | 'ready'>('idle');
+  const [updateCheckStatus, setUpdateCheckStatus] = useState<'idle' | 'checking' | 'upToDate' | 'noRelease' | 'platformUnavailable' | 'error' | 'downloading' | 'ready'>('idle');
   const [appUpdateState, setAppUpdateState] = useState<AppUpdateRuntimeState | null>(null);
 
   useEffect(() => {
@@ -1592,8 +1592,16 @@ const Settings: React.FC<SettingsProps> = ({
       }
 
       if (!result.updateFound) {
-        setUpdateCheckStatus('upToDate');
-        reportAboutAction('check_update', 'up_to_date');
+        if (result.noUpdateReason === AppUpdateNoUpdateReason.PlatformUnavailable) {
+          setUpdateCheckStatus('platformUnavailable');
+          reportAboutAction('check_update', 'platform_unavailable');
+        } else if (result.noUpdateReason === AppUpdateNoUpdateReason.NoRelease) {
+          setUpdateCheckStatus('noRelease');
+          reportAboutAction('check_update', 'no_release');
+        } else {
+          setUpdateCheckStatus('upToDate');
+          reportAboutAction('check_update', 'up_to_date');
+        }
         if (updateCheckTimerRef.current != null) {
           window.clearTimeout(updateCheckTimerRef.current);
         }
@@ -1643,6 +1651,8 @@ const Settings: React.FC<SettingsProps> = ({
     if (updateCheckStatus === 'downloading') return i18nService.t('updateDownloadingBackground');
     if (updateCheckStatus === 'ready') return i18nService.t('updateReadyTitle');
     if (updateCheckStatus === 'upToDate') return i18nService.t('updateUpToDate');
+    if (updateCheckStatus === 'noRelease') return i18nService.t('updateNoRelease');
+    if (updateCheckStatus === 'platformUnavailable') return i18nService.t('updatePlatformUnavailable');
     if (updateCheckStatus === 'error') return i18nService.t('updateCheckFailed');
     return i18nService.t('checkForUpdate');
   }, [appUpdateState?.progress?.percent, updateCheckStatus]);

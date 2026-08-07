@@ -1,11 +1,6 @@
-const LZCLAW_UPDATE_APP_CODE = 'lzclaw';
+const CLAW_UPDATE_APP_CODE = 'claw';
 const LOCAL_UPDATE_API_BASE_URL = 'http://127.0.0.1:8080';
 const PRODUCTION_UPDATE_API_BASE_URL = 'https://zhongtai.srmtj.com';
-
-const AppUpdateChannel = {
-  Test: 'test',
-  Production: 'prod',
-} as const;
 
 const AppUpdateRoute = {
   Automatic: 'update',
@@ -14,8 +9,8 @@ const AppUpdateRoute = {
 
 /**
  * Resolve the LZClaw update endpoint from the build environment.
- * Development builds always use the local platform API and test channel;
- * packaged builds always use the production platform API and prod channel.
+ * Development builds use the local platform API; packaged builds use the
+ * production platform API. Both consume the same published release authority.
  */
 export function resolveLzClawUpdateUrl(
   isDevelopment: boolean,
@@ -24,12 +19,9 @@ export function resolveLzClawUpdateUrl(
   const baseUrl = isDevelopment
     ? LOCAL_UPDATE_API_BASE_URL
     : PRODUCTION_UPDATE_API_BASE_URL;
-  const channel = isDevelopment
-    ? AppUpdateChannel.Test
-    : AppUpdateChannel.Production;
   const route = manual
     ? AppUpdateRoute.Manual
     : AppUpdateRoute.Automatic;
 
-  return `${baseUrl}/api/client-updates/${LZCLAW_UPDATE_APP_CODE}/${channel}/${route}`;
+  return `${baseUrl}/api/client-updates/${CLAW_UPDATE_APP_CODE}/${route}`;
 }

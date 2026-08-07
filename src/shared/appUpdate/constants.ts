@@ -17,6 +17,15 @@ export const AppUpdateSource = {
 
 export type AppUpdateSource = typeof AppUpdateSource[keyof typeof AppUpdateSource];
 
+export const AppUpdateNoUpdateReason = {
+  UpToDate: 'up-to-date',
+  NoRelease: 'no-release',
+  PlatformUnavailable: 'platform-unavailable',
+} as const;
+
+export type AppUpdateNoUpdateReason =
+  typeof AppUpdateNoUpdateReason[keyof typeof AppUpdateNoUpdateReason];
+
 export const AppUpdateIpc = {
   GetState: 'appUpdate:getState',
   CheckNow: 'appUpdate:checkNow',
@@ -61,6 +70,7 @@ export interface AppUpdateInfo {
   date: string;
   changeLog: { zh: ChangeLogEntry; en: ChangeLogEntry };
   url: string;
+  sha256: string;
 }
 
 export interface AppUpdateRuntimeState {
@@ -79,6 +89,7 @@ export interface AppUpdateCheckResult {
   success: boolean;
   state: AppUpdateRuntimeState;
   updateFound: boolean;
+  noUpdateReason?: AppUpdateNoUpdateReason;
   error?: string;
 }
 

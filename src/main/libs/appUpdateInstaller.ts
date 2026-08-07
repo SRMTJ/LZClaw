@@ -2,7 +2,7 @@ import { exec, execFile, spawn } from 'child_process';
 import { app, session, shell } from 'electron';
 import fs from 'fs';
 import path from 'path';
-import { Readable } from 'stream';
+import { Readable, Transform } from 'stream';
 import { pipeline } from 'stream/promises';
 
 import {
@@ -34,9 +34,6 @@ export const WindowsInstallerLauncherFallback = {
 } as const;
 
 function formatDownloadUrlForLog(rawUrl: string): string {
-  if (process.platform !== 'win32') {
-    return rawUrl;
-  }
   try {
     const url = new URL(rawUrl);
     return `${url.origin}${url.pathname}`;
@@ -80,10 +77,17 @@ const PROGRESS_THROTTLE_MS = 200;
 /** Abort download if no data received for this duration (ms). */
 const DOWNLOAD_INACTIVITY_TIMEOUT_MS = 60_000;
 
+export const APP_UPDATE_MAX_DOWNLOAD_SIZE_BYTES = 1024 * 1024 * 1024;
+
+interface AppUpdateDownloadOptions {
+  maxDownloadSizeBytes?: number;
+}
+
 export async function downloadUpdate(
   url: string,
   source: AppUpdateSource,
   onProgress: (progress: AppUpdateDownloadProgress) => void,
+  options: AppUpdateDownloadOptions = {},
 ): Promise<AppUpdateDownloadResult> {
   if (activeDownloadController) {
     throw new Error('A download is already in progress');
@@ -92,7 +96,9 @@ export async function downloadUpdate(
   let validatedWindowsInputUrl: URL | null = null;
   if (process.platform === 'win32') {
     try {
-      validatedWindowsInputUrl = assertTrustedWindowsInstallerUrl(url);
+      validatedWindowsInputUrl = assertTrustedWindowsInstallerUrl(url, {
+        allowInsecureLoopback: !app.isPackaged,
+      });
     } catch (error) {
       const reason = error instanceof AppUpdateUrlUntrustedError
         ? error.reason
@@ -124,6 +130,15 @@ export async function downloadUpdate(
   const controller = new AbortController();
   activeDownloadController = controller;
 
+  const requestedDownloadLimit = options.maxDownloadSizeBytes
+    ?? APP_UPDATE_MAX_DOWNLOAD_SIZE_BYTES;
+  const maxDownloadSizeBytes = Math.min(
+    APP_UPDATE_MAX_DOWNLOAD_SIZE_BYTES,
+    Number.isSafeInteger(requestedDownloadLimit) && requestedDownloadLimit > 0
+      ? requestedDownloadLimit
+      : APP_UPDATE_MAX_DOWNLOAD_SIZE_BYTES,
+  );
+
   let writeStream: fs.WriteStream | null = null;
   let inactivityTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -146,9 +161,9 @@ export async function downloadUpdate(
     const response = await session.defaultSession.fetch(url, {
       signal: controller.signal,
       // Electron documents Response.url as unreliable for session.fetch().
-      // Reject Windows redirects so the validated input remains the download
-      // source without relying on that field for final-URL provenance.
-      ...(process.platform === 'win32' ? { redirect: 'error' as const } : {}),
+      // Reject redirects on every platform so the validated input remains the
+      // download source without relying on that field for provenance.
+      redirect: 'error',
     });
 
     console.log(`[AppUpdate] HTTP response: ${response.status} ${response.statusText}`);
@@ -162,8 +177,15 @@ export async function downloadUpdate(
     }
 
     const totalHeader = response.headers.get('content-length');
-    const total = totalHeader ? Number(totalHeader) : undefined;
+    const total = totalHeader ? Number(totalHeader) : Number.NaN;
     console.log(`[AppUpdate] Content-Length: ${totalHeader ?? 'unknown'}`);
+
+    if (!Number.isSafeInteger(total) || total < 1) {
+      throw new Error('Download Content-Length is missing or invalid');
+    }
+    if (total > maxDownloadSizeBytes) {
+      throw new Error(`Download exceeds maximum allowed size of ${maxDownloadSizeBytes} bytes`);
+    }
 
     let received = 0;
     let lastSpeedTime = Date.now();
@@ -174,8 +196,8 @@ export async function downloadUpdate(
     const emitProgress = () => {
       onProgress({
         received,
-        total: total && Number.isFinite(total) ? total : undefined,
-        percent: total && Number.isFinite(total) ? received / total : undefined,
+        total,
+        percent: received / total,
         speed: currentSpeed,
       });
     };
@@ -188,32 +210,39 @@ export async function downloadUpdate(
 
     const nodeStream = Readable.fromWeb(response.body as any);
 
+    const progressStream = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        received += chunk.length;
+        if (received > maxDownloadSizeBytes) {
+          callback(new Error(`Download exceeds maximum allowed size of ${maxDownloadSizeBytes} bytes`));
+          return;
+        }
+
+        // Reset inactivity timer on each chunk
+        resetInactivityTimer();
+
+        // Calculate speed with 1-second window
+        const now = Date.now();
+        const elapsed = now - lastSpeedTime;
+        if (elapsed >= 1000) {
+          currentSpeed = ((received - lastSpeedBytes) / elapsed) * 1000;
+          lastSpeedTime = now;
+          lastSpeedBytes = received;
+        }
+
+        // Throttle progress events to avoid flooding IPC channel
+        if (now - lastProgressTime >= PROGRESS_THROTTLE_MS) {
+          lastProgressTime = now;
+          emitProgress();
+        }
+        callback(null, chunk);
+      },
+    });
+
     // Start inactivity timer
     resetInactivityTimer();
 
-    nodeStream.on('data', (chunk: Buffer) => {
-      received += chunk.length;
-
-      // Reset inactivity timer on each chunk
-      resetInactivityTimer();
-
-      // Calculate speed with 1-second window
-      const now = Date.now();
-      const elapsed = now - lastSpeedTime;
-      if (elapsed >= 1000) {
-        currentSpeed = ((received - lastSpeedBytes) / elapsed) * 1000;
-        lastSpeedTime = now;
-        lastSpeedBytes = received;
-      }
-
-      // Throttle progress events to avoid flooding IPC channel
-      if (now - lastProgressTime >= PROGRESS_THROTTLE_MS) {
-        lastProgressTime = now;
-        emitProgress();
-      }
-    });
-
-    await pipeline(nodeStream, writeStream);
+    await pipeline(nodeStream, progressStream, writeStream);
     writeStream = null;
     clearInactivityTimer();
 
@@ -224,7 +253,7 @@ export async function downloadUpdate(
     if (stat.size === 0) {
       throw new Error('Downloaded file is empty');
     }
-    if (total && Number.isFinite(total) && stat.size !== total) {
+    if (stat.size !== total) {
       throw new Error(`Download incomplete: expected ${total} bytes but got ${stat.size}`);
     }
 
@@ -235,7 +264,7 @@ export async function downloadUpdate(
     // Emit final 100% progress
     onProgress({
       received,
-      total: total && Number.isFinite(total) ? total : received,
+      total,
       percent: 1,
       speed: currentSpeed,
     });
