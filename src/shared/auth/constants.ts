@@ -28,7 +28,7 @@ export const AuthWebSessionPartition = 'persist:lzclaw-web';
 export const EnterpriseDesktopAuthorizationCodePrefix = 'ent_';
 
 export const AuthLoginPageUrl = {
-  Development: 'http://127.0.0.1:3103/login',
+  Development: 'https://qiye.srmtj.com/login',
   Production: 'https://qiye.srmtj.com/login',
 } as const;
 

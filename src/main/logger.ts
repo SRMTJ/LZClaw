@@ -3,9 +3,9 @@
  * Intercepts console.* methods and writes to file + console simultaneously.
  *
  * Log file locations:
- *   macOS:   ~/Library/Logs/LobsterAI/main-YYYY-MM-DD.log
- *   Windows: %USERPROFILE%\AppData\Roaming\LobsterAI\logs\main-YYYY-MM-DD.log
- *   Linux:   ~/.config/LobsterAI/logs/main-YYYY-MM-DD.log
+ *   macOS:   ~/Library/Logs/Dolphin/main-YYYY-MM-DD.log
+ *   Windows: %USERPROFILE%\AppData\Roaming\Dolphin\logs\main-YYYY-MM-DD.log
+ *   Linux:   ~/.config/Dolphin/logs/main-YYYY-MM-DD.log
  *
  * Rotation policy:
  *   - Daily log files (one file per calendar day)

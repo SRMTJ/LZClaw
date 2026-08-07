@@ -24,7 +24,7 @@ and rich artifacts.
 
 The `dev-htmm-v1` fork's user-visible product name is `海豚买买AI工作台`.
 Preserve legacy compatibility identifiers including the `lobsterai://` scheme,
-`com.lobsterai.app`, the `LobsterAI` executable and application-data directory,
+`com.lobsterai.app`, the `LobsterAI` executable and
 database filenames, provider IDs, headers, and environment variables unless a
 separate migration is explicitly approved.
 
@@ -305,10 +305,10 @@ Migrations are mostly ad-hoc `PRAGMA table_info()` checks in
 OpenClaw runtime state is under Electron `userData/openclaw`.
 
 Important paths:
-- `%APPDATA%/LobsterAI/openclaw/state/openclaw.json` on Windows: generated
+- `%APPDATA%/Dolphin/openclaw/state/openclaw.json` on Windows: generated
   OpenClaw config.
-- `%APPDATA%/LobsterAI/openclaw/state/workspace-main`: main agent workspace.
-- `%APPDATA%/LobsterAI/openclaw/state/workspace-{agentId}`: non-main agent
+- `%APPDATA%/Dolphin/openclaw/state/workspace-main`: main agent workspace.
+- `%APPDATA%/Dolphin/openclaw/state/workspace-{agentId}`: non-main agent
   workspaces.
 
 The main workspace path is resolved by `getMainAgentWorkspacePath()`.
@@ -332,15 +332,15 @@ Main process logging uses `electron-log` via `src/main/logger.ts`, which
 intercepts `console.*`.
 
 Main logs:
-- Windows: `%APPDATA%/LobsterAI/logs/main-YYYY-MM-DD.log`
-- macOS: `~/Library/Logs/LobsterAI/main-YYYY-MM-DD.log`
-- Linux: `~/.config/LobsterAI/logs/main-YYYY-MM-DD.log`
+- Windows: `%APPDATA%/Dolphin/logs/main-YYYY-MM-DD.log`
+- macOS: `~/Library/Logs/Dolphin/main-YYYY-MM-DD.log`
+- Linux: `~/.config/Dolphin/logs/main-YYYY-MM-DD.log`
 
 Main log retention is 7 days. Max file size is 80 MB; overflow rotates to
 `.old.log`.
 
 OpenClaw gateway capture logs:
-- Windows: `%APPDATA%/LobsterAI/openclaw/logs/gateway-YYYY-MM-DD.log`
+- Windows: `%APPDATA%/Dolphin/openclaw/logs/gateway-YYYY-MM-DD.log`
 - Retention is 3 days.
 
 OpenClaw's own daily logs may also exist in a temp directory. On Windows,

@@ -1,7 +1,7 @@
 {
-  "appId": "com.lobsterai.app",
+  "appId": "com.dolphin.app",
   "productName": "海豚买买AI工作台",
-  "executableName": "LobsterAI",
+  "executableName": "海豚买买AI工作台",
   "directories": {
     "output": "release"
   },
