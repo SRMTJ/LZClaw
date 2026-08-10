@@ -1,22 +1,13 @@
-import {
-  KIMI_K3_AGENTIC_CAPABILITY,
-  LOBSTERAI_CLIENT_CAPABILITIES_HEADER,
-  LOBSTERAI_CLIENT_VERSION_HEADER,
-} from '../../shared/providers/modelRuntimeProfiles';
 import { authQuotaGateStateFromQuota, normalizeAuthQuota } from '../authQuota';
-import {
-  type ServerModelMetadataInput,
-  updateServerModelMetadata,
-} from './claudeSettings';
-
-export type ServerModelEntry = ServerModelMetadataInput;
+import { updateServerModelMetadata } from './claudeSettings';
+import { fetchClientModelCatalog } from './clientModelCatalog';
 
 export type StartupCacheWarmupDeps = {
   serverBaseUrl: string;
+  modelCatalogUrl: string;
   fetchWithAuth: (url: string, options?: RequestInit) => Promise<Response>;
-  appendKeyfromQuery: (url: string) => string;
+  fetchPublic: (url: string, options?: RequestInit) => Promise<Response>;
   cachedSubscriptionStatus: string;
-  clientVersion: string;
   t: (key: string) => string;
 };
 
@@ -26,14 +17,6 @@ export type StartupCacheWarmupResult = {
 };
 
 const WARMUP_TIMEOUT = 5000;
-
-export const buildServerModelCapabilityHeaders = (
-  clientVersion: string,
-): Record<string, string> => ({
-  Accept: 'application/json',
-  [LOBSTERAI_CLIENT_CAPABILITIES_HEADER]: KIMI_K3_AGENTIC_CAPABILITY,
-  [LOBSTERAI_CLIENT_VERSION_HEADER]: clientVersion,
-});
 
 /**
  * Pre-warm quota and model caches so provider resolution and config sync
@@ -47,10 +30,10 @@ export const buildServerModelCapabilityHeaders = (
 export async function runStartupCacheWarmup(deps: StartupCacheWarmupDeps): Promise<StartupCacheWarmupResult> {
   const {
     serverBaseUrl,
+    modelCatalogUrl,
     fetchWithAuth,
-    appendKeyfromQuery,
+    fetchPublic,
     cachedSubscriptionStatus,
-    clientVersion,
     t,
   } = deps;
 
@@ -81,16 +64,15 @@ export async function runStartupCacheWarmup(deps: StartupCacheWarmupDeps): Promi
     })(),
     (async () => {
       try {
-        const url = appendKeyfromQuery(`${serverBaseUrl}/api/models/available`);
-        const resp = await fetchWithAuth(url, {
-          headers: buildServerModelCapabilityHeaders(clientVersion),
-          signal: AbortSignal.timeout(WARMUP_TIMEOUT),
-        });
-        if (!resp.ok) return;
-        const data = (await resp.json()) as { code: number; data: ServerModelEntry[] };
-        if (data.code !== 0 || !data.data) return;
-        updateServerModelMetadata(data.data);
-        console.log(`[Main] startup cache warmup: loaded ${data.data.length} server models`);
+        const catalog = await fetchClientModelCatalog(
+          modelCatalogUrl,
+          fetchPublic,
+          WARMUP_TIMEOUT,
+        );
+        updateServerModelMetadata(catalog.models);
+        console.log(
+          `[Main] startup cache warmup: loaded ${catalog.models.length} server models (${catalog.status})`,
+        );
       } catch (err) {
         console.debug('[Main] startup cache warmup: models fetch failed (non-fatal):', err);
       }

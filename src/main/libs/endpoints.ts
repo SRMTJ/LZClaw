@@ -2,6 +2,7 @@ import { app } from 'electron';
 
 import { resolveLzClawUpdateUrl } from '../../shared/appUpdate/endpoints';
 import { HtmlSharePublicRoute } from '../../shared/htmlShare/constants';
+import { resolveLzClawModelCatalogUrl } from '../../shared/modelCatalog/endpoints';
 import type { SqliteStore } from '../sqliteStore';
 
 let cachedTestMode: boolean | null = null;
@@ -64,6 +65,10 @@ export const getUpdateCheckUrl = (): string => (
 
 export const getManualUpdateCheckUrl = (): string => (
   resolveLzClawUpdateUrl(!app.isPackaged, true)
+);
+
+export const getModelCatalogUrl = (): string => (
+  resolveLzClawModelCatalogUrl(!app.isPackaged)
 );
 
 export const getSkillStoreUrl = (): string => (

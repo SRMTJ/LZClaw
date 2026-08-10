@@ -8,6 +8,7 @@ import {
   type AuthRefreshReason as AuthRefreshReasonValue,
   type AuthTokenRefreshResult,
 } from '../../shared/auth/constants';
+import type { EnterpriseModelCredential } from '../../shared/modelCredential/constants';
 import {
   KIMI_K3_AGENTIC_CAPABILITY,
   LOBSTERAI_CLIENT_CAPABILITIES_HEADER,
@@ -29,12 +30,14 @@ let tokenRefresher: (
 ) | null = null;
 let serverBaseUrlGetter: (() => string) | null = null;
 let clientVersionGetter: (() => string) | null = null;
+let enterpriseModelCredentialGetter: (() => EnterpriseModelCredential | null) | null = null;
 
 export type OpenClawTokenProxyConfig = {
   getAuthTokens: () => { accessToken: string; refreshToken: string } | null;
   refreshToken: (reason: AuthRefreshReasonValue) => Promise<AuthTokenRefreshResult>;
   getServerBaseUrl: () => string;
   getClientVersion: () => string;
+  getEnterpriseModelCredential: () => EnterpriseModelCredential | null;
 };
 
 type OpenClawTokenProxyQuotaError = {
@@ -48,6 +51,7 @@ export function startOpenClawTokenProxy(config: OpenClawTokenProxyConfig): Promi
   tokenRefresher = config.refreshToken;
   serverBaseUrlGetter = config.getServerBaseUrl;
   clientVersionGetter = config.getClientVersion;
+  enterpriseModelCredentialGetter = config.getEnterpriseModelCredential;
 
   return new Promise((resolve, reject) => {
     if (proxyServer) {
@@ -88,6 +92,7 @@ export function stopOpenClawTokenProxy(): void {
     proxyPort = null;
     recentQuotaError = null;
     clientVersionGetter = null;
+    enterpriseModelCredentialGetter = null;
     console.log('[OpenClawTokenProxy] stopped');
   }
 }
@@ -143,10 +148,11 @@ function writeTemporaryAuthRefreshFailure(res: http.ServerResponse): void {
 
 async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   try {
+    const enterpriseCredential = enterpriseModelCredentialGetter?.();
     const tokens = tokenGetter?.();
     const serverBaseUrl = serverBaseUrlGetter?.();
 
-    if (!tokens?.accessToken || !serverBaseUrl) {
+    if (!enterpriseCredential && (!tokens?.accessToken || !serverBaseUrl)) {
       res.writeHead(503, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'No auth tokens available' }));
       return;
@@ -160,19 +166,29 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     // Build upstream URL: serverBaseUrl + request path
     // OpenClaw sends to /v1/chat/completions, upstream is /api/proxy/v1/chat/completions
     const upstreamPath = `/api/proxy${req.url || '/'}`;
-    const upstreamUrl = `${serverBaseUrl}${upstreamPath}`;
+    const upstreamUrl = enterpriseCredential
+      ? buildEnterpriseUpstreamUrl(enterpriseCredential.baseUrl, req.url || '/')
+      : `${serverBaseUrl}${upstreamPath}`;
+    const upstreamToken = enterpriseCredential?.apiKey ?? tokens?.accessToken ?? '';
 
     const clientVersion = clientVersionGetter?.() ?? '';
     let result = await forwardRequest(
       upstreamUrl,
       req.method || 'POST',
-      tokens.accessToken,
+      upstreamToken,
       upstreamBody,
       req.headers,
       clientVersion,
+      enterpriseCredential !== null && enterpriseCredential !== undefined,
     );
 
-    if (shouldRefreshLobsterAIToken(result.status) && tokenRefresher) {
+    if (enterpriseCredential && result.status >= 300 && result.status < 400) {
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Enterprise model upstream redirect rejected' }));
+      return;
+    }
+
+    if (!enterpriseCredential && shouldRefreshLobsterAIToken(result.status) && tokenRefresher && tokens) {
       const latestAccessToken = tokenGetter?.()?.accessToken;
       if (latestAccessToken && latestAccessToken !== tokens.accessToken) {
         result = await forwardRequest(
@@ -217,6 +233,18 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       res.end(JSON.stringify({ error: 'Token proxy upstream error' }));
     }
   }
+}
+
+function buildEnterpriseUpstreamUrl(baseUrl: string, requestUrl: string): string {
+  const base = new URL(baseUrl);
+  const request = new URL(requestUrl, 'http://127.0.0.1');
+  const normalizedBasePath = base.pathname.replace(/\/+$/, '');
+  const normalizedRequestPath = request.pathname.startsWith('/v1/') && normalizedBasePath.endsWith('/v1')
+    ? request.pathname.slice(3)
+    : request.pathname;
+  base.pathname = `${normalizedBasePath}${normalizedRequestPath.startsWith('/') ? '' : '/'}${normalizedRequestPath}`;
+  base.search = request.search;
+  return base.toString();
 }
 
 type UpstreamResult = {
@@ -626,6 +654,7 @@ async function forwardRequest(
   body: Buffer,
   incomingHeaders: http.IncomingHttpHeaders,
   clientVersion: string,
+  rejectRedirect = false,
 ): Promise<UpstreamResult> {
   const headers = buildUpstreamRequestHeaders(
     accessToken,
@@ -637,6 +666,7 @@ async function forwardRequest(
     method,
     headers,
     body: body.length > 0 ? new Uint8Array(body) : undefined,
+    redirect: rejectRedirect ? 'manual' : 'follow',
   });
 
   const contentType = resp.headers.get('content-type') || '';
@@ -898,6 +928,7 @@ function pipeWebReadableResponseWithQuotaScan(
 }
 
 export const __openClawTokenProxyTestUtils = {
+  buildEnterpriseUpstreamUrl,
   extractQuotaErrorFromProxyErrorPayload,
   extractQuotaErrorFromProxySSEPacket,
   hydrateGeminiChatCompletionsBody,

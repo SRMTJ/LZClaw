@@ -3,6 +3,10 @@ import {
   resolveAuthLoginPageUrl,
 } from '../../shared/auth/constants';
 import {
+  type EnterpriseModelCredential,
+  isEnterpriseModelCredential,
+} from '../../shared/modelCredential/constants';
+import {
   EnterpriseWebSessionEntryType,
   type EnterpriseWebSessionEntryType as EnterpriseWebSessionEntryTypeValue,
 } from './enterpriseWebSessionAuth';
@@ -23,6 +27,7 @@ export type EnterpriseDesktopExchangeResult =
   | {
       status: typeof EnterpriseDesktopExchangeStatus.Exchanged;
       entryType: EnterpriseWebSessionEntryTypeValue;
+      modelCredential?: EnterpriseModelCredential;
     }
   | {
       status: typeof EnterpriseDesktopExchangeStatus.Rejected;
@@ -177,6 +182,7 @@ export const exchangeEnterpriseDesktopAuthorization = async (
     const body = asRecord(await response.json().catch((): null => null));
     const data = asRecord(body?.data);
     const entryType = data?.entryType;
+    const rawModelCredential = data?.modelCredential;
     if (
       body?.code !== 0
       || (entryType !== EnterpriseWebSessionEntryType.Admin
@@ -190,6 +196,9 @@ export const exchangeEnterpriseDesktopAuthorization = async (
     return {
       status: EnterpriseDesktopExchangeStatus.Exchanged,
       entryType,
+      ...(isEnterpriseModelCredential(rawModelCredential, options.isDevelopment)
+        ? { modelCredential: rawModelCredential }
+        : {}),
     };
   } catch {
     return { status: EnterpriseDesktopExchangeStatus.Unavailable };

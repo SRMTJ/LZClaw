@@ -11,9 +11,9 @@ import {
 describe('enterprise desktop authorization exchange', () => {
   const codeVerifier = 'v'.repeat(43);
 
-  test('uses the environment-specific unified login origin', () => {
+  test('uses the configured unified login origin', () => {
     expect(resolveEnterpriseDesktopExchangeUrl(true)).toBe(
-      'http://127.0.0.1:3103/auth/workstation-desktop-exchange',
+      'https://qiye.srmtj.com/auth/workstation-desktop-exchange',
     );
     expect(resolveEnterpriseDesktopExchangeUrl(false)).toBe(
       'https://qiye.srmtj.com/auth/workstation-desktop-exchange',
@@ -36,7 +36,7 @@ describe('enterprise desktop authorization exchange', () => {
       entryType: 'employee',
     });
     expect(fetch).toHaveBeenCalledWith(
-      'http://127.0.0.1:3103/auth/workstation-desktop-exchange',
+      'https://qiye.srmtj.com/auth/workstation-desktop-exchange',
       {
         method: 'POST',
         credentials: 'include',
@@ -50,6 +50,44 @@ describe('enterprise desktop authorization exchange', () => {
         }),
       },
     );
+  });
+
+  test('accepts only a valid tenant-bound enterprise model credential', async () => {
+    const valid = {
+      provider: 'super_gateway',
+      tenantId: 'tenant-1',
+      baseUrl: 'https://models.example.test/v1',
+      apiKey: 'sk-1234567890abcdef',
+    };
+    await expect(exchangeEnterpriseDesktopAuthorization({
+      authCode: `ent_${'d'.repeat(43)}`,
+      codeVerifier,
+      fetch: vi.fn(async () => new Response(JSON.stringify({
+        code: 0,
+        data: { entryType: 'admin', modelCredential: valid },
+      }), { status: 200 })),
+      isDevelopment: false,
+    })).resolves.toEqual({
+      status: EnterpriseDesktopExchangeStatus.Exchanged,
+      entryType: 'admin',
+      modelCredential: valid,
+    });
+
+    await expect(exchangeEnterpriseDesktopAuthorization({
+      authCode: `ent_${'e'.repeat(43)}`,
+      codeVerifier,
+      fetch: vi.fn(async () => new Response(JSON.stringify({
+        code: 0,
+        data: {
+          entryType: 'admin',
+          modelCredential: { ...valid, baseUrl: 'http://models.example.test/v1' },
+        },
+      }), { status: 200 })),
+      isDevelopment: false,
+    })).resolves.toEqual({
+      status: EnterpriseDesktopExchangeStatus.Exchanged,
+      entryType: 'admin',
+    });
   });
 
   test('does not fall through on a rejected, missing, or malformed enterprise exchange', async () => {

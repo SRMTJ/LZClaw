@@ -38,6 +38,16 @@ export const resolveAuthLoginPageUrl = (isDevelopment: boolean): string => (
     : AuthLoginPageUrl.Production
 );
 
+export const shouldUseDevelopmentAuthEndpoints = (
+  isApplicationDevelopment: boolean,
+  isPackaged: boolean,
+): boolean => (
+  isApplicationDevelopment
+  && !isPackaged
+  && new URL(AuthLoginPageUrl.Development).origin
+    !== new URL(AuthLoginPageUrl.Production).origin
+);
+
 export type AuthIpcChannel = typeof AuthIpcChannel[keyof typeof AuthIpcChannel];
 
 export interface AuthLoginInAppBounds {

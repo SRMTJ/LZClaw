@@ -34,6 +34,17 @@ test('turns only transient refresh failures into temporary service errors', () =
   })).toBe(false);
 });
 
+test('joins an enterprise model base URL without duplicating the v1 path', () => {
+  expect(testUtils.buildEnterpriseUpstreamUrl(
+    'https://models.example.test/v1',
+    '/v1/chat/completions?stream=true',
+  )).toBe('https://models.example.test/v1/chat/completions?stream=true');
+  expect(testUtils.buildEnterpriseUpstreamUrl(
+    'https://models.example.test',
+    '/v1/models',
+  )).toBe('https://models.example.test/v1/models');
+});
+
 type MockProxyResponse = {
   write: ReturnType<typeof vi.fn>;
   end: ReturnType<typeof vi.fn>;

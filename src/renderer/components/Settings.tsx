@@ -100,6 +100,8 @@ import ThemedSelect from './ui/ThemedSelect';
 
 type TabType = 'general' | 'appearance' | 'coworkAgentEngine' | 'model' | 'browserWebAccess' | 'coworkMemory' | 'coworkDreaming' | 'shortcuts' | 'im' | 'email' | 'plugins' | 'about';
 
+const HIDDEN_SETTINGS_MENU_TABS: ReadonlySet<TabType> = new Set<TabType>(['model']);
+
 const waitForNextPaint = (): Promise<void> => new Promise(resolve => {
   window.requestAnimationFrame(() => {
     window.requestAnimationFrame(() => resolve());
@@ -172,7 +174,6 @@ const SETTINGS_TAB_SHORTCUT_ACTIONS: Partial<Record<ShortcutAction, TabType>> = 
   [ShortcutAction.OpenSettingsGeneral]: 'general',
   [ShortcutAction.OpenSettingsAppearance]: 'appearance',
   [ShortcutAction.OpenSettingsAgentEngine]: 'coworkAgentEngine',
-  [ShortcutAction.OpenSettingsModel]: 'model',
   [ShortcutAction.OpenSettingsIm]: 'im',
   [ShortcutAction.OpenSettingsBrowser]: 'browserWebAccess',
   [ShortcutAction.OpenSettingsEmail]: 'email',
@@ -768,7 +769,6 @@ const SETTINGS_TAB_SHORTCUT_COMMANDS: ShortcutCommandDefinition[] = [
   { key: ShortcutAction.OpenSettingsGeneral, tabLabelKey: 'general' },
   { key: ShortcutAction.OpenSettingsAppearance, tabLabelKey: 'appearance' },
   { key: ShortcutAction.OpenSettingsAgentEngine, tabLabelKey: 'coworkAgentEngine' },
-  { key: ShortcutAction.OpenSettingsModel, tabLabelKey: 'settingsCustomModel' },
   { key: ShortcutAction.OpenSettingsIm, tabLabelKey: 'imBot' },
   { key: ShortcutAction.OpenSettingsBrowser, tabLabelKey: 'browserWebAccessTab' },
   { key: ShortcutAction.OpenSettingsEmail, tabLabelKey: 'emailTab' },
@@ -5801,7 +5801,7 @@ const Settings: React.FC<SettingsProps> = ({
             <h2 className="text-lg font-semibold text-foreground">{i18nService.t('settings')}</h2>
           </div>
           <nav className="flex flex-col gap-0.5 px-3 pb-4">
-            {sidebarTabs.map((tab) => (
+            {sidebarTabs.filter((tab) => !HIDDEN_SETTINGS_MENU_TABS.has(tab.key)).map((tab) => (
               <button
                 key={tab.key}
                 onClick={() => handleTabChange(tab.key)}

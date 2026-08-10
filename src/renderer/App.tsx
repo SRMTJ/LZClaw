@@ -94,7 +94,6 @@ const SETTINGS_TAB_SHORTCUT_ACTIONS: Array<{
   { action: ShortcutAction.OpenSettingsGeneral, initialTab: 'general' },
   { action: ShortcutAction.OpenSettingsAppearance, initialTab: 'appearance' },
   { action: ShortcutAction.OpenSettingsAgentEngine, initialTab: 'coworkAgentEngine' },
-  { action: ShortcutAction.OpenSettingsModel, initialTab: 'model' },
   { action: ShortcutAction.OpenSettingsIm, initialTab: 'im' },
   { action: ShortcutAction.OpenSettingsBrowser, initialTab: 'browserWebAccess' },
   { action: ShortcutAction.OpenSettingsEmail, initialTab: 'email' },
@@ -769,7 +768,10 @@ const App: React.FC = () => {
     setPrivacyAgreed(true);
   }, []);
 
-  const handleWelcomeLogin = useCallback(async (bounds: AuthLoginInAppBounds) => {
+  const handleWelcomeLogin = useCallback(async (
+    bounds: AuthLoginInAppBounds,
+    onCompleting: () => void,
+  ) => {
     await acceptPrivacyAgreement();
     if (authUser) {
       await window.electron.businessCenter.setVisible(false);
@@ -780,7 +782,7 @@ const App: React.FC = () => {
 
     welcomeLoginStartedRef.current = true;
     try {
-      await authService.loginInApp(bounds);
+      await authService.loginInApp(bounds, onCompleting);
     } catch (error) {
       welcomeLoginStartedRef.current = false;
       throw error;
@@ -789,6 +791,7 @@ const App: React.FC = () => {
 
   const handleWelcomeLoginCancel = useCallback(() => {
     welcomeLoginStartedRef.current = false;
+    authService.cancelInAppLogin();
     void window.electron.auth.closeLoginInApp();
   }, []);
 

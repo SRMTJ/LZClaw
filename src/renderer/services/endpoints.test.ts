@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 test('login page url follows the renderer build environment', () => {
-  expect(resolveLoginPageUrl(true)).toBe('http://127.0.0.1:3103/login');
+  expect(resolveLoginPageUrl(true)).toBe('https://qiye.srmtj.com/login');
   expect(resolveLoginPageUrl(false)).toBe('https://qiye.srmtj.com/login');
 });
 

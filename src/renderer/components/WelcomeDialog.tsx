@@ -16,7 +16,10 @@ const LOGIN_TIMEOUT_MS = 120_000;
 
 interface WelcomeDialogProps {
   loginRequired: boolean;
-  onLogin: (bounds: AuthLoginInAppBounds) => void | Promise<void>;
+  onLogin: (
+    bounds: AuthLoginInAppBounds,
+    onCompleting: () => void,
+  ) => void | Promise<void>;
   onLoginCancel: () => void;
   onCustomModel: () => void;
 }
@@ -28,6 +31,7 @@ const WelcomeDialog: React.FC<WelcomeDialogProps> = ({
   onCustomModel,
 }) => {
   const [loginActive, setLoginActive] = useState(false);
+  const [loginCompleting, setLoginCompleting] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loginTimedOut, setLoginTimedOut] = useState(false);
   const loginHostRef = useRef<HTMLDivElement>(null);
@@ -61,6 +65,7 @@ const WelcomeDialog: React.FC<WelcomeDialogProps> = ({
       loginTimeoutRef.current = null;
     }
     setLoginActive(false);
+    setLoginCompleting(false);
     setLoginTimedOut(false);
     setLoginError(null);
     loginStartedRef.current = false;
@@ -75,13 +80,14 @@ const WelcomeDialog: React.FC<WelcomeDialogProps> = ({
       loginTimeoutRef.current = null;
     }
     setLoginTimedOut(false);
+    setLoginCompleting(false);
     setLoginActive(false);
+    onLoginCancel();
     // Defer re-activation so React can process the false → true transition
     requestAnimationFrame(() => {
-      void window.electron.auth.closeLoginInApp();
       setLoginActive(true);
     });
-  }, []);
+  }, [onLoginCancel]);
 
   useEffect(() => {
     if (!loginActive) return;
@@ -92,6 +98,7 @@ const WelcomeDialog: React.FC<WelcomeDialogProps> = ({
       const bounds = syncLoginBounds();
       if (!bounds || loginStartedRef.current) return;
       loginStartedRef.current = true;
+      setLoginCompleting(false);
 
       // Start a timeout to allow retry if the callback chain stalls
       loginTimeoutRef.current = setTimeout(() => {
@@ -101,10 +108,17 @@ const WelcomeDialog: React.FC<WelcomeDialogProps> = ({
         }
       }, LOGIN_TIMEOUT_MS);
 
-      Promise.resolve(onLogin(bounds)).catch((error) => {
-        console.error('[WelcomeDialog] failed to start embedded login:', error);
-        setLoginError(i18nService.t('welcomeLoginOpenFailed'));
-        cancelLogin();
+      Promise.resolve(onLogin(bounds, () => setLoginCompleting(true))).catch((error) => {
+        console.error('[WelcomeDialog] embedded login failed:', error);
+        if (loginTimeoutRef.current) {
+          clearTimeout(loginTimeoutRef.current);
+          loginTimeoutRef.current = null;
+        }
+        loginStartedRef.current = false;
+        setLoginActive(false);
+        setLoginTimedOut(false);
+        onLoginCancel();
+        setLoginError(i18nService.t('welcomeLoginFailed'));
       });
     };
 
@@ -162,7 +176,9 @@ const WelcomeDialog: React.FC<WelcomeDialogProps> = ({
               </>
             ) : (
               <p className="text-sm text-secondary">
-                {i18nService.t('welcomeLoginLoading')}
+                {i18nService.t(
+                  loginCompleting ? 'welcomeLoginCompleting' : 'welcomeLoginLoading',
+                )}
               </p>
             )}
           </div>

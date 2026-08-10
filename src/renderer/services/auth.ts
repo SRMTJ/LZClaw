@@ -36,6 +36,12 @@ interface AuthStateRefreshResult {
   quota: UserQuota | null;
 }
 
+interface PendingInAppLogin {
+  resolve: () => void;
+  reject: (error: Error) => void;
+  onCompleting?: () => void;
+}
+
 export interface PricingCatalogTextModel {
   modelId?: string;
   modelName?: string;
@@ -84,7 +90,11 @@ const readPositiveNumber = (value: unknown): number | undefined => (
     : undefined
 );
 
-const LEGACY_PRODUCT_PROVIDER_LABELS = new Set(['lobsterai', 'lobsterai plan']);
+const LEGACY_PRODUCT_PROVIDER_LABELS = new Set([
+  'lobsterai',
+  'lobsterai plan',
+  'super_gateway',
+]);
 
 const readProductProviderLabel = (model: PricingCatalogTextModel): string => {
   const label = readString(model.providerLabel) || readString(model.provider);
@@ -175,7 +185,7 @@ export function mapAvailableServerModelsToModels(
   return models.map(model => ({
     id: model.modelId,
     name: model.modelName,
-    provider: model.provider,
+    provider: readProductProviderLabel(model),
     providerKey: ProviderName.LobsteraiServer,
     isServerModel: true,
     serverApiFormat: model.apiFormat,
@@ -204,6 +214,7 @@ class AuthService {
   private unsubWindowState: (() => void) | null = null;
   private lastRefreshTime = 0;
   private loginAttemptSequence = 0;
+  private pendingInAppLogin: PendingInAppLogin | null = null;
 
   /**
    * Initialize: try to restore login state from persisted token.
@@ -293,31 +304,71 @@ class AuthService {
   /**
    * Initiate login inside the welcome guide without opening a separate window.
    */
-  async loginInApp(bounds: AuthLoginInAppBounds) {
-    const result = await window.electron.auth.loginInApp(bounds);
-    if (!result.success) {
-      throw new Error(result.error || 'Failed to open embedded login');
+  async loginInApp(
+    bounds: AuthLoginInAppBounds,
+    onCompleting?: () => void,
+  ): Promise<void> {
+    this.cancelInAppLogin();
+
+    let pendingLogin: PendingInAppLogin;
+    const completion = new Promise<void>((resolve, reject) => {
+      pendingLogin = { resolve, reject, onCompleting };
+    });
+    this.pendingInAppLogin = pendingLogin!;
+
+    try {
+      const result = await window.electron.auth.loginInApp(bounds);
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to open embedded login');
+      }
+      await completion;
+    } catch (error) {
+      if (this.pendingInAppLogin === pendingLogin!) {
+        this.pendingInAppLogin = null;
+      }
+      throw error;
     }
+  }
+
+  cancelInAppLogin(): void {
+    const pendingLogin = this.pendingInAppLogin;
+    this.pendingInAppLogin = null;
+    pendingLogin?.resolve();
   }
 
   /**
    * Handle OAuth callback with auth code.
    */
   async handleCallback(code: string): Promise<boolean> {
+    const pendingLogin = this.pendingInAppLogin;
     writeAuthRendererLog('info', 'received login callback; starting token exchange');
+    if (pendingLogin && this.pendingInAppLogin === pendingLogin) {
+      try {
+        pendingLogin.onCompleting?.();
+      } catch (error) {
+        writeAuthRendererLog('warn', 'failed to notify embedded login completion phase', error);
+      }
+    }
     try {
       const result = await window.electron.auth.exchange(code);
       if (result.success) {
         writeAuthRendererLog('info', 'login callback exchange succeeded');
         store.dispatch(setLoggedIn({ user: result.user, quota: result.quota }));
+        this.resolveInAppLogin(pendingLogin);
         await this.loadServerModels();
         void this.fetchProfileSummary();
         this.refreshQuota();
         return true;
       }
-      writeAuthRendererLog('warn', 'login callback exchange was rejected');
+      const error = new Error(result.error || 'Login callback exchange was rejected');
+      writeAuthRendererLog('warn', `login callback exchange was rejected (${error.message})`);
+      this.rejectInAppLogin(pendingLogin, error);
     } catch (e) {
       writeAuthRendererLog('warn', 'login callback exchange failed', e);
+      this.rejectInAppLogin(
+        pendingLogin,
+        e instanceof Error ? e : new Error('Login callback exchange failed'),
+      );
     }
     return false;
   }
@@ -445,6 +496,7 @@ class AuthService {
   }
 
   destroy() {
+    this.cancelInAppLogin();
     this.unsubCallback?.();
     this.unsubCallback = null;
     this.unsubSessionInvalidated?.();
@@ -457,6 +509,18 @@ class AuthService {
     this.unsubSessionChanged = null;
     this.unsubWindowState?.();
     this.unsubWindowState = null;
+  }
+
+  private resolveInAppLogin(pendingLogin: PendingInAppLogin | null): void {
+    if (!pendingLogin || this.pendingInAppLogin !== pendingLogin) return;
+    this.pendingInAppLogin = null;
+    pendingLogin.resolve();
+  }
+
+  private rejectInAppLogin(pendingLogin: PendingInAppLogin | null, error: Error): void {
+    if (!pendingLogin || this.pendingInAppLogin !== pendingLogin) return;
+    this.pendingInAppLogin = null;
+    pendingLogin.reject(error);
   }
 
   private async handleSessionChanged(event: AuthSessionChangedEvent): Promise<void> {

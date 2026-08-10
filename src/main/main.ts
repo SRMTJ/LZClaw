@@ -51,6 +51,7 @@ import {
   AuthSessionStatus,
   AuthWebSessionPartition,
   resolveAuthLoginPageUrl,
+  shouldUseDevelopmentAuthEndpoints,
 } from '../shared/auth/constants';
 import {
   type BrowserDiagnosticResultStep,
@@ -256,13 +257,17 @@ import {
   resolveAllEnabledProviderConfigs,
   resolveCurrentApiConfig,
   resolveRawApiConfig,
-  type ServerModelMetadataInput,
   ServerModelRunGateReason,
   setAuthTokensGetter,
+  setEnterpriseModelCredentialGetter,
   setServerBaseUrlGetter,
   setStoreGetter,
   updateServerModelMetadata,
 } from './libs/claudeSettings';
+import {
+  type ClientModelCatalogModel,
+  fetchClientModelCatalog,
+} from './libs/clientModelCatalog';
 import {
   clearCopilotTokenState,
   initCopilotTokenManager,
@@ -301,6 +306,7 @@ import {
   getAuthApiBaseUrl,
   getHtmlSharePublicBaseUrl,
   getKitStoreUrl,
+  getModelCatalogUrl,
   getPortalTasksUrl,
   getServerApiBaseUrl,
   getSkillStoreUrl,
@@ -317,6 +323,11 @@ import {
   exchangeEnterpriseDesktopAuthorization,
   shouldUseLegacyDesktopAuthorizationExchange,
 } from './libs/enterpriseDesktopAuth';
+import {
+  clearEnterpriseModelCredential,
+  getEnterpriseModelCredential as readEnterpriseModelCredential,
+  saveEnterpriseModelCredential,
+} from './libs/enterpriseModelCredentialStore';
 import {
   type EnterpriseWebSessionReference,
   EnterpriseWebSessionValidationStatus,
@@ -428,10 +439,7 @@ import {
 } from './libs/shareDeployment/shareDeploymentOperationCoordinator';
 import { SqliteBackupTrigger } from './libs/sqliteBackup/constants';
 import { SqliteBackupManager } from './libs/sqliteBackup/sqliteBackupManager';
-import {
-  buildServerModelCapabilityHeaders,
-  runStartupCacheWarmup,
-} from './libs/startupCacheWarmup';
+import { runStartupCacheWarmup } from './libs/startupCacheWarmup';
 import {
   applySystemProxyEnv,
   resolveSystemProxyUrlForTargets,
@@ -1738,6 +1746,7 @@ if (startupDataMigrationRestoreResult) {
 }
 
 const isDev = process.env.NODE_ENV === 'development';
+const authIsDevelopment = shouldUseDevelopmentAuthEndpoints(isDev, app.isPackaged);
 const isLinux = process.platform === 'linux';
 const isMac = process.platform === 'darwin';
 const isWindows = process.platform === 'win32';
@@ -4151,10 +4160,13 @@ if (!gotTheLock) {
         });
         focusMainWindow('embedded auth deep link');
       },
-      isAllowedNavigation: navigationUrl => isTrustedAuthLoginNavigation(navigationUrl, isDev),
+      isAllowedNavigation: navigationUrl => isTrustedAuthLoginNavigation(
+        navigationUrl,
+        authIsDevelopment,
+      ),
       isAuthenticatedNavigation: navigationUrl => (
         isAuthenticatedPortalNavigation(navigationUrl, LEGACY_AUTH_PORTAL_ORIGIN)
-        || resolveEnterpriseWebSessionTarget(navigationUrl, isDev) !== null
+        || resolveEnterpriseWebSessionTarget(navigationUrl, authIsDevelopment) !== null
       ),
       onAuthenticatedNavigation: navigationUrl =>
         recoverAuthFromEmbeddedWebSession(navigationUrl),
@@ -4544,7 +4556,7 @@ if (!gotTheLock) {
 
   const getEnterpriseAuthSession = (): EnterpriseWebSessionReference | null => {
     const stored = getStore().get<unknown>(AUTH_ENTERPRISE_SESSION_STORE_KEY);
-    if (isEnterpriseWebSessionReference(stored, isDev)) return stored;
+    if (isEnterpriseWebSessionReference(stored, authIsDevelopment)) return stored;
     if (stored !== undefined && stored !== null) {
       getStore().delete(AUTH_ENTERPRISE_SESSION_STORE_KEY);
     }
@@ -4555,15 +4567,20 @@ if (!gotTheLock) {
     getStore().delete(AUTH_ENTERPRISE_SESSION_STORE_KEY);
   };
 
+  const getStoredEnterpriseModelCredential = () => (
+    readEnterpriseModelCredential(getStore(), authIsDevelopment)
+  );
+
   /**
    * Helper: Persist auth tokens into the kv store.
    */
   const saveAuthTokens = async (accessToken: string, refreshToken: string) => {
     await clearEnterpriseAuthWebSessionCredentials(
       getLzclawWebSession(),
-      getEnterpriseWebSessionOrigins(isDev),
+      getEnterpriseWebSessionOrigins(authIsDevelopment),
     );
     clearEnterpriseAuthSession();
+    clearEnterpriseModelCredential(getStore());
     getStore().set('auth_tokens', { accessToken, refreshToken });
     await syncAuthWebSessionCookie(refreshToken).catch(error => {
       console.warn('[Auth] failed to sync browser session cookie:', error);
@@ -4701,6 +4718,11 @@ if (!gotTheLock) {
     cachedSubscriptionStatus = defaultQuotaGateState.subscriptionStatus;
     cachedMediaGenerationEntitled = defaultQuotaGateState.mediaGenerationEntitled;
     saveAuthUser(user);
+    const enterpriseId = typeof user.enterpriseId === 'string' ? user.enterpriseId : '';
+    const modelCredential = getStoredEnterpriseModelCredential();
+    if (modelCredential && modelCredential.tenantId !== enterpriseId) {
+      clearEnterpriseModelCredential(getStore());
+    }
     getStore().set(AUTH_ENTERPRISE_SESSION_STORE_KEY, reference);
   };
 
@@ -4748,7 +4770,7 @@ if (!gotTheLock) {
       const enterpriseResult = await recoverEnterpriseWebSession({
         navigationUrl,
         fetch: (url, options) => getLzclawWebSession().fetch(url, options),
-        isDevelopment: isDev,
+        isDevelopment: authIsDevelopment,
       });
       if (enterpriseResult.status !== EnterpriseWebSessionValidationStatus.Authenticated) {
         if (enterpriseResult.status !== EnterpriseWebSessionValidationStatus.Ignored) {
@@ -4817,45 +4839,24 @@ if (!gotTheLock) {
   const fetchWithAuth = (url: string, options?: RequestInit): Promise<Response> =>
     authSessionManager.fetchWithAuth(url, options);
 
-  type AvailableServerModel = ServerModelMetadataInput & {
-    modelId: string;
-    modelName: string;
-    provider: string;
-    apiFormat: string;
-    costMultiplier?: number;
-    description?: string;
-    accessible?: boolean;
-    restrictionHint?: string;
-  };
+  type AvailableServerModel = ClientModelCatalogModel;
 
   const loadAvailableServerModels = async (options: {
     reason: string;
     awaitConfigSync?: boolean;
     forceConfigSync?: boolean;
   }): Promise<AvailableServerModel[]> => {
-    const serverBaseUrl = getAuthApiBaseUrl();
-    const url = appendKeyfromQuery(`${serverBaseUrl}/api/models/available`);
-    console.log(`[Auth:getModels] requesting available models at ${url}`);
-    const resp = await fetchWithAuth(url, {
-      headers: buildServerModelCapabilityHeaders(app.getVersion()),
-    });
-    console.log('[Auth:getModels] Response status:', resp.status);
-    if (!resp.ok) {
-      throw new Error(`Server model request failed with HTTP ${resp.status}.`);
-    }
+    const url = getModelCatalogUrl();
+    console.log(`[Auth:getModels] requesting public client model catalog at ${url}`);
+    const catalog = await fetchClientModelCatalog(url, (requestUrl, requestOptions) => (
+      net.fetch(requestUrl, requestOptions)
+    ));
+    console.log(
+      `[Auth:getModels] loaded ${catalog.models.length} server model(s); status=${catalog.status}`,
+    );
 
-    const data = (await resp.json()) as {
-      code: number;
-      message?: string;
-      data?: AvailableServerModel[];
-    };
-    console.log('[Auth:getModels] Response data:', JSON.stringify(data).slice(0, 500));
-    if (data.code !== 0 || !Array.isArray(data.data)) {
-      throw new Error(data.message || 'Server model response is invalid.');
-    }
-
-    const serverModelsChanged = updateServerModelMetadata(data.data);
-    const serverModelIds = data.data.map(model => model.modelId);
+    const serverModelsChanged = updateServerModelMetadata(catalog.models);
+    const serverModelIds = catalog.models.map(model => model.modelId);
     const serverModelsMissingFromConfig = !openClawConfigHasServerModels(serverModelIds);
     const configSyncOptions = {
       metadataChanged: serverModelsChanged,
@@ -4886,7 +4887,7 @@ if (!gotTheLock) {
       console.debug('[Auth:getModels] server model metadata unchanged, skipping config sync');
     }
 
-    return data.data.map((model) => {
+    return catalog.models.map((model) => {
       const metadata = getServerModelMetadata(model.modelId);
       return {
         ...model,
@@ -5993,6 +5994,7 @@ if (!gotTheLock) {
     });
     clearAuthTokens();
     clearEnterpriseAuthSession();
+    clearEnterpriseModelCredential(getStore());
     clearAuthUser();
     clearServerModelMetadata();
     resetAuthQuotaGateState();
@@ -6050,7 +6052,7 @@ if (!gotTheLock) {
   };
 
   ipcMain.handle(AuthIpcChannel.Login, async () => {
-    const baseUrl = resolveAuthLoginPageUrl(isDev);
+    const baseUrl = resolveAuthLoginPageUrl(authIsDevelopment);
     let localCallback: Awaited<ReturnType<typeof startAuthLocalCallback>> | null = null;
 
     try {
@@ -6088,7 +6090,7 @@ if (!gotTheLock) {
     try {
       console.log('[Auth] starting embedded login view with local callback server');
       await getAuthInAppLoginView().open({
-        loginUrl: resolveAuthLoginPageUrl(isDev),
+        loginUrl: resolveAuthLoginPageUrl(authIsDevelopment),
         bounds: request?.bounds,
       });
       return { success: true };
@@ -6130,12 +6132,12 @@ if (!gotTheLock) {
         authCode: code,
         codeVerifier: enterpriseDesktopVerifierStore.consume(code) ?? undefined,
         fetch: (url, options) => getLzclawWebSession().fetch(url, options),
-        isDevelopment: isDev,
+        isDevelopment: authIsDevelopment,
       });
       if (enterpriseExchange.status === EnterpriseDesktopExchangeStatus.Exchanged) {
         const reference = resolveEnterpriseWebSessionReference(
           enterpriseExchange.entryType,
-          isDev,
+          authIsDevelopment,
         );
         if (!reference) {
           return { success: false, error: 'Enterprise Session target is invalid' };
@@ -6143,10 +6145,28 @@ if (!gotTheLock) {
         const enterpriseSession = await validateEnterpriseWebSession({
           reference,
           fetch: (url, options) => getLzclawWebSession().fetch(url, options),
-          isDevelopment: isDev,
+          isDevelopment: authIsDevelopment,
         });
         if (enterpriseSession.status !== EnterpriseWebSessionValidationStatus.Authenticated) {
+          console.warn(
+            `[Auth] enterprise desktop session validation failed (${enterpriseSession.status})`,
+          );
           return { success: false, error: 'Enterprise Session validation failed' };
+        }
+        clearEnterpriseModelCredential(getStore());
+        if (enterpriseExchange.modelCredential) {
+          if (enterpriseExchange.modelCredential.tenantId !== enterpriseSession.user.enterpriseId) {
+            return { success: false, error: 'Enterprise model credential does not match the Session' };
+          }
+          try {
+            saveEnterpriseModelCredential(
+              getStore(),
+              enterpriseExchange.modelCredential,
+              authIsDevelopment,
+            );
+          } catch {
+            console.warn('[Auth] enterprise model credential could not be stored securely');
+          }
         }
         await saveEnterpriseAuthSession(reference, enterpriseSession.user);
         const quota = normalizeQuota({});
@@ -6154,6 +6174,10 @@ if (!gotTheLock) {
         return { success: true, user: enterpriseSession.user, quota };
       }
       if (!shouldUseLegacyDesktopAuthorizationExchange(code, enterpriseExchange)) {
+        const exchangeFailure = enterpriseExchange.status === EnterpriseDesktopExchangeStatus.Rejected
+          ? `${enterpriseExchange.status}, HTTP ${enterpriseExchange.httpStatus}`
+          : enterpriseExchange.status;
+        console.warn(`[Auth] enterprise desktop authorization exchange failed (${exchangeFailure})`);
         return { success: false, error: 'Enterprise authorization exchange failed' };
       }
 
@@ -6204,7 +6228,7 @@ if (!gotTheLock) {
         const enterpriseResult = await validateEnterpriseWebSession({
           reference: enterpriseSession,
           fetch: (url, options) => getLzclawWebSession().fetch(url, options),
-          isDevelopment: isDev,
+          isDevelopment: authIsDevelopment,
         });
         if (enterpriseResult.status === EnterpriseWebSessionValidationStatus.Authenticated) {
           saveAuthUser(enterpriseResult.user);
@@ -6405,7 +6429,7 @@ if (!gotTheLock) {
         const serverLoggedOut = await logoutEnterpriseWebSession({
           reference: enterpriseSession,
           fetch: (url, options) => getLzclawWebSession().fetch(url, options),
-          isDevelopment: isDev,
+          isDevelopment: authIsDevelopment,
         });
         if (!serverLoggedOut) {
           console.warn('[Auth] enterprise logout was not confirmed; clearing the local web session');
@@ -6504,11 +6528,6 @@ if (!gotTheLock) {
 
   ipcMain.handle(AuthIpcChannel.GetModels, async () => {
     try {
-      const tokens = getAuthTokens();
-      if (!tokens) {
-        console.log('[Auth:getModels] No auth tokens available');
-        return { success: false };
-      }
       const models = await loadAvailableServerModels({
         reason: 'server-models-updated',
       });
@@ -12474,6 +12493,7 @@ if (!gotTheLock) {
       return tokens;
     });
     setServerBaseUrlGetter(() => getServerApiBaseUrl());
+    setEnterpriseModelCredentialGetter(getStoredEnterpriseModelCredential);
 
     // Initialize Copilot token manager and restore token state if available
     initCopilotTokenManager(getStore);
@@ -12530,6 +12550,7 @@ if (!gotTheLock) {
         refreshToken: reason => authSessionManager.refresh(reason),
         getServerBaseUrl: getServerApiBaseUrl,
         getClientVersion: () => app.getVersion(),
+        getEnterpriseModelCredential: getStoredEnterpriseModelCredential,
       });
       console.log('[Main] OpenClaw token proxy started');
     } catch (err) {
@@ -12658,10 +12679,10 @@ if (!gotTheLock) {
       profiler.mark('startupCacheWarmup');
       const warmupResult = await runStartupCacheWarmup({
         serverBaseUrl: getAuthApiBaseUrl(),
+        modelCatalogUrl: getModelCatalogUrl(),
         fetchWithAuth,
-        appendKeyfromQuery,
+        fetchPublic: (url, options) => net.fetch(url, options),
         cachedSubscriptionStatus,
-        clientVersion: app.getVersion(),
         t,
       });
       cachedSubscriptionStatus = warmupResult.subscriptionStatus;

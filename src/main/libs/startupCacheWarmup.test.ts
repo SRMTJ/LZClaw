@@ -8,72 +8,61 @@ vi.mock('./claudeSettings', () => ({
   updateServerModelMetadata,
 }));
 
-import {
-  buildServerModelCapabilityHeaders,
-  runStartupCacheWarmup,
-} from './startupCacheWarmup';
+import { runStartupCacheWarmup } from './startupCacheWarmup';
 
 beforeEach(() => {
   updateServerModelMetadata.mockReset();
 });
 
 describe('startup server model warmup', () => {
-  test('sends the fixed K3 capability and client version', () => {
-    expect(buildServerModelCapabilityHeaders('2026.7.23')).toEqual({
-      Accept: 'application/json',
-      'X-LobsterAI-Client-Capabilities': 'kimi-k3-agentic-v1',
-      'X-LobsterAI-Client-Version': '2026.7.23',
-    });
-  });
-
-  test('passes the complete server model metadata into the main cache', async () => {
+  test('loads the public catalog without sending the native auth request through it', async () => {
     const serverModels = [{
-      modelId: 'kimi-k3-YoudaoInner',
-      modelName: 'Kimi K3',
-      provider: 'moonshot',
+      modelId: 'kimi-k2',
+      modelName: 'Kimi K2',
+      provider: 'super_gateway',
       apiFormat: 'openai',
-      runtimeProfile: 'moonshot-kimi-k3',
-      supportsImage: true,
-      supportsVideo: true,
-      supportsThinking: true,
-      supportsToolCalling: true,
-      agenticReady: false,
-      contextWindow: 1_048_576,
-      maxTokens: 8_192,
+      platforms: ['openai'],
+      accessible: true,
     }];
-    const fetchWithAuth = vi.fn(async (url: string) => {
-      if (url.includes('/api/user/quota')) {
-        return new Response(JSON.stringify({
-          code: 0,
-          data: {
-            subscriptionStatus: 'free',
-          },
-        }), { status: 200 });
-      }
-      return new Response(JSON.stringify({ code: 0, data: serverModels }), {
+    const fetchWithAuth = vi.fn(async () => new Response(JSON.stringify({
+      code: 0,
+      data: {
+        subscriptionStatus: 'free',
+      },
+    }), { status: 200 }));
+    const fetchPublic = vi.fn(async () => new Response(JSON.stringify({
+      code: 0,
+      data: {
+        appCode: 'claw',
+        status: 'success',
+        source: 'super_gateway',
+        syncedAt: '2026-08-10T08:00:00Z',
+        models: serverModels,
+      },
+    }), {
         status: 200,
-      });
-    });
+      }));
 
     await runStartupCacheWarmup({
       serverBaseUrl: 'https://lobster.test',
+      modelCatalogUrl: 'https://platform.test/api/client-models/claw/models',
       fetchWithAuth,
-      appendKeyfromQuery: url => url,
+      fetchPublic,
       cachedSubscriptionStatus: 'free',
-      clientVersion: '2026.7.23',
       t: key => key,
     });
 
     expect(updateServerModelMetadata).toHaveBeenCalledWith(serverModels);
-    expect(fetchWithAuth).toHaveBeenCalledWith(
-      'https://lobster.test/api/models/available',
+    expect(fetchPublic).toHaveBeenCalledWith(
+      'https://platform.test/api/client-models/claw/models',
       expect.objectContaining({
-        headers: {
-          Accept: 'application/json',
-          'X-LobsterAI-Client-Capabilities': 'kimi-k3-agentic-v1',
-          'X-LobsterAI-Client-Version': '2026.7.23',
-        },
+        headers: { Accept: 'application/json' },
       }),
+    );
+    expect(fetchWithAuth).toHaveBeenCalledTimes(1);
+    expect(fetchWithAuth).toHaveBeenCalledWith(
+      'https://lobster.test/api/user/quota',
+      expect.any(Object),
     );
   });
 });

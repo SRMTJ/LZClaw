@@ -81,6 +81,18 @@ describe('pricing catalog model mapping', () => {
 });
 
 describe('authenticated server model mapping', () => {
+  test('uses the product label for the public super gateway catalog', () => {
+    const [model] = mapAvailableServerModelsToModels([{
+      modelId: 'kimi-k2',
+      modelName: 'Kimi K2',
+      provider: 'super_gateway',
+      apiFormat: 'openai',
+      accessible: true,
+    }]);
+
+    expect(model.provider).toBe(APP_NAME);
+  });
+
   test('preserves K3 runtime, modality, token, and agentic metadata', () => {
     const [model] = mapAvailableServerModelsToModels([{
       modelId: 'kimi-k3-YoudaoInner',
@@ -183,6 +195,82 @@ describe('login diagnostics', () => {
       'AuthService',
       expect.stringMatching(/^login attempt \d+ could not open the system browser$/),
     );
+  });
+
+  test('keeps embedded login pending until the callback exchange succeeds', async () => {
+    const user = { yid: 'user@example.com', nickname: 'Enterprise User', avatarUrl: null };
+    const quota = {
+      planName: '免费',
+      subscriptionStatus: 'free',
+      creditsLimit: 0,
+      creditsUsed: 0,
+      creditsRemaining: 0,
+    };
+    const loginInApp = vi.fn().mockResolvedValue({ success: true });
+    let finishExchange!: () => void;
+    const exchange = vi.fn().mockImplementation(async () => {
+      await new Promise<void>((resolve) => {
+        finishExchange = resolve;
+      });
+      return { success: true, user, quota };
+    });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    vi.stubGlobal('window', {
+      electron: {
+        auth: {
+          loginInApp,
+          exchange,
+          getModels: vi.fn().mockResolvedValue({ success: true, models: [] }),
+          getProfileSummary: vi.fn().mockResolvedValue({ success: false }),
+          getQuota: vi.fn().mockResolvedValue({ success: false }),
+        },
+        log: { fromRenderer: vi.fn() },
+      },
+    });
+
+    let completed = false;
+    const onCompleting = vi.fn();
+    const completion = authService.loginInApp(
+      { x: 0, y: 0, width: 800, height: 600 },
+      onCompleting,
+    );
+    void completion.then(() => {
+      completed = true;
+    });
+    await vi.waitFor(() => expect(loginInApp).toHaveBeenCalledOnce());
+    expect(completed).toBe(false);
+
+    const callbackCompletion = authService.handleCallback(`ent_${'d'.repeat(43)}`);
+    expect(onCompleting).toHaveBeenCalledOnce();
+    expect(exchange).toHaveBeenCalledOnce();
+    expect(completed).toBe(false);
+
+    finishExchange();
+    await expect(callbackCompletion).resolves.toBe(true);
+    await expect(completion).resolves.toBeUndefined();
+    expect(completed).toBe(true);
+  });
+
+  test('rejects embedded login when the callback exchange is rejected', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.stubGlobal('window', {
+      electron: {
+        auth: {
+          loginInApp: vi.fn().mockResolvedValue({ success: true }),
+          exchange: vi.fn().mockResolvedValue({
+            success: false,
+            error: 'Enterprise Session validation failed',
+          }),
+        },
+        log: { fromRenderer: vi.fn() },
+      },
+    });
+
+    const completion = authService.loginInApp({ x: 0, y: 0, width: 800, height: 600 });
+    const rejected = expect(completion).rejects.toThrow('Enterprise Session validation failed');
+    await expect(authService.handleCallback(`ent_${'e'.repeat(43)}`)).resolves.toBe(false);
+    await rejected;
   });
 });
 

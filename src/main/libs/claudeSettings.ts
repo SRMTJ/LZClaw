@@ -1,3 +1,4 @@
+import type { EnterpriseModelCredential } from '../../shared/modelCredential/constants';
 import { type ApiFormat,type ProviderConfig, ProviderName, ProviderRegistry, resolveCodingPlanBaseUrl } from '../../shared/providers';
 import {
   applyModelRuntimeProfileMetadata,
@@ -155,6 +156,14 @@ let serverBaseUrlGetter: (() => string) | null = null;
 
 export function setServerBaseUrlGetter(getter: () => string): void {
   serverBaseUrlGetter = getter;
+}
+
+let enterpriseModelCredentialGetter: (() => EnterpriseModelCredential | null) | null = null;
+
+export function setEnterpriseModelCredentialGetter(
+  getter: () => EnterpriseModelCredential | null,
+): void {
+  enterpriseModelCredentialGetter = getter;
 }
 
 // Cached server model metadata (populated when auth:getModels is called).
@@ -475,10 +484,14 @@ function shouldUseXaiOAuth(providerName: string, providerConfig: LocalProviderCo
 function tryLobsteraiServerFallback(modelId?: string): MatchedProvider | null {
   const tokens = authTokensGetter?.();
   const serverBaseUrl = serverBaseUrlGetter?.();
-  if (!tokens?.accessToken || !serverBaseUrl) return null;
+  const enterpriseCredential = enterpriseModelCredentialGetter?.();
+  const apiKey = enterpriseCredential?.apiKey ?? tokens?.accessToken;
+  const resolvedBaseUrl = enterpriseCredential?.baseUrl
+    ?? (serverBaseUrl ? `${serverBaseUrl}/api/proxy/v1` : '');
+  if (!apiKey || !resolvedBaseUrl) return null;
   const effectiveModelId = modelId?.trim() || '';
   if (!effectiveModelId) return null;
-  const baseURL = `${serverBaseUrl}/api/proxy/v1`;
+  const baseURL = resolvedBaseUrl;
   const cachedMeta = serverModelMetadataCache.get(effectiveModelId);
   const effectiveApiFormat = cachedMeta?.apiFormat
     ? normalizeProviderApiFormat(cachedMeta.apiFormat)
@@ -492,7 +505,7 @@ function tryLobsteraiServerFallback(modelId?: string): MatchedProvider | null {
   });
   return {
     providerName: ProviderName.LobsteraiServer,
-    providerConfig: { enabled: true, apiKey: tokens.accessToken, baseUrl: baseURL, apiFormat: effectiveApiFormat, models: buildServerFallbackModels(effectiveModelId) },
+    providerConfig: { enabled: true, apiKey, baseUrl: baseURL, apiFormat: effectiveApiFormat, models: buildServerFallbackModels(effectiveModelId) },
     modelId: effectiveModelId,
     apiFormat: effectiveApiFormat,
     baseURL,

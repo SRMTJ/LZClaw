@@ -9,7 +9,7 @@
 - 上游基线：`origin/main`
 - 最近同步的上游提交：`fb2963523a3fa7d913f5f5140f5d342b3694cfdb`
 - 最近合并提交：`5039f8f812f037a668253c2e4005fb9ea1daccc9`
-- 最近更新：2026-08-06
+- 最近更新：2026-08-10
 - 合并策略：只把 `origin/main` 合并到 `dev-htmm-v1`，不修改或推送 `main`
 
 每次合并上游后都要更新以上两个提交号。功能实现可以随上游结构调整，
@@ -34,12 +34,16 @@
 | 业务中心 | P0 | 侧边栏在 MCP 下方显示“业务中心”；开发构建固定加载 `http://127.0.0.1:3107`，生产构建固定加载 `https://qiye.srmtj.com`；切换菜单时只隐藏视图并保留滚动、表单和页面状态；只有持久化视图返回 `opened` 才向当前 IPC 调用报告打开成功 | `src/renderer/components/Sidebar.tsx`、`src/renderer/components/businessCenter/BusinessCenterView.tsx`、`src/main/libs/businessCenterInAppView.ts`、`src/shared/businessCenter/constants.ts` |
 | 原生视图覆盖保护 | P0 | 欢迎页、设置、更新、权限等覆盖层出现时隐藏业务中心原生视图；覆盖层关闭后恢复显示且不重载 | `src/renderer/App.tsx`、`src/renderer/components/businessCenter/BusinessCenterView.tsx` |
 | 版本更新分发 | P0 | 更新检查固定使用中台 `claw` 应用且只有一个发布通道：开发构建请求本地 `127.0.0.1:8080`，生产构建请求 `https://zhongtai.srmtj.com`；自动与手动检查共享同一环境解析逻辑，不能由用户可修改的 testMode 让生产包回连本机；安装包下载全平台禁止重定向、限制为 1 GiB，并在进入可安装状态前验证发布清单 SHA-256 | `src/shared/appUpdate/endpoints.ts`、`src/main/libs/endpoints.ts`、`src/renderer/services/endpoints.ts`、`src/main/libs/appUpdateInstaller.ts`、`src/main/libs/appUpdateCoordinator.ts` |
+| 模型目录 | P0 | 登录后的服务端模型列表固定读取中台 `claw` 公共目录：开发构建请求本地 `127.0.0.1:8080`，生产构建请求 `https://zhongtai.srmtj.com`；目录请求不携带桌面认证令牌，响应只接受经过清洗的模型字段，不得暴露超级网关通道、凭据或上游错误；模型执行仍保留原有权限与运行时能力门禁 | `src/shared/modelCatalog/endpoints.ts`、`src/main/libs/clientModelCatalog.ts`、`src/main/libs/endpoints.ts`、`src/main/main.ts`、`src/renderer/services/auth.ts` |
+| 企业模型凭据 | P0 | 企业桌面授权码交换可以同时返回该企业的超级网关永久 Key 与 HTTPS 模型地址；凭据只由 Electron 主进程接收，经系统安全存储加密后由回环代理使用，不进入 renderer、Redux、日志或 OpenClaw 配置；退出登录、切换企业或旧原生登录时必须清除。首期使用永久 Key，后续短期模型令牌不得破坏该兼容回退 | `src/shared/modelCredential/constants.ts`、`src/main/libs/enterpriseDesktopAuth.ts`、`src/main/libs/enterpriseModelCredentialStore.ts`、`src/main/libs/openclawTokenProxy.ts`、`src/main/libs/claudeSettings.ts`、`src/main/main.ts` |
 | 业务网页会话失效 | P0 | 业务中心普通导航或 SPA 导航到 `/login` 时，隐藏业务视图、清除桌面登录状态并返回欢迎页 | `src/main/libs/businessCenterInAppView.ts`、`src/main/main.ts` |
 | 导航与 Electron 安全 | P0 | 保持 Node 主线程、Worker 和子框架集成关闭，启用 `contextIsolation`、`sandbox` 和 `webSecurity`，禁用不安全混合内容、WebView、实验特性和宿主 Blink 特性；同源业务导航留在应用内，外部 HTTP/HTTPS 使用系统浏览器，其他协议阻止 | `src/main/libs/authInAppLoginView.ts`、`src/main/libs/businessCenterInAppView.ts` |
 | IPC 契约集中管理 | P1 | 登录和业务中心 IPC 名称、请求类型、状态类型继续放在 `src/shared`，主进程、preload 和 renderer 不各自写字符串 | `src/shared/auth/constants.ts`、`src/shared/businessCenter/constants.ts`、`src/main/preload.ts`、`src/renderer/types/electron.d.ts` |
 | 本地开发隔离 | P2 | 忽略 `.codex-run/`；项目 `.npmrc` 清空继承的用户级 `allow-scripts`，避免嵌套 npm 安装被本机配置污染 | `.gitignore`、`.npmrc` |
 | IM 通道精简 | P1 | “IM 机器人”、智能体绑定和定时任务只提供当前产品支持的通道；云信、小蜜蜂、POPO、龙虾邮箱保留旧数据识别能力但不可再配置、不会同步到 OpenClaw，且对应第三方插件不安装、不打包并会从已有运行时清理 | `src/shared/platform/constants.ts`、`src/renderer/utils/regionFilter.ts`、`src/main/libs/openclawConfigSync.ts`、`scripts/ensure-openclaw-plugins.cjs`、`package.json` |
 | “我的”菜单精简 | P2 | “我的”账户菜单不显示“用量概览”“去充值”“邀请好友”入口；保留积分权益活动、签到和退出登录等现有账户功能 | `src/renderer/components/LoginButton.tsx` |
+| 设置菜单精简 | P1 | 设置左侧菜单不显示“自定义模型”入口，快捷键列表不显示也不注册“打开设置：自定义模型”；底层自定义 provider、历史配置读取和内部兼容入口保持不变 | `src/renderer/App.tsx`、`src/renderer/components/Settings.tsx` |
+| Agent 聊天媒体生成入口 | P1 | Agent 聊天输入工具栏不显示“图片/视频生成服务”按钮及其模型选择弹层；图片附件上传、消息内媒体预览和底层兼容代码保持不变 | `src/renderer/components/cowork/CoworkPromptInput.tsx` |
 | 行为埋点关闭 | P0 | 不向有道行为分析端点发送产品使用事件；新旧用户配置都强制关闭，设置页不提供重新开启入口；本地主进程日志、OpenClaw 网关日志和用户主动导出的诊断包继续可用 | `src/renderer/constants/analytics.ts`、`src/renderer/services/logReporter.ts`、`src/renderer/services/config.ts`、`src/renderer/config.ts`、`src/renderer/components/Settings.tsx` |
 
 持久化网页视图的详细架构和生命周期见
@@ -64,6 +68,27 @@
 - 开发/生产选择以 Electron 是否为打包构建和 renderer 构建环境为准；应用设置中的
   testMode 不改变更新服务环境。
 
+模型目录同样由 `D:\AI-AI\AIZhongtai\grit-platform-admin` 提供：
+
+- 开发：`http://127.0.0.1:8080/api/client-models/claw/models`
+- 生产：`https://zhongtai.srmtj.com/api/client-models/claw/models`
+- 接口无需登录，不接受强制刷新参数；只返回模型标识、名称、统一 provider、API 格式、
+  支持平台和可用状态，不返回超级网关通道 ID、通道名称、凭据或原始上游错误。
+- 开发/生产只按 Electron 是否为打包构建切换主机，不读取应用 testMode；公开可读仅代表
+  可展示模型目录，模型执行仍必须通过客户端既有认证、配额和运行时能力检查。
+
+企业模型凭据由登录交换链路按当前服务端 Session 的企业身份返回：
+
+- 当前阶段使用企业专属永久 Key；新企业在超级网关账号同步成功后立即尝试创建，已有企业
+  或创建时上游暂时失败的企业在首次桌面登录时幂等补齐。
+- Key 由平台中台加密保存，经企业中台的服务间签名接口获取，再随一次性桌面授权码交换
+  只返回给 Electron 主进程。renderer 不得获取该字段。
+- Electron 使用操作系统安全存储保存凭据；OpenClaw 只接收回环代理地址和
+  `${LOBSTER_PROXY_TOKEN}`，永久 Key 仅在主进程代理向已校验的 HTTPS 模型地址发请求时使用，
+  且不得跟随重定向。
+- 退出登录、切换企业或改用旧原生令牌时删除本地企业模型凭据。后续改为短期模型令牌时，
+  可以复用同一主进程存储和代理边界，过渡期保留永久 Key 兼容读取。
+
 登录页面由 `D:\AI-AI\AIZhongtai\grit-enterprise-admin\apps\workstation-web`
 提供：
 
@@ -79,6 +104,8 @@
   企业桌面码使用 `ent_` 协议前缀，交换响应只能安装服务端绑定的管理员或员工
   Portal Session；登录请求只携带 S256 `code_challenge`，`codeVerifier` 只保存在 Electron
   主进程并在授权码交换请求体中一次性使用，不得进入 renderer、回调 URL、日志或本地记录；
+  可选的 `modelCredential` 只允许包含当前 Session 企业的 `super_gateway` HTTPS 地址和永久 Key，
+  缺失或模型凭据服务暂不可用不能使已消费的一次性登录码失效；
   企业桌面码只接受当前回环服务器完成 `state` 校验后的回调，必须拒绝从旧
   `lobsterai://` 深链注入；无此前缀的旧授权码继续交给原有交换端点
 - 内嵌登录导航仅额外放行当前登录操作创建的精确
