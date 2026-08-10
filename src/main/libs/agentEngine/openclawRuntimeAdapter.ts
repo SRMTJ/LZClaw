@@ -1590,7 +1590,10 @@ function classifyOpenClawSafeRuntimeErrorMetadata(
   const rawErrorClassifiedKey = metadata.rawErrorPreview
     ? classifyErrorKey(metadata.rawErrorPreview)
     : null;
-  if (rawErrorClassifiedKey === CoworkErrorI18nKey.ModelOverloaded) {
+  if (
+    rawErrorClassifiedKey === CoworkErrorI18nKey.ModelOverloaded
+    || rawErrorClassifiedKey === CoworkErrorI18nKey.ModelGroupMissing
+  ) {
     return rawErrorClassifiedKey;
   }
 
@@ -1624,6 +1627,10 @@ function isLobsterAILoginExpiredMetadata(
   if (metadata?.provider?.trim() !== ProviderName.LobsteraiServer) return false;
   if (metadata.httpCode?.trim() === '403') return false;
   if (metadata.providerRuntimeFailureKind?.trim() === 'auth_scope') return false;
+  if (
+    metadata.rawErrorPreview
+    && classifyErrorKey(metadata.rawErrorPreview) === CoworkErrorI18nKey.ModelGroupMissing
+  ) return false;
   return metadata.httpCode?.trim() === '401'
     || metadata.failoverReason?.trim() === 'auth'
     || metadata.providerRuntimeFailureKind?.trim() === 'auth_refresh'
@@ -1639,7 +1646,10 @@ export function resolveOpenClawRuntimeErrorMessage(
 
   // OpenClaw's friendly wrapper may already say "rate limit" even when its
   // preserved raw metadata identifies a provider-capacity failure.
-  if (metadataClassifiedKey === CoworkErrorI18nKey.ModelOverloaded) {
+  if (
+    metadataClassifiedKey === CoworkErrorI18nKey.ModelOverloaded
+    || metadataClassifiedKey === CoworkErrorI18nKey.ModelGroupMissing
+  ) {
     consumeRecentOpenClawTokenProxyQuotaError();
     return t(metadataClassifiedKey);
   }

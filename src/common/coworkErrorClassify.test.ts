@@ -58,6 +58,12 @@ test('auth: auth scope maps to model access denied', () => {
   expect(classifyError('providerRuntimeFailureKind=auth_scope')).toBe('coworkErrorModelAccessDenied');
 });
 
+test('auth: API key without a model group maps to platform configuration error', () => {
+  expect(classifyError(
+    '403 API Key is not assigned to any group and cannot be used. Please contact the administrator to assign it to a group.',
+  )).toBe('coworkErrorModelGroupMissing');
+});
+
 // ==================== Billing errors ====================
 
 test('billing: DeepSeek insufficient_balance', () => {

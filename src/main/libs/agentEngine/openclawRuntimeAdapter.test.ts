@@ -656,6 +656,19 @@ test('resolveOpenClawRuntimeErrorMessage keeps 海豚买买AI工作台 HTTP 403 
   })).toContain('无权访问该模型');
 });
 
+test('resolveOpenClawRuntimeErrorMessage does not report a missing API key group as expired login', () => {
+  const message = resolveOpenClawRuntimeErrorMessage('LLM request failed.', {
+    provider: 'lobsterai-server',
+    model: 'gpt-5.6-terra',
+    failoverReason: 'auth',
+    providerRuntimeFailureKind: 'unclassified',
+    rawErrorPreview: '403 API Key is not assigned to any group and cannot be used. Please contact the administrator to assign it to a group.',
+  });
+
+  expect(message).toContain('API Key 分配模型分组');
+  expect(message).not.toContain('登录状态已过期');
+});
+
 test('resolveOpenClawRuntimeErrorMessage classifies generic error from safe model access metadata', () => {
   expect(resolveOpenClawRuntimeErrorMessage('LLM request failed.', {
     provider: 'minimax',

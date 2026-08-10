@@ -65,6 +65,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkErrorLobsterAILoginExpired: '登录状态已过期，请重新登录后继续使用海豚买买AI工作台套餐模型。',
     coworkErrorOAuthInvalid: 'OAuth 授权已失效或权限不足，请重新授权后重试。',
     coworkErrorModelAccessDenied: '当前账号无权访问该模型，请切换模型或检查服务商账号权限。',
+    coworkErrorModelGroupMissing: '套餐模型权限配置异常，请联系管理员为 API Key 分配模型分组。',
     coworkErrorQuotaExhausted:
       '积分额度已用完，请升级套餐后继续使用。[立即升级/充值](https://lobsterai.youdao.com/portal#/pricing)',
     coworkErrorFreeQuotaExhausted:
@@ -387,6 +388,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
       'Your login session has expired. Sign in again to continue using 海豚买买AI工作台 plan models.',
     coworkErrorOAuthInvalid: 'OAuth authorization is invalid or missing required access. Re-authenticate and try again.',
     coworkErrorModelAccessDenied: 'This account is not allowed to access the selected model. Switch models or check provider account permissions.',
+    coworkErrorModelGroupMissing: 'Plan model access is misconfigured. Ask an administrator to assign the API key to a model group.',
     coworkErrorQuotaExhausted:
       'Your credits have been used up. Upgrade your plan to continue.\n\n[Upgrade or recharge](https://lobsterai.youdao.com/portal#/pricing)',
     coworkErrorFreeQuotaExhausted:

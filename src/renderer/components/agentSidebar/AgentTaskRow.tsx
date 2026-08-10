@@ -48,8 +48,9 @@ interface AgentTaskRowProps {
 
 const ACTION_MENU_VIEWPORT_PADDING = 8;
 const ACTION_MENU_VERTICAL_GAP = 4;
-const ACTION_MENU_HEIGHT = 164;
-const ACTION_MENU_WITH_BATCH_HEIGHT = 196;
+const SHOW_TASK_SHARE_ACTION = false;
+const ACTION_MENU_HEIGHT = 132;
+const ACTION_MENU_WITH_BATCH_HEIGHT = 164;
 
 const AgentTaskRow: React.FC<AgentTaskRowProps> = ({
   task,
@@ -379,19 +380,21 @@ const AgentTaskRow: React.FC<AgentTaskRowProps> = ({
             <PushPinIcon slashed={task.pinned} className={menuIconClassName} />
             {task.pinned ? i18nService.t('coworkUnpinSession') : i18nService.t('coworkPinSession')}
           </button>
-          <button
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation();
-              closeMenu();
-              void onShare();
-            }}
-            className={menuItemClassName}
-            role="menuitem"
-          >
-            <ShareIcon className={menuIconClassName} />
-            {i18nService.t('coworkShareSession')}
-          </button>
+          {SHOW_TASK_SHARE_ACTION && (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                closeMenu();
+                void onShare();
+              }}
+              className={menuItemClassName}
+              role="menuitem"
+            >
+              <ShareIcon className={menuIconClassName} />
+              {i18nService.t('coworkShareSession')}
+            </button>
+          )}
           <button
             type="button"
             onClick={(event) => {

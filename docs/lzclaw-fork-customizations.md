@@ -43,6 +43,7 @@
 | IM 通道精简 | P1 | “IM 机器人”、智能体绑定和定时任务只提供当前产品支持的通道；云信、小蜜蜂、POPO、龙虾邮箱保留旧数据识别能力但不可再配置、不会同步到 OpenClaw，且对应第三方插件不安装、不打包并会从已有运行时清理 | `src/shared/platform/constants.ts`、`src/renderer/utils/regionFilter.ts`、`src/main/libs/openclawConfigSync.ts`、`scripts/ensure-openclaw-plugins.cjs`、`package.json` |
 | “我的”菜单精简 | P2 | “我的”账户菜单不显示“用量概览”“去充值”“邀请好友”入口；保留积分权益活动、签到和退出登录等现有账户功能 | `src/renderer/components/LoginButton.tsx` |
 | 设置菜单精简 | P1 | 设置左侧菜单不显示“自定义模型”入口，快捷键列表不显示也不注册“打开设置：自定义模型”；底层自定义 provider、历史配置读取和内部兼容入口保持不变 | `src/renderer/App.tsx`、`src/renderer/components/Settings.tsx` |
+| 任务分享入口 | P1 | 任务列表的会话操作菜单不显示“分享”按钮；内部导出、分享事件和底层兼容实现保持不变 | `src/renderer/components/agentSidebar/AgentTaskRow.tsx` |
 | Agent 聊天媒体生成入口 | P1 | Agent 聊天输入工具栏不显示“图片/视频生成服务”按钮及其模型选择弹层；图片附件上传、消息内媒体预览和底层兼容代码保持不变 | `src/renderer/components/cowork/CoworkPromptInput.tsx` |
 | 行为埋点关闭 | P0 | 不向有道行为分析端点发送产品使用事件；新旧用户配置都强制关闭，设置页不提供重新开启入口；本地主进程日志、OpenClaw 网关日志和用户主动导出的诊断包继续可用 | `src/renderer/constants/analytics.ts`、`src/renderer/services/logReporter.ts`、`src/renderer/services/config.ts`、`src/renderer/config.ts`、`src/renderer/components/Settings.tsx` |
 

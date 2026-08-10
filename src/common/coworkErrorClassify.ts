@@ -11,6 +11,7 @@ export const CoworkErrorI18nKey = {
   LobsterAILoginExpired: 'coworkErrorLobsterAILoginExpired',
   OAuthInvalid: 'coworkErrorOAuthInvalid',
   ModelAccessDenied: 'coworkErrorModelAccessDenied',
+  ModelGroupMissing: 'coworkErrorModelGroupMissing',
   QuotaExhausted: 'coworkErrorQuotaExhausted',
   FreeQuotaExhausted: 'coworkErrorFreeQuotaExhausted',
   InsufficientBalance: 'coworkErrorInsufficientBalance',
@@ -35,6 +36,8 @@ const UNAVAILABLE_NETWORK_CODE_PATTERN = String.raw`(?:ECONNREFUSED|ECONNRESET|E
 const ERROR_RULES: Array<[RegExp, string]> = [
   // OAuth / token refresh failures. Must precede generic auth handling.
   [/oauth.*(invalid|expired|failed|error|scope|token|callback|authorization|not completed)|auth[_ ]refresh|refresh[_ ]timeout|callback[_ ](timeout|validation)|token.*(expired|invalid)|invalid.*token|authorization method/i, CoworkErrorI18nKey.OAuthInvalid],
+  // Platform API keys must be assigned to a model group. Must precede generic HTTP 403 handling.
+  [new RegExp(`${API_KEY_PATTERN}.*(?:not\\s+assigned\\s+to\\s+any\\s+group|not\\s+assigned\\s+to\\s+(?:a\\s+)?group|has\\s+no\\s+group)`, 'i'), CoworkErrorI18nKey.ModelGroupMissing],
   // Provider/model permission errors. Must precede generic auth handling.
   [/无权访问|没有权限|access denied|access.*forbidden|forbidden|permission denied|\b403\b|auth[_ ]scope/i, CoworkErrorI18nKey.ModelAccessDenied],
   // Auth: Anthropic, DeepSeek, OpenAI, Gemini, HTTP 401
