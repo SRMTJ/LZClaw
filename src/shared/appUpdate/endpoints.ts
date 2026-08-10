@@ -1,5 +1,5 @@
 const CLAW_UPDATE_APP_CODE = 'claw';
-const LOCAL_UPDATE_API_BASE_URL = 'http://127.0.0.1:8080';
+const LOCAL_UPDATE_API_BASE_URL = 'https://zhongtai.srmtj.com';
 const PRODUCTION_UPDATE_API_BASE_URL = 'https://zhongtai.srmtj.com';
 
 const AppUpdateRoute = {

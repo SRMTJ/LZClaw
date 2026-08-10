@@ -33,15 +33,12 @@ const localService: LocalWebService = {
 };
 
 describe('artifactToolbarPublishPolicy', () => {
-  test('shares a shareable Artifact in the regular preview toolbar', () => {
+  test('does not expose sharing in the regular preview toolbar', () => {
     const artifact = makeArtifact(ArtifactTypeValue.Image, {
       filePath: '/tmp/image.png',
     });
 
-    expect(resolveArtifactPreviewToolbarPublishTarget(artifact, true)).toEqual({
-      kind: ArtifactToolbarPublishActionKind.Share,
-      artifact,
-    });
+    expect(resolveArtifactPreviewToolbarPublishTarget(artifact, true)).toBeNull();
   });
 
   test('does not expose sharing without a controller or shareable source', () => {
@@ -58,7 +55,7 @@ describe('artifactToolbarPublishPolicy', () => {
     ).toBeNull();
   });
 
-  test('shares a managed HTML preview instead of deploying its loopback preview server', () => {
+  test('does not expose sharing for a managed HTML preview', () => {
     const artifact = makeArtifact(ArtifactTypeValue.Html, {
       filePath: '/tmp/index.html',
     });
@@ -67,10 +64,7 @@ describe('artifactToolbarPublishPolicy', () => {
       htmlArtifact: artifact,
       localService,
       shareAvailable: true,
-    })).toEqual({
-      kind: ArtifactToolbarPublishActionKind.Share,
-      artifact,
-    });
+    })).toBeNull();
   });
 
   test('does not deploy an unshareable managed HTML preview', () => {

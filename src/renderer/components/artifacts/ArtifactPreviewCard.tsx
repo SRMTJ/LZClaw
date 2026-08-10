@@ -18,6 +18,7 @@ import {
 import { useOptionalArtifactFileShare } from './ArtifactFileShareController';
 import { isArtifactFileShareable } from './artifactFileSharePolicy';
 import ArtifactPreviewIdentity, { ArtifactPreviewGlobeIcon } from './ArtifactPreviewIdentity';
+import { ArtifactShareUiPolicy } from './artifactToolbarPublishPolicy';
 import { getPreviewCardDescriptor } from './previewCardPolicy';
 
 const t = (key: string) => i18nService.t(key);
@@ -404,7 +405,8 @@ const ArtifactPreviewCard: React.FC<ArtifactPreviewCardProps> = ({
 
   const descriptor = getPreviewCardDescriptor(artifact);
   const supportsOpenMenu = descriptor.supportsOpenMenu;
-  const canShare = artifact.type !== ArtifactTypeValue.LocalService &&
+  const canShare = ArtifactShareUiPolicy.ShowActions &&
+    artifact.type !== ArtifactTypeValue.LocalService &&
     Boolean(artifactFileShare) &&
     isArtifactFileShareable(artifact);
   const canDeploy = artifact.type === ArtifactTypeValue.LocalService &&

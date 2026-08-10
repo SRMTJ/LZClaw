@@ -4,6 +4,10 @@ import { type Artifact, ArtifactTypeValue } from '@/types/artifact';
 
 import { isArtifactFileShareable } from './artifactFileSharePolicy';
 
+export const ArtifactShareUiPolicy = {
+  ShowActions: false,
+} as const;
+
 export const ArtifactToolbarPublishActionKind = {
   Share: 'share',
   Deploy: 'deploy',
@@ -30,7 +34,12 @@ export function resolveArtifactPreviewToolbarPublishTarget(
   artifact: Artifact | null | undefined,
   shareAvailable: boolean,
 ): ArtifactToolbarShareTarget | null {
-  if (!shareAvailable || !artifact || !isArtifactFileShareable(artifact)) return null;
+  if (
+    !ArtifactShareUiPolicy.ShowActions ||
+    !shareAvailable ||
+    !artifact ||
+    !isArtifactFileShareable(artifact)
+  ) return null;
   return {
     kind: ArtifactToolbarPublishActionKind.Share,
     artifact,
