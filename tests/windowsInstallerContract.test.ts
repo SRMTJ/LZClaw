@@ -23,6 +23,7 @@ const webPackageTemplate = repoFile(
   'node_modules/app-builder-lib/templates/nsis/include/webPackage.nsh',
 );
 const appBuilderPatch = repoFile('patches/app-builder-lib+24.13.3.patch');
+const packageMetadata = JSON.parse(repoFile('package.json')) as { name?: string };
 const electronBuilderConfig = JSON.parse(repoFile('electron-builder.json')) as {
   nsis?: { deleteAppDataOnUninstall?: boolean };
 };
@@ -50,6 +51,26 @@ const classifyFreshTarget = ({
 };
 
 describe('Windows installer hardening contracts', () => {
+  test('uses the LZClaw install directory without renaming legacy package metadata', () => {
+    const undefinition = installerInclude.indexOf('!undef APP_FILENAME');
+    const definition = installerInclude.indexOf(
+      '!define APP_FILENAME "${LZCLAW_WINDOWS_INSTALL_DIR_NAME}"',
+    );
+    const firstMacro = installerInclude.indexOf('!macro ');
+
+    expect(packageMetadata.name).toBe('lobsterai');
+    expect(installerInclude).toContain(
+      '!define LZCLAW_WINDOWS_INSTALL_DIR_NAME "htmmai"',
+    );
+    expect(installerInclude).toContain(
+      '!define LZCLAW_WINDOWS_USER_DATA_DIR "$APPDATA\\htmmai"',
+    );
+    expect(installerInclude).not.toContain('$APPDATA\\LobsterAI');
+    expect(undefinition).toBeGreaterThan(-1);
+    expect(definition).toBeGreaterThan(undefinition);
+    expect(definition).toBeLessThan(firstMacro);
+  });
+
   test('releases the installer current-directory lock before the update rename', () => {
     const switchOutPath = installerInclude.indexOf('SetOutPath "$PLUGINSDIR"');
     const rename = installerInclude.indexOf(
@@ -226,7 +247,7 @@ describe('Windows installer hardening contracts', () => {
     // the child environment, and always clears them afterwards.
     expect(stopMacro).toContain('StrCmp $R2 "3" 0 StopLobsterAIProcessesLog');
     expect(stopMacro).toContain(
-      String.raw`SetEnvironmentVariable(t "LOBSTERAI_STOP_LOG_PATH", t "$APPDATA\LobsterAI\install-timing.log")`,
+      'SetEnvironmentVariable(t "LOBSTERAI_STOP_LOG_PATH", t "${LZCLAW_WINDOWS_USER_DATA_DIR}\\install-timing.log")',
     );
     expect(stopMacro).toContain(
       'SetEnvironmentVariable(t "LOBSTERAI_STOP_ATTEMPT_ID", t "$lobsterInstallerAttemptId")',
@@ -439,7 +460,7 @@ describe('Windows installer hardening contracts', () => {
     const restoreEnd = installerInclude.indexOf('SkipSkillRestore:', restoreStart);
     const restore = installerInclude.slice(restoreStart, restoreEnd);
     expect(restore).toContain(
-      'IfFileExists "$APPDATA\\LobsterAI\\skills-backup\\$lobsterInstallerAttemptId\\backup-manifest.json" SkillRestoreAttemptBackupReady',
+      'IfFileExists "${LZCLAW_WINDOWS_USER_DATA_DIR}\\skills-backup\\$lobsterInstallerAttemptId\\backup-manifest.json" SkillRestoreAttemptBackupReady',
     );
     expect(restore).toContain('"legacy-restore-backup-missing"');
     expect(restore).toContain('Write-Output (\\"name-conflict:\\"');
@@ -484,7 +505,7 @@ describe('Windows installer hardening contracts', () => {
   test('re-checks the attempt manifest after a verified backup before replacing the old install', () => {
     const backupComplete = installerInclude.indexOf('phase=skill-backup-complete');
     const postcheck = installerInclude.indexOf(
-      'IfFileExists "$APPDATA\\LobsterAI\\skills-backup\\$lobsterInstallerAttemptId\\backup-manifest.json" SkillBackupValidated',
+      'IfFileExists "${LZCLAW_WINDOWS_USER_DATA_DIR}\\skills-backup\\$lobsterInstallerAttemptId\\backup-manifest.json" SkillBackupValidated',
     );
     const postcheckLog = installerInclude.indexOf(
       'phase=skill-backup-manifest-postcheck-missing',
@@ -532,7 +553,7 @@ describe('Windows installer hardening contracts', () => {
     expect(degraded).toContain('action=continue-with-attempt-backup-preserved');
     expect(degraded).toContain('action=continue-no-backup-found');
     expect(degraded).toContain(
-      'The recovery backup was preserved at $APPDATA\\LobsterAI\\skills-backup\\$lobsterInstallerAttemptId',
+      'The recovery backup was preserved at ${LZCLAW_WINDOWS_USER_DATA_DIR}\\skills-backup\\$lobsterInstallerAttemptId',
     );
     expect(degraded).not.toContain('was not deleted');
   });
@@ -550,11 +571,11 @@ describe('Windows installer hardening contracts', () => {
       init.indexOf('FileOpen $9'),
     );
     expect(init).toContain(
-      'FileOpen $9 "$APPDATA\\LobsterAI\\install-timing.log" a',
+      'FileOpen $9 "${LZCLAW_WINDOWS_USER_DATA_DIR}\\install-timing.log" a',
     );
     expect(init).toContain('FileSeek $9 0 END');
     expect(init).not.toContain(
-      'FileOpen $9 "$APPDATA\\LobsterAI\\install-timing.log" w',
+      'FileOpen $9 "${LZCLAW_WINDOWS_USER_DATA_DIR}\\install-timing.log" w',
     );
     expect(init).toContain('StrCpy $lobsterInvocationSource "unknown"');
     expect(init).toContain('${If} ${isUpdated}');

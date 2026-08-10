@@ -411,9 +411,9 @@ const MANAGED_EXEC_SAFETY_PROMPT = [
  * embedding in AGENTS.md so the model knows where to create new skills.
  *
  * Example outputs:
- *   macOS:   ~/Library/Application Support/Dolphin/SKILLs
- *   Windows: ~/AppData/Roaming/Dolphin/SKILLs
- *   Linux:   ~/.config/Dolphin/SKILLs
+ *   macOS:   ~/Library/Application Support/htmmai/SKILLs
+ *   Windows: ~/AppData/Roaming/htmmai/SKILLs
+ *   Linux:   ~/.config/htmmai/SKILLs
  */
 const resolveSkillCreationPath = (): string => {
   const skillsDir = path.join(app.getPath('userData'), 'SKILLs');
@@ -3572,9 +3572,9 @@ loopDetection: MANAGED_TOOL_LOOP_DETECTION,
    * `skills.load.extraDirs` configuration.
    *
    * Cross-platform paths (via Electron app.getPath('userData')):
- *   macOS:   ~/Library/Application Support/Dolphin/SKILLs
- *   Windows: %APPDATA%/Dolphin/SKILLs
- *   Linux:   ~/.config/Dolphin/SKILLs
+ *   macOS:   ~/Library/Application Support/htmmai/SKILLs
+ *   Windows: %APPDATA%/htmmai/SKILLs
+ *   Linux:   ~/.config/htmmai/SKILLs
    */
   private resolveSkillsExtraDirs(): string[] {
     const userDataSkillsDir = path.join(app.getPath('userData'), 'SKILLs');

@@ -3,9 +3,9 @@ import { describe, expect, test } from 'vitest';
 import { APP_DATA_DIR_NAME, APP_NAME, APP_USER_MODEL_ID } from './appConstants';
 
 describe('application brand constants', () => {
-  test('uses the new display brand without moving existing user data', () => {
+  test('uses the htmmai user data directory', () => {
     expect(APP_NAME).toBe('海豚买买AI工作台');
-    expect(APP_DATA_DIR_NAME).toBe('Dolphin');
+    expect(APP_DATA_DIR_NAME).toBe('htmmai');
     expect(APP_USER_MODEL_ID).toBe('com.lobsterai.app');
   });
 });
