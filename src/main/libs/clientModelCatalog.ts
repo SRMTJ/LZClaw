@@ -133,9 +133,10 @@ export const fetchClientModelCatalog = async (
   url: string,
   fetchPublic: (url: string, options?: RequestInit) => Promise<Response>,
   timeoutMs = 5_000,
+  headers: Record<string, string> = { Accept: 'application/json' },
 ): Promise<ClientModelCatalog> => {
   const response = await fetchPublic(url, {
-    headers: { Accept: 'application/json' },
+    headers,
     redirect: 'error',
     signal: AbortSignal.timeout(timeoutMs),
   });

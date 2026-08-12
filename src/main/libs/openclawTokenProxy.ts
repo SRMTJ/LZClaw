@@ -10,7 +10,7 @@ import {
 } from '../../shared/auth/constants';
 import type { EnterpriseModelCredential } from '../../shared/modelCredential/constants';
 import {
-  KIMI_K3_AGENTIC_CAPABILITY,
+  LOBSTERAI_CLIENT_CAPABILITIES,
   LOBSTERAI_CLIENT_CAPABILITIES_HEADER,
   LOBSTERAI_CLIENT_VERSION_HEADER,
 } from '../../shared/providers/modelRuntimeProfiles';
@@ -703,7 +703,7 @@ function buildUpstreamRequestHeaders(
   const headers: Record<string, string> = {
     'Authorization': `Bearer ${accessToken}`,
     'Content-Type': incomingHeaders['content-type'] || 'application/json',
-    [LOBSTERAI_CLIENT_CAPABILITIES_HEADER]: KIMI_K3_AGENTIC_CAPABILITY,
+    [LOBSTERAI_CLIENT_CAPABILITIES_HEADER]: LOBSTERAI_CLIENT_CAPABILITIES,
     [LOBSTERAI_CLIENT_VERSION_HEADER]: clientVersion,
   };
 

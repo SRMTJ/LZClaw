@@ -152,6 +152,7 @@ import { PlatformRegistry } from '../shared/platform';
 import {
   ModelRuntimeProfile,
   OpenClawProviderId,
+  parseModelThinkingLevel,
   ProviderName,
 } from '../shared/providers';
 import {
@@ -442,7 +443,10 @@ import {
 } from './libs/shareDeployment/shareDeploymentOperationCoordinator';
 import { SqliteBackupTrigger } from './libs/sqliteBackup/constants';
 import { SqliteBackupManager } from './libs/sqliteBackup/sqliteBackupManager';
-import { runStartupCacheWarmup } from './libs/startupCacheWarmup';
+import {
+  buildServerModelCapabilityHeaders,
+  runStartupCacheWarmup,
+} from './libs/startupCacheWarmup';
 import {
   applySystemProxyEnv,
   resolveSystemProxyUrlForTargets,
@@ -1353,7 +1357,12 @@ function sanitizeOpenClawSessionPatch(input: unknown): OpenClawSessionPatch {
   if (model !== undefined) patch.model = model;
 
   const thinkingLevel = sanitizeOptionalPatchValue(source.thinkingLevel);
-  if (thinkingLevel !== undefined) patch.thinkingLevel = thinkingLevel;
+  if (thinkingLevel !== undefined) {
+    if (thinkingLevel !== null && thinkingLevel !== '' && !parseModelThinkingLevel(thinkingLevel)) {
+      throw new Error('Unsupported session thinking level.');
+    }
+    patch.thinkingLevel = thinkingLevel;
+  }
 
   const reasoningLevel = sanitizeOptionalPatchValue(source.reasoningLevel);
   if (reasoningLevel !== undefined) patch.reasoningLevel = reasoningLevel;
@@ -4233,7 +4242,14 @@ if (!gotTheLock) {
   });
 
   // IPC 处理程序
+  // One-shot arrival log: renderer startup has stalled on this invoke in the
+  // field, and this line tells whether the request reached the main process.
+  let firstStoreGetLogged = false;
   ipcMain.handle('store:get', (_event, key) => {
+    if (!firstStoreGetLogged) {
+      firstStoreGetLogged = true;
+      console.log(`[Main] first store:get IPC received from renderer, key=${String(key)}`);
+    }
     return getStore().get(key);
   });
 
@@ -4862,7 +4878,7 @@ if (!gotTheLock) {
     console.log(`[Auth:getModels] requesting public client model catalog at ${url}`);
     const catalog = await fetchClientModelCatalog(url, (requestUrl, requestOptions) => (
       net.fetch(requestUrl, requestOptions)
-    ));
+    ), undefined, buildServerModelCapabilityHeaders(app.getVersion()));
     console.log(
       `[Auth:getModels] loaded ${catalog.models.length} server model(s); status=${catalog.status}`,
     );
@@ -4907,6 +4923,8 @@ if (!gotTheLock) {
         supportsImage: metadata?.supportsImage,
         supportsVideo: metadata?.supportsVideo,
         supportsThinking: metadata?.supportsThinking,
+        thinkingConfig: metadata?.thinkingConfig,
+        requestCapabilities: metadata?.requestCapabilities,
         supportsToolCalling: metadata?.supportsToolCalling,
         agenticReady: metadata?.agenticReady,
         contextWindow: metadata?.contextWindow,
@@ -6126,8 +6144,6 @@ if (!gotTheLock) {
 
   registerActivityIpcHandlers({
     ipcMain,
-    isDev,
-    isPackaged: app.isPackaged,
     getMainWindow: () => mainWindow,
     getServerBaseUrl: getServerApiBaseUrl,
     getClientVersion: () => app.getVersion(),
@@ -6135,7 +6151,6 @@ if (!gotTheLock) {
     hasAuthTokens: () => getAuthTokens() !== null,
     fetchPublic: (url, options) => net.fetch(url, options),
     fetchWithAuth,
-    developmentServerBaseUrl: process.env.LOBSTER_ACTIVITY_SERVER_BASE_URL,
   });
 
   ipcMain.handle(AuthIpcChannel.Exchange, async (_event, { code }: { code: string }) => {
@@ -7674,6 +7689,7 @@ if (!gotTheLock) {
         imageAttachments?: CoworkImageAttachmentMain[];
         agentId?: string;
         modelOverride?: string;
+        thinkingLevel?: string;
         mediaSelection?: {
           mode: 'auto' | 'image' | 'video' | 'none';
           modelId?: string;
@@ -7745,6 +7761,12 @@ if (!gotTheLock) {
         const runtimeSkillIds = options.runtimeSkillIds ?? options.activeSkillIds;
         const selectedTextSnippets = normalizeSelectedTextSnippetsForIpc(options.selectedTextSnippets);
         const browserAnnotations = normalizeBrowserAnnotationBatches(options.browserAnnotations);
+        const thinkingLevel = options.thinkingLevel === undefined
+          ? ''
+          : parseModelThinkingLevel(options.thinkingLevel);
+        if (options.thinkingLevel !== undefined && !thinkingLevel) {
+          return { success: false, error: 'Unsupported session thinking level.' };
+        }
         if (selectedTextSnippets.length > 0) {
           console.log(
             `[CoworkSelectedText] accepted ${selectedTextSnippets.length} excerpts with `
@@ -7760,6 +7782,7 @@ if (!gotTheLock) {
           runtimeSkillIds || [],
           options.agentId || 'main',
           options.modelOverride || '',
+          { thinkingLevel: thinkingLevel || '' },
         );
 
         if (options.modelOverride) {
@@ -8993,18 +9016,23 @@ if (!gotTheLock) {
       const runtime = getCoworkEngineRouter();
       const patchResult = await runtime.patchSession(sessionId, patch);
 
-      if (patch.model !== undefined) {
-        const modelOverride =
-          patchResult && typeof patchResult.modelOverride === 'string'
-            ? patchResult.modelOverride
-            : patch.model ?? '';
-        getCoworkStore().updateSession(
-          sessionId,
-          {
-            modelOverride,
-          },
-          { touchUpdatedAt: false },
-        );
+      if (patch.model !== undefined || patch.thinkingLevel !== undefined) {
+        const sessionUpdates: {
+          modelOverride?: string;
+          thinkingLevel?: ReturnType<typeof parseModelThinkingLevel> | '';
+        } = {};
+        if (patch.model !== undefined) {
+          sessionUpdates.modelOverride =
+            patchResult && typeof patchResult.modelOverride === 'string'
+              ? patchResult.modelOverride
+              : patch.model ?? '';
+        }
+        if (patch.thinkingLevel !== undefined) {
+          sessionUpdates.thinkingLevel = patch.thinkingLevel
+            ? parseModelThinkingLevel(patch.thinkingLevel) ?? ''
+            : '';
+        }
+        getCoworkStore().updateSession(sessionId, sessionUpdates, { touchUpdatedAt: false });
       }
 
       const session = getCoworkStore().getSession(sessionId);
@@ -11004,6 +11032,42 @@ if (!gotTheLock) {
   );
 
   ipcMain.handle(
+    DialogIpc.SaveFileCopy,
+    async (
+      event,
+      filePath?: string,
+    ): Promise<{ success: boolean; canceled?: boolean; path?: string; error?: string }> => {
+      try {
+        if (typeof filePath !== 'string' || !filePath.trim()) {
+          return { success: false, error: 'Missing file path' };
+        }
+        const resolvedPath = path.resolve(filePath.trim());
+        const stat = await fs.promises.stat(resolvedPath);
+        if (!stat.isFile()) {
+          return { success: false, error: 'Not a file' };
+        }
+        const ownerWindow = BrowserWindow.fromWebContents(event.sender);
+        const saveOptions = {
+          defaultPath: path.join(app.getPath('downloads'), path.basename(resolvedPath)),
+        };
+        const saveResult = ownerWindow
+          ? await dialog.showSaveDialog(ownerWindow, saveOptions)
+          : await dialog.showSaveDialog(saveOptions);
+        if (saveResult.canceled || !saveResult.filePath) {
+          return { success: true, canceled: true };
+        }
+        await fs.promises.copyFile(resolvedPath, saveResult.filePath);
+        return { success: true, canceled: false, path: saveResult.filePath };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to save file copy',
+        };
+      }
+    },
+  );
+
+  ipcMain.handle(
     'dialog:generateThumbnail',
     async (
       _event,
@@ -12695,6 +12759,7 @@ if (!gotTheLock) {
         fetchWithAuth,
         fetchPublic: (url, options) => net.fetch(url, options),
         cachedSubscriptionStatus,
+        clientVersion: app.getVersion(),
         t,
       });
       cachedSubscriptionStatus = warmupResult.subscriptionStatus;

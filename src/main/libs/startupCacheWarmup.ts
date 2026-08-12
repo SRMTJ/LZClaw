@@ -1,3 +1,8 @@
+import {
+  LOBSTERAI_CLIENT_CAPABILITIES,
+  LOBSTERAI_CLIENT_CAPABILITIES_HEADER,
+  LOBSTERAI_CLIENT_VERSION_HEADER,
+} from '../../shared/providers/modelRuntimeProfiles';
 import { authQuotaGateStateFromQuota, normalizeAuthQuota } from '../authQuota';
 import { updateServerModelMetadata } from './claudeSettings';
 import { fetchClientModelCatalog } from './clientModelCatalog';
@@ -8,6 +13,7 @@ export type StartupCacheWarmupDeps = {
   fetchWithAuth: (url: string, options?: RequestInit) => Promise<Response>;
   fetchPublic: (url: string, options?: RequestInit) => Promise<Response>;
   cachedSubscriptionStatus: string;
+  clientVersion: string;
   t: (key: string) => string;
 };
 
@@ -17,6 +23,14 @@ export type StartupCacheWarmupResult = {
 };
 
 const WARMUP_TIMEOUT = 5000;
+
+export const buildServerModelCapabilityHeaders = (
+  clientVersion: string,
+): Record<string, string> => ({
+  Accept: 'application/json',
+  [LOBSTERAI_CLIENT_CAPABILITIES_HEADER]: LOBSTERAI_CLIENT_CAPABILITIES,
+  [LOBSTERAI_CLIENT_VERSION_HEADER]: clientVersion,
+});
 
 /**
  * Pre-warm quota and model caches so provider resolution and config sync
@@ -34,6 +48,7 @@ export async function runStartupCacheWarmup(deps: StartupCacheWarmupDeps): Promi
     fetchWithAuth,
     fetchPublic,
     cachedSubscriptionStatus,
+    clientVersion,
     t,
   } = deps;
 
@@ -68,6 +83,7 @@ export async function runStartupCacheWarmup(deps: StartupCacheWarmupDeps): Promi
           modelCatalogUrl,
           fetchPublic,
           WARMUP_TIMEOUT,
+          buildServerModelCapabilityHeaders(clientVersion),
         );
         updateServerModelMetadata(catalog.models);
         console.log(

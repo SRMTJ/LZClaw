@@ -8,13 +8,24 @@ vi.mock('./claudeSettings', () => ({
   updateServerModelMetadata,
 }));
 
-import { runStartupCacheWarmup } from './startupCacheWarmup';
+import {
+  buildServerModelCapabilityHeaders,
+  runStartupCacheWarmup,
+} from './startupCacheWarmup';
 
 beforeEach(() => {
   updateServerModelMetadata.mockReset();
 });
 
 describe('startup server model warmup', () => {
+  test('sends the fixed K3 capability and client version', () => {
+    expect(buildServerModelCapabilityHeaders('2026.7.23')).toEqual({
+      Accept: 'application/json',
+      'X-LobsterAI-Client-Capabilities': 'kimi-k3-agentic-v1,thinking-level-control-v1',
+      'X-LobsterAI-Client-Version': '2026.7.23',
+    });
+  });
+
   test('loads the public catalog without sending the native auth request through it', async () => {
     const serverModels = [{
       modelId: 'kimi-k2',
@@ -49,6 +60,7 @@ describe('startup server model warmup', () => {
       fetchWithAuth,
       fetchPublic,
       cachedSubscriptionStatus: 'free',
+      clientVersion: '2026.7.23',
       t: key => key,
     });
 
@@ -56,7 +68,11 @@ describe('startup server model warmup', () => {
     expect(fetchPublic).toHaveBeenCalledWith(
       'https://platform.test/api/client-models/claw/models',
       expect.objectContaining({
-        headers: { Accept: 'application/json' },
+        headers: {
+          Accept: 'application/json',
+          'X-LobsterAI-Client-Capabilities': 'kimi-k3-agentic-v1,thinking-level-control-v1',
+          'X-LobsterAI-Client-Version': '2026.7.23',
+        },
       }),
     );
     expect(fetchWithAuth).toHaveBeenCalledTimes(1);

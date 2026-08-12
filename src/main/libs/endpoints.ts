@@ -4,9 +4,11 @@ import { resolveLzClawUpdateUrl } from '../../shared/appUpdate/endpoints';
 import { HtmlSharePublicRoute } from '../../shared/htmlShare/constants';
 import { resolveLzClawModelCatalogUrl } from '../../shared/modelCatalog/endpoints';
 import type { SqliteStore } from '../sqliteStore';
+import { resolveDevelopmentServerBaseUrl } from './developmentServerBaseUrl';
 
 let cachedTestMode: boolean | null = null;
 const DEFAULT_AUTH_API_BASE_URL = 'http://127.0.0.1:3100';
+let loggedDevelopmentServerBaseUrl: string | null = null;
 
 /**
  * Read testMode from store and cache it.
@@ -30,9 +32,23 @@ export const isTestModeEnabled = (): boolean => {
  * Used for auth exchange/refresh, models, proxy, etc.
  */
 export const getServerApiBaseUrl = (): string => {
-  return isTestModeEnabled()
+  const defaultBaseUrl = isTestModeEnabled()
     ? 'https://lobsterai-server.inner.youdao.com'
     : 'https://lobsterai-server.youdao.com';
+  const serverBaseUrl = resolveDevelopmentServerBaseUrl({
+    defaultBaseUrl,
+    developmentOverride: process.env.LOBSTER_SERVER_BASE_URL,
+    isDev: process.env.NODE_ENV === 'development',
+    isPackaged: app.isPackaged,
+  });
+  if (serverBaseUrl !== defaultBaseUrl
+      && loggedDevelopmentServerBaseUrl !== serverBaseUrl) {
+    console.warn(
+      `[Endpoints] routing all Lobster server traffic to development origin ${serverBaseUrl}`,
+    );
+    loggedDevelopmentServerBaseUrl = serverBaseUrl;
+  }
+  return serverBaseUrl;
 };
 
 /**
