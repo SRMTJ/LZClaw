@@ -89,7 +89,7 @@ describe('openclawCronLegacyMigration', () => {
     expect(options.env.EXISTING).toBe('1');
     expect(options.env.OPENCLAW_HOME).toBe(path.dirname(stateDir));
     expect(options.env.OPENCLAW_STATE_DIR).toBe(stateDir);
-    expect(options.env.OPENCLAW_CONFIG_PATH).toBe(path.join(stateDir, '.lobsterai-cron-doctor-openclaw.json'));
+    expect(options.env.OPENCLAW_CONFIG_PATH).toBe(path.join(stateDir, '.htmmai-cron-doctor-openclaw.json'));
     expect(options.env.ELECTRON_RUN_AS_NODE).toBe('1');
     expect(JSON.parse(fs.readFileSync(options.env.OPENCLAW_CONFIG_PATH ?? '', 'utf8'))).toEqual({
       gateway: { mode: 'local' },

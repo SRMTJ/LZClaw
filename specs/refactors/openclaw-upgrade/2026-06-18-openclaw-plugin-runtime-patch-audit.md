@@ -211,7 +211,7 @@ agents.defaults.workspace
 C:\Users\yangwn\AppData\Roaming\LobsterAI\openclaw\state\workspace-main
 ```
 
-因此钉钉入站图片被放到了 OpenClaw 当前本地媒体白名单之外。agent 后续只能通过 `exec` 手动复制到 `C:\Users\yangwn\lobsterai\project` 后再调用 `image` 工具。
+因此钉钉入站图片被放到了 OpenClaw 当前本地媒体白名单之外。agent 后续只能通过 `exec` 手动复制到 `C:\Users\yangwn\htmmai\project` 后再调用 `image` 工具。
 
 已在 `scripts/ensure-openclaw-plugins.cjs` 中新增 `dingtalk-connector agent workspace resolver` patch，同时覆盖：
 

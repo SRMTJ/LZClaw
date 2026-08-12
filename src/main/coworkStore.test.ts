@@ -19,6 +19,8 @@ vi.mock('electron', () => ({
 // Now import the class under test
 // ---------------------------------------------------------------------------
 import BetterSqlite3 from 'better-sqlite3';
+import os from 'os';
+import path from 'path';
 
 import { CoworkSystemMessageKind } from '../common/coworkSystemMessages';
 import { AgentAvatarSvg, DefaultAgentAvatarIcon, encodeAgentAvatarIcon } from '../shared/agent/avatar';
@@ -1078,6 +1080,21 @@ test('getConfig defaults skipMissedJobs to true when config is missing', () => {
   const config = store.getConfig();
 
   expect(config.skipMissedJobs).toBe(true);
+});
+
+test('getConfig defaults the working directory to htmmai/project', () => {
+  const config = store.getConfig();
+
+  expect(config.workingDirectory).toBe(path.join(os.homedir(), 'htmmai', 'project'));
+});
+
+test('listRecentCwds normalizes htmmai task workspaces to their project directory', () => {
+  const projectDirectory = path.join(os.homedir(), 'htmmai', 'project', 'demo');
+  const taskDirectory = path.join(projectDirectory, '.htmmai-tasks', 'task-1');
+  store.createSession('Task workspace', taskDirectory);
+
+  expect(store.listRecentCwds()).toContain(projectDirectory);
+  expect(store.listRecentCwds()).not.toContain(taskDirectory);
 });
 
 test('getConfig defaults OpenClaw heartbeat to enabled when config is missing', () => {

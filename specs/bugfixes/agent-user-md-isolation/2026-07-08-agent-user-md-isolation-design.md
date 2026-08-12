@@ -263,7 +263,7 @@ config sync 中直接删除。
 2. 仅当 `workspace-{agentId}/USER.md` 与 `workspace-main/USER.md` 内容完全相同，且用户
    明确执行“重置/修复 Agent USER.md”时才处理；
 3. 处理前将原文件完整备份到不参与 OpenClaw bootstrap 注入的位置，例如
-   `workspace-{agentId}/.lobsterai/migrations/`；
+   `workspace-{agentId}/.htmmai/migrations/`；
 4. 处理方式优先为移动/重命名原文件，让 OpenClaw 下次自行创建默认模板；
 5. 不处理与 main 不同的 `USER.md`，避免误删用户真实定制内容。
 

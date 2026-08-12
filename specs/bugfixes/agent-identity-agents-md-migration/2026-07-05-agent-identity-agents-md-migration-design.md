@@ -220,7 +220,7 @@ agents.cleanupLegacyIdentityBlock(agentId)
 推荐备份位置：
 
 ```text
-<agent-workspace>/.lobsterai/migrations/
+<agent-workspace>/.htmmai/migrations/
 ```
 
 推荐文件名：
@@ -232,7 +232,7 @@ agents-md-before-legacy-identity-cleanup-<timestamp>-<hash>.md
 要求：
 
 - 备份整个原始 `AGENTS.md`，而不是只备份被移除片段；
-- `.lobsterai/migrations/` 不属于 OpenClaw bootstrap 文件名，避免再次注入 prompt；
+- `.htmmai/migrations/` 不属于 OpenClaw bootstrap 文件名，避免再次注入 prompt；
 - 如果相同内容已备份过，可复用或跳过重复备份，但实现上必须保持幂等；
 - 备份失败时不修改 `AGENTS.md`。
 
@@ -335,7 +335,7 @@ cleanupLegacyAgentsMdIdentityBlockForAgent(agentId: string): LegacyIdentityClean
 2. 如果 `AGENTS.md` 不存在，返回 `skipped: no-agents-md`。
 3. 读取文件并调用纯解析器。
 4. 如果不需要修改，返回 skipped。
-5. 创建 `.lobsterai/migrations/`。
+5. 创建 `.htmmai/migrations/`。
 6. 写完整备份。
 7. 用现有 `atomicWriteFile()` 或等价安全写法写回 `AGENTS.md`。
 
@@ -489,7 +489,7 @@ src/renderer/services/agent.test.ts
    从 prompt 表面移除。
 3. 清理后的 `AGENTS.md` 仍保留原来的默认模板内容、用户其它规则和 LobsterAI managed
    section。
-4. 清理前完整备份原始 `AGENTS.md` 到 `<workspace>/.lobsterai/migrations/`。
+4. 清理前完整备份原始 `AGENTS.md` 到 `<workspace>/.htmmai/migrations/`。
 5. 备份失败时不修改 `AGENTS.md`。
 6. 用户手写但不符合历史模板的 identity 相关内容不会被自动删除。
 7. 用户把身份清空保存时，旧 `AGENTS.md` 身份块不会被重新写回 `IDENTITY.md`。
@@ -538,6 +538,6 @@ src/renderer/services/agent.test.ts
 2. 在设置页修改该 Agent 身份并保存。
 3. 确认 `IDENTITY.md` 是新身份。
 4. 确认 `AGENTS.md` 不再包含历史身份块。
-5. 确认 `.lobsterai/migrations/` 下存在原始 `AGENTS.md` 备份。
+5. 确认 `.htmmai/migrations/` 下存在原始 `AGENTS.md` 备份。
 6. 新建该 Agent 会话，询问身份，确认不再沿用旧身份。
 7. 对主 Agent 重复以上流程。

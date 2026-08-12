@@ -624,7 +624,7 @@ V1 不做用户自定义额度。后续可按套餐或后台配置下发。
 必须覆盖：
 
 1. OpenAPI smoke test：调用真实 veFaaS `ListFunctions`，验证 AK/SK、签名、区域和 OpenAPI endpoint。
-2. NAS 功能测试：用 `/Users/admin/lobsterai/project/brotato-clone` 打包部署，写入排行榜，通过真实临时函数下载 ZIP，并验证 `preserve` 与 `replace` 两种重新部署路径。低层管理器的清理/恢复能力可继续用于测试数据回填，但客户端不暴露入口。
+2. NAS 功能测试：用 `/Users/admin/htmmai/project/brotato-clone` 打包部署，写入排行榜，通过真实临时函数下载 ZIP，并验证 `preserve` 与 `replace` 两种重新部署路径。低层管理器的清理/恢复能力可继续用于测试数据回填，但客户端不暴露入口。
 3. 上传路径测试：brotato 默认走 TOS 上传。direct zip 只能用于小包验证，因为 zip base64 后会膨胀，较大的 JSON body 可能触发 OpenAPI request parsing error。
 
 推荐命令：
@@ -654,7 +654,7 @@ SHARE_DEPLOYMENT_VOLCENGINE_CREDENTIAL_JSON='{"accessKeyId":"...","secretAccessK
 
 ## 验收标准
 
-1. 对 `/Users/admin/lobsterai/project/brotato-clone` 这类项目，部署前默认开启 `保留服务数据`。
+1. 对 `/Users/admin/htmmai/project/brotato-clone` 这类项目，部署前默认开启 `保留服务数据`。
 2. 点击 `查看保留内容` 后能看到带目录图标的 `data/`，不显示额外说明文字。
 3. 用户取消 `data/` 后，manifest 不包含 `persistence` 配置。
 4. 用户选择 `data/` 后，部署 response 返回 `persistence.enabled=true`。

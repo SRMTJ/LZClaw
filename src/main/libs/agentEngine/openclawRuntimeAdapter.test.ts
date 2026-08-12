@@ -61,8 +61,8 @@ test('plan mode allows read-only shell inspection on macOS and Windows', () => {
   expect(isPlanModeSafeExecCommand('Get-ChildItem src')).toBe(true);
   expect(isPlanModeSafeExecCommand('findstr /s PlanMode src\\*.ts')).toBe(true);
   expect(isPlanModeSafeExecCommand(
-    'ls -la /Users/admin/lobsterai/project/wheat-bakery/ 2>/dev/null; '
-    + 'echo "---"; cat /Users/admin/lobsterai/project/index.html 2>/dev/null | head -50',
+    'ls -la /Users/admin/htmmai/project/wheat-bakery/ 2>/dev/null; '
+    + 'echo "---"; cat /Users/admin/htmmai/project/index.html 2>/dev/null | head -50',
   )).toBe(true);
   expect(isPlanModeSafeExecCommand('git status --short && rg -n "Plan Mode" src | head -20')).toBe(true);
   expect(isPlanModeSafeExecCommand('Get-Content app.log 2>$null | Select-Object -First 20')).toBe(true);
