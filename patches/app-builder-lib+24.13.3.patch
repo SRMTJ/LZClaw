@@ -16,10 +16,61 @@ index 9b75baa..e018ea7 100644
      }
      get installerFilenamePattern() {
 diff --git a/node_modules/app-builder-lib/templates/nsis/assistedInstaller.nsh b/node_modules/app-builder-lib/templates/nsis/assistedInstaller.nsh
-index b7f4752..e11b58f 100644
+index b7f4752..6610762 100644
 --- a/node_modules/app-builder-lib/templates/nsis/assistedInstaller.nsh
 +++ b/node_modules/app-builder-lib/templates/nsis/assistedInstaller.nsh
-@@ -43,6 +43,18 @@
+@@ -22,1 +22,2 @@
+     !include StrContains.nsh
++    !include nsDialogs.nsh
+@@ -24,2 +25,47 @@
++    !define MUI_PAGE_CUSTOMFUNCTION_SHOW electronBuilderDirectoryPageShow
++    !define MUI_PAGE_CUSTOMFUNCTION_LEAVE electronBuilderDirectoryPageLeave
+     !insertmacro skipPageIfUpdated
+     !insertmacro MUI_PAGE_DIRECTORY
++
++    # Keep the application subdirectory visible after the built-in Browse
++    # button replaces the directory edit field with the selected parent.
++    Function electronBuilderNormalizeDirectoryField
++      Push $0
++      Push $1
++      Push $2
++      ${NSD_GetText} $mui.DirectoryPage.Directory $0
++      ${If} $0 != ""
++        StrLen $1 "\${APP_FILENAME}"
++        StrCpy $2 $0 $1 -$1
++        ${If} $2 != "\${APP_FILENAME}"
++          StrCpy $2 $0 1 -1
++          ${If} $2 == "\"
++            StrCpy $0 "$0${APP_FILENAME}"
++          ${Else}
++            StrCpy $0 "$0\${APP_FILENAME}"
++          ${EndIf}
++          StrCpy $INSTDIR $0
++          ${NSD_SetText} $mui.DirectoryPage.Directory $0
++        ${EndIf}
++      ${EndIf}
++      Pop $2
++      Pop $1
++      Pop $0
++    FunctionEnd
++
++    Function electronBuilderDirectoryFieldChanged
++      Push $0
++      System::Call 'user32::GetFocus()p.r0'
++      ${If} $0 == $mui.DirectoryPage.BrowseButton
++        Call electronBuilderNormalizeDirectoryField
++      ${EndIf}
++      Pop $0
++    FunctionEnd
++
++    Function electronBuilderDirectoryPageShow
++      ${NSD_OnChange} $mui.DirectoryPage.Directory electronBuilderDirectoryFieldChanged
++    FunctionEnd
++
++    Function electronBuilderDirectoryPageLeave
++      Call electronBuilderNormalizeDirectoryField
++    FunctionEnd
+@@ -43,6 +89,18 @@
      !insertmacro customPageAfterChangeDir
    !endif
  
@@ -38,7 +89,7 @@ index b7f4752..e11b58f 100644
    !insertmacro MUI_PAGE_INSTFILES
    !ifmacrodef customFinishPage
      !insertmacro customFinishPage
-@@ -60,6 +72,9 @@
+@@ -60,6 +118,9 @@
        !define MUI_FINISHPAGE_RUN
        !define MUI_FINISHPAGE_RUN_FUNCTION "StartApp"
      !endif

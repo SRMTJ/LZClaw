@@ -7,7 +7,7 @@ export const BusinessCenterIpcChannel = {
 } as const;
 
 export const BusinessCenterPageUrl = {
-  Development: 'http://127.0.0.1:3107',
+  Development: 'https://qiye.srmtj.com',
   Production: 'https://qiye.srmtj.com',
 } as const;
 

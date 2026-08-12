@@ -3,11 +3,13 @@ import { describe, expect, test } from 'vitest';
 import { isTrustedAuthLoginNavigation } from './authLoginPolicy';
 
 describe('isTrustedAuthLoginNavigation', () => {
-  test('allows the configured login and development handoff origins', () => {
+  test('allows the configured online login and portal origins in development', () => {
     expect(isTrustedAuthLoginNavigation('https://qiye.srmtj.com/login', true)).toBe(true);
-    expect(isTrustedAuthLoginNavigation('http://127.0.0.1:3107/login-result', true)).toBe(true);
-    expect(isTrustedAuthLoginNavigation('http://127.0.0.1:3108/applications', true)).toBe(true);
+    expect(isTrustedAuthLoginNavigation('https://qiye.srmtj.com/admin/login-result', true)).toBe(true);
+    expect(isTrustedAuthLoginNavigation('https://qiye.srmtj.com/employee/applications', true)).toBe(true);
     expect(isTrustedAuthLoginNavigation('http://127.0.0.1:3103/login', true)).toBe(false);
+    expect(isTrustedAuthLoginNavigation('http://127.0.0.1:3107/login-result', true)).toBe(false);
+    expect(isTrustedAuthLoginNavigation('http://127.0.0.1:3108/applications', true)).toBe(false);
   });
 
   test('allows only the fixed production origin', () => {

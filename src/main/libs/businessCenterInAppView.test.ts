@@ -100,7 +100,7 @@ describe('BusinessCenterInAppViewController', () => {
     mocks.persistentController.webContents = null;
   });
 
-  test('opens the fixed development business center in the persistent controller', async () => {
+  test('opens the online business center in development mode', async () => {
     const { controller, parentWindow, statuses } = createController();
     const bounds = { x: 10, y: 20, width: 800, height: 600 };
 
@@ -108,7 +108,7 @@ describe('BusinessCenterInAppViewController', () => {
 
     expect(mocks.persistentController.open).toHaveBeenCalledWith({
       parentWindow,
-      url: 'http://127.0.0.1:3107',
+      url: 'https://qiye.srmtj.com',
       bounds,
       visible: true,
       focus: false,
@@ -187,11 +187,11 @@ describe('BusinessCenterInAppViewController', () => {
     createController();
     const windowOpenHandler = mocks.webContents.setWindowOpenHandler.mock.calls[0][0];
 
-    expect(windowOpenHandler({ url: 'http://127.0.0.1:3107/users?page=2' })).toEqual({
+    expect(windowOpenHandler({ url: 'https://qiye.srmtj.com/users?page=2' })).toEqual({
       action: 'deny',
     });
     expect(mocks.webContents.loadURL).toHaveBeenCalledWith(
-      'http://127.0.0.1:3107/users?page=2',
+      'https://qiye.srmtj.com/users?page=2',
     );
 
     expect(windowOpenHandler({ url: 'https://example.com/help' })).toEqual({
@@ -217,12 +217,12 @@ describe('BusinessCenterInAppViewController', () => {
     mocks.emit(
       'did-navigate-in-page',
       {},
-      'http://127.0.0.1:3107/login',
+      'https://qiye.srmtj.com/login',
     );
     mocks.emit(
       'did-navigate',
       {},
-      'http://127.0.0.1:3107/login',
+      'https://qiye.srmtj.com/login',
     );
     mocks.emit('did-finish-load');
 
@@ -249,7 +249,7 @@ describe('BusinessCenterInAppViewController', () => {
       {},
       -102,
       'Connection refused',
-      'http://127.0.0.1:3107',
+      'https://qiye.srmtj.com',
       true,
     );
 

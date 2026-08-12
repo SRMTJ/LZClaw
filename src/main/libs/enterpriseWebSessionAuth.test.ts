@@ -41,9 +41,9 @@ describe('resolveEnterpriseWebSessionTarget', () => {
   test('resolves only a server-selected entry type for the active environment', () => {
     expect(resolveEnterpriseWebSessionReference('employee', true)).toEqual({
       entryType: 'employee',
-      origin: 'http://127.0.0.1:3108',
-      profileUrl: 'http://127.0.0.1:3108/api/v1/me',
-      logoutUrl: 'http://127.0.0.1:3108/auth/logout',
+      origin: 'https://qiye.srmtj.com',
+      profileUrl: 'https://qiye.srmtj.com/employee/api/v1/me',
+      logoutUrl: 'https://qiye.srmtj.com/employee/auth/logout',
     });
     expect(resolveEnterpriseWebSessionReference('admin', false)).toMatchObject({
       entryType: 'admin',
@@ -51,14 +51,14 @@ describe('resolveEnterpriseWebSessionTarget', () => {
     });
   });
 
-  test('recognizes authenticated development and production portal routes', () => {
-    expect(resolveEnterpriseWebSessionTarget('http://127.0.0.1:3107/', true)).toMatchObject({
+  test('recognizes authenticated online portal routes in every build mode', () => {
+    expect(resolveEnterpriseWebSessionTarget('https://qiye.srmtj.com/admin/', true)).toMatchObject({
       entryType: 'admin',
-      profileUrl: 'http://127.0.0.1:3107/api/v1/me',
+      profileUrl: 'https://qiye.srmtj.com/admin/api/v1/me',
     });
-    expect(resolveEnterpriseWebSessionTarget('http://127.0.0.1:3108/applications', true)).toMatchObject({
+    expect(resolveEnterpriseWebSessionTarget('https://qiye.srmtj.com/employee/applications', true)).toMatchObject({
       entryType: 'employee',
-      profileUrl: 'http://127.0.0.1:3108/api/v1/me',
+      profileUrl: 'https://qiye.srmtj.com/employee/api/v1/me',
     });
     expect(resolveEnterpriseWebSessionTarget('https://qiye.srmtj.com/admin/', false)).toMatchObject({
       entryType: 'admin',
@@ -72,7 +72,7 @@ describe('resolveEnterpriseWebSessionTarget', () => {
 
   test('rejects login callbacks, no-entry pages, and lookalike origins', () => {
     expect(resolveEnterpriseWebSessionTarget(
-      'http://127.0.0.1:3107/login-result?handoff=ticket',
+      'https://qiye.srmtj.com/admin/login-result?handoff=ticket',
       true,
     )).toBeNull();
     expect(resolveEnterpriseWebSessionTarget('https://qiye.srmtj.com/admin/no-entry', false)).toBeNull();
@@ -84,14 +84,17 @@ describe('resolveEnterpriseWebSessionTarget', () => {
     expect(resolveEnterpriseWebSessionTarget('https://qiye.srmtj.com/admin/no-entry/detail', false)).toBeNull();
   });
 
-  test('does not accept development origins in production or production origins in development', () => {
-    const developmentReference = resolveEnterpriseWebSessionTarget('http://127.0.0.1:3107/', true);
+  test('rejects local portal origins and accepts online references in every build mode', () => {
+    const developmentReference = resolveEnterpriseWebSessionTarget(
+      'https://qiye.srmtj.com/admin/',
+      true,
+    );
     const productionReference = resolveEnterpriseWebSessionTarget('https://qiye.srmtj.com/admin/', false);
 
     expect(resolveEnterpriseWebSessionTarget('http://127.0.0.1:3107/', false)).toBeNull();
-    expect(resolveEnterpriseWebSessionTarget('https://qiye.srmtj.com/admin/', true)).toBeNull();
-    expect(isEnterpriseWebSessionReference(developmentReference, false)).toBe(false);
-    expect(isEnterpriseWebSessionReference(productionReference, true)).toBe(false);
+    expect(resolveEnterpriseWebSessionTarget('http://127.0.0.1:3107/', true)).toBeNull();
+    expect(isEnterpriseWebSessionReference(developmentReference, false)).toBe(true);
+    expect(isEnterpriseWebSessionReference(productionReference, true)).toBe(true);
   });
 });
 
@@ -103,7 +106,7 @@ describe('enterprise web session recovery', () => {
     }));
 
     const result = await recoverEnterpriseWebSession({
-      navigationUrl: 'http://127.0.0.1:3107/',
+      navigationUrl: 'https://qiye.srmtj.com/admin/',
       fetch,
       isDevelopment: true,
     });
@@ -112,9 +115,9 @@ describe('enterprise web session recovery', () => {
       status: EnterpriseWebSessionValidationStatus.Authenticated,
       reference: {
         entryType: 'admin',
-        origin: 'http://127.0.0.1:3107',
-        profileUrl: 'http://127.0.0.1:3107/api/v1/me',
-        logoutUrl: 'http://127.0.0.1:3107/auth/logout',
+        origin: 'https://qiye.srmtj.com',
+        profileUrl: 'https://qiye.srmtj.com/admin/api/v1/me',
+        logoutUrl: 'https://qiye.srmtj.com/admin/auth/logout',
       },
       user: {
         yid: 'user-1',
@@ -129,7 +132,7 @@ describe('enterprise web session recovery', () => {
         membershipId: 'membership-1',
       },
     });
-    expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:3107/api/v1/me', {
+    expect(fetch).toHaveBeenCalledWith('https://qiye.srmtj.com/admin/api/v1/me', {
       method: 'GET',
       credentials: 'include',
       headers: { Accept: 'application/json' },
@@ -144,7 +147,7 @@ describe('enterprise web session recovery', () => {
     }), { status: 200 }));
 
     await expect(recoverEnterpriseWebSession({
-      navigationUrl: 'http://127.0.0.1:3107/',
+      navigationUrl: 'https://qiye.srmtj.com/admin/',
       fetch,
       isDevelopment: true,
     })).resolves.toEqual({
@@ -153,7 +156,7 @@ describe('enterprise web session recovery', () => {
   });
 
   test('distinguishes an expired session from a temporarily unavailable service', async () => {
-    const target = resolveEnterpriseWebSessionTarget('http://127.0.0.1:3107/', true);
+    const target = resolveEnterpriseWebSessionTarget('https://qiye.srmtj.com/admin/', true);
     expect(target).not.toBeNull();
 
     await expect(validateEnterpriseWebSession({

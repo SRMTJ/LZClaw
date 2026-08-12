@@ -71,9 +71,9 @@ renderer content.
   subframes; enables sandboxing, context isolation, and web security; and
   disables insecure mixed content, WebView tags, experimental features, and
   host-provided Blink feature flags.
-- Business Center navigation stays in-app only for the current build's fixed
-  enterprise Portal origins (`127.0.0.1:3107`/`:3108` in development and the
-  path-isolated `qiye.srmtj.com` Portal routes in production).
+- Business Center navigation stays in-app only for the fixed
+  `https://qiye.srmtj.com` enterprise Portal origin and its path-isolated
+  administrator and employee routes in every build mode.
 - External HTTP and HTTPS links open in the system browser.
 - Unsupported protocols and popup windows are blocked.
 - The dedicated `persist:lzclaw-web` Session denies permission checks and

@@ -7,6 +7,9 @@ const repoFile = (path: string): string => readFileSync(resolve(process.cwd(), p
 
 const installerInclude = repoFile('scripts/nsis-installer.nsh');
 const unpackScript = repoFile('scripts/unpack-cfmind.cjs');
+const assistedInstallerTemplate = repoFile(
+  'node_modules/app-builder-lib/templates/nsis/assistedInstaller.nsh',
+);
 const installSection = repoFile(
   'node_modules/app-builder-lib/templates/nsis/installSection.nsh',
 );
@@ -51,6 +54,40 @@ const classifyFreshTarget = ({
 };
 
 describe('Windows installer hardening contracts', () => {
+  test('keeps the application subdirectory visible after browsing for a parent directory', () => {
+    const showCallback = assistedInstallerTemplate.indexOf(
+      '!define MUI_PAGE_CUSTOMFUNCTION_SHOW electronBuilderDirectoryPageShow',
+    );
+    const leaveCallback = assistedInstallerTemplate.indexOf(
+      '!define MUI_PAGE_CUSTOMFUNCTION_LEAVE electronBuilderDirectoryPageLeave',
+    );
+    const directoryPage = assistedInstallerTemplate.indexOf(
+      '!insertmacro MUI_PAGE_DIRECTORY',
+    );
+
+    expect(showCallback).toBeGreaterThan(-1);
+    expect(leaveCallback).toBeGreaterThan(showCallback);
+    expect(directoryPage).toBeGreaterThan(leaveCallback);
+    expect(assistedInstallerTemplate).toContain(
+      '${NSD_OnChange} $mui.DirectoryPage.Directory electronBuilderDirectoryFieldChanged',
+    );
+    expect(assistedInstallerTemplate).toContain(
+      "System::Call 'user32::GetFocus()p.r0'",
+    );
+    expect(assistedInstallerTemplate).toContain(
+      '${If} $0 == $mui.DirectoryPage.BrowseButton',
+    );
+    expect(assistedInstallerTemplate).toContain(
+      'StrLen $1 "\\${APP_FILENAME}"',
+    );
+    expect(assistedInstallerTemplate).toContain(
+      '${NSD_SetText} $mui.DirectoryPage.Directory $0',
+    );
+    expect(appBuilderPatch).toContain(
+      'Function electronBuilderNormalizeDirectoryField',
+    );
+  });
+
   test('uses the LZClaw install directory without renaming legacy package metadata', () => {
     const undefinition = installerInclude.indexOf('!undef APP_FILENAME');
     const definition = installerInclude.indexOf(
