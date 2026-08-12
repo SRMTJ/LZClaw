@@ -6,6 +6,7 @@ import { Readable, Transform } from 'stream';
 import { pipeline } from 'stream/promises';
 
 import {
+  APP_UPDATE_DOWNLOAD_TIMEOUT_ERROR,
   APP_UPDATE_ELEVATION_DECLINED_ERROR,
   type AppUpdateSource,
 } from '../../shared/appUpdate/constants';
@@ -75,11 +76,12 @@ function execAsync(command: string, timeoutMs = 120_000): Promise<string> {
 const PROGRESS_THROTTLE_MS = 200;
 
 /** Abort download if no data received for this duration (ms). */
-const DOWNLOAD_INACTIVITY_TIMEOUT_MS = 60_000;
+export const APP_UPDATE_DOWNLOAD_INACTIVITY_TIMEOUT_MS = 5 * 60_000;
 
 export const APP_UPDATE_MAX_DOWNLOAD_SIZE_BYTES = 1024 * 1024 * 1024;
 
 interface AppUpdateDownloadOptions {
+  inactivityTimeoutMs?: number;
   maxDownloadSizeBytes?: number;
 }
 
@@ -138,6 +140,12 @@ export async function downloadUpdate(
       ? requestedDownloadLimit
       : APP_UPDATE_MAX_DOWNLOAD_SIZE_BYTES,
   );
+  const requestedInactivityTimeoutMs = options.inactivityTimeoutMs;
+  const inactivityTimeoutMs = requestedInactivityTimeoutMs !== undefined
+    && Number.isSafeInteger(requestedInactivityTimeoutMs)
+    && requestedInactivityTimeoutMs > 0
+    ? requestedInactivityTimeoutMs
+    : APP_UPDATE_DOWNLOAD_INACTIVITY_TIMEOUT_MS;
 
   let writeStream: fs.WriteStream | null = null;
   let inactivityTimer: ReturnType<typeof setTimeout> | null = null;
@@ -152,9 +160,11 @@ export async function downloadUpdate(
   const resetInactivityTimer = () => {
     clearInactivityTimer();
     inactivityTimer = setTimeout(() => {
-      console.error('[AppUpdate] Download inactivity timeout (60s), aborting');
+      console.error(
+        `[AppUpdate] Download inactivity timeout (${inactivityTimeoutMs}ms), aborting`,
+      );
       controller.abort('timeout');
-    }, DOWNLOAD_INACTIVITY_TIMEOUT_MS);
+    }, inactivityTimeoutMs);
   };
 
   try {
@@ -242,7 +252,9 @@ export async function downloadUpdate(
     // Start inactivity timer
     resetInactivityTimer();
 
-    await pipeline(nodeStream, progressStream, writeStream);
+    await pipeline(nodeStream, progressStream, writeStream, {
+      signal: controller.signal,
+    });
     writeStream = null;
     clearInactivityTimer();
 
@@ -297,7 +309,7 @@ export async function downloadUpdate(
 
     if (controller.signal.aborted) {
       if (controller.signal.reason === 'timeout') {
-        throw new Error('Download timed out: no data received for 60 seconds');
+        throw new Error(APP_UPDATE_DOWNLOAD_TIMEOUT_ERROR);
       }
       throw new Error('Download cancelled');
     }

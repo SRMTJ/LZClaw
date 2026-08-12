@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'vitest';
 
 import {
+  APP_UPDATE_DOWNLOAD_TIMEOUT_ERROR,
   APP_UPDATE_ELEVATION_DECLINED_ERROR,
   APP_UPDATE_FILE_INVALID_ERROR,
   APP_UPDATE_URL_UNTRUSTED_ERROR,
@@ -24,6 +25,9 @@ describe('formatAppUpdateError', () => {
     );
     expect(formatAppUpdateError(APP_UPDATE_FILE_INVALID_ERROR)).toContain(
       '文件校验失败',
+    );
+    expect(formatAppUpdateError(APP_UPDATE_DOWNLOAD_TIMEOUT_ERROR)).toContain(
+      '长时间未收到数据',
     );
   });
 

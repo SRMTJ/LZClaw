@@ -50,8 +50,12 @@ vi.mock('child_process', async (importOriginal) => {
   };
 });
 
-import { APP_UPDATE_ELEVATION_DECLINED_ERROR } from '../../shared/appUpdate/constants';
 import {
+  APP_UPDATE_DOWNLOAD_TIMEOUT_ERROR,
+  APP_UPDATE_ELEVATION_DECLINED_ERROR,
+} from '../../shared/appUpdate/constants';
+import {
+  APP_UPDATE_DOWNLOAD_INACTIVITY_TIMEOUT_MS,
   APP_UPDATE_MAX_DOWNLOAD_SIZE_BYTES,
   buildMacSwapInstallCommand,
   buildMacSwapPaths,
@@ -446,6 +450,27 @@ describe('Windows update download URL enforcement', () => {
     )).rejects.toThrow('exceeds maximum allowed size');
 
     expect(fs.existsSync(path.join(tmpDir, 'updates'))).toBe(false);
+  });
+
+  test('uses a five-minute inactivity window and aborts a stalled stream', async () => {
+    expect(APP_UPDATE_DOWNLOAD_INACTIVITY_TIMEOUT_MS).toBe(5 * 60_000);
+    mocks.fetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      headers: new Headers({ 'content-length': '1' }),
+      body: new ReadableStream<Uint8Array>(),
+    });
+
+    await expect(downloadUpdate(
+      'https://downloads.example.com/LobsterAI.exe',
+      'manual',
+      () => {},
+      { inactivityTimeoutMs: 10 },
+    )).rejects.toThrow(APP_UPDATE_DOWNLOAD_TIMEOUT_ERROR);
+
+    const updateDir = path.join(tmpDir, 'updates');
+    expect(fs.existsSync(updateDir) ? fs.readdirSync(updateDir) : []).toEqual([]);
   });
 
   test('aborts when streamed bytes exceed the declared bounded size', async () => {

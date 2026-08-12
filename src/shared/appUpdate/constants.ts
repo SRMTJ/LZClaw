@@ -53,6 +53,9 @@ export const APP_UPDATE_URL_UNTRUSTED_ERROR = 'update-url-untrusted';
 /** Stable marker returned when cached installer bytes fail hash validation. */
 export const APP_UPDATE_FILE_INVALID_ERROR = 'update-file-invalid';
 
+/** Stable marker returned when an installer download stops receiving data. */
+export const APP_UPDATE_DOWNLOAD_TIMEOUT_ERROR = 'update-download-timeout';
+
 export interface ChangeLogEntry {
   title: string;
   content: string[];

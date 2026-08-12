@@ -1,4 +1,5 @@
 import {
+  APP_UPDATE_DOWNLOAD_TIMEOUT_ERROR,
   APP_UPDATE_ELEVATION_DECLINED_ERROR,
   APP_UPDATE_FILE_INVALID_ERROR,
   APP_UPDATE_URL_UNTRUSTED_ERROR,
@@ -10,6 +11,9 @@ import { i18nService } from '../../services/i18n';
  * an OS/network message shown as-is.
  */
 export const formatAppUpdateError = (message: string): string => {
+  if (message === APP_UPDATE_DOWNLOAD_TIMEOUT_ERROR) {
+    return i18nService.t('updateDownloadTimeout');
+  }
   if (message === APP_UPDATE_ELEVATION_DECLINED_ERROR) {
     return i18nService.t('updateElevationDeclined');
   }
