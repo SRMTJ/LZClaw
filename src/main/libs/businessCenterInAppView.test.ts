@@ -10,12 +10,13 @@ const mocks = vi.hoisted(() => {
       return webContents;
     }),
     setWindowOpenHandler: vi.fn(),
+    getURL: vi.fn(() => 'https://qiye.srmtj.com/admin/dashboard'),
     loadURL: vi.fn(async () => undefined),
   };
   const persistentController = {
     webContents: null as object | null,
     open: vi.fn(async () => {
-      persistentController.webContents = {};
+      persistentController.webContents = webContents;
       return {
         status: 'opened' as 'opened' | 'superseded' | 'closed',
       };
@@ -72,7 +73,10 @@ vi.mock('electron', () => ({
 
 import { BusinessCenterInAppViewController } from './businessCenterInAppView';
 
-const createController = (isDev = true) => {
+const createController = (
+  isDev = true,
+  authenticatedEntryUrl: string | null = null,
+) => {
   const statuses: Array<{ status: string; error?: string }> = [];
   const onSessionInvalidated = vi.fn();
   const parentWindow = {
@@ -80,6 +84,7 @@ const createController = (isDev = true) => {
   };
   const controller = new BusinessCenterInAppViewController({
     getMainWindow: () => parentWindow as never,
+    getAuthenticatedEntryUrl: () => authenticatedEntryUrl,
     session: {} as never,
     isDev,
     onStatus: update => statuses.push(update),
@@ -129,6 +134,44 @@ describe('BusinessCenterInAppViewController', () => {
       visible: true,
       focus: false,
     });
+  });
+
+  test('opens the role-scoped portal entry for an authenticated Session', async () => {
+    const { controller, parentWindow } = createController(
+      false,
+      'https://qiye.srmtj.com/employee/',
+    );
+    const bounds = { x: 10, y: 20, width: 800, height: 600 };
+
+    await expect(controller.open(bounds)).resolves.toBe(true);
+
+    expect(mocks.persistentController.open).toHaveBeenCalledWith({
+      parentWindow,
+      url: 'https://qiye.srmtj.com/employee/',
+      bounds,
+      visible: true,
+      focus: false,
+    });
+  });
+
+  test('navigates a reused login view back to the authenticated portal entry', async () => {
+    const { controller } = createController(
+      false,
+      'https://qiye.srmtj.com/admin/',
+    );
+    mocks.persistentController.webContents = mocks.webContents;
+    mocks.webContents.getURL.mockReturnValueOnce('https://qiye.srmtj.com/admin/login');
+
+    await expect(controller.open({
+      x: 10,
+      y: 20,
+      width: 800,
+      height: 600,
+    })).resolves.toBe(true);
+
+    expect(mocks.webContents.loadURL).toHaveBeenCalledWith(
+      'https://qiye.srmtj.com/admin/',
+    );
   });
 
   test('does not report success when the persistent view closes while opening', async () => {

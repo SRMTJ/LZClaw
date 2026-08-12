@@ -21,6 +21,7 @@ const BUSINESS_CENTER_LOGIN_PATHS = new Set([
 
 interface BusinessCenterInAppViewControllerOptions {
   getMainWindow: () => BrowserWindow | null;
+  getAuthenticatedEntryUrl: () => string | null;
   session: Session;
   isDev: boolean;
   onStatus: (update: BusinessCenterStatusUpdate) => void;
@@ -78,8 +79,17 @@ export class BusinessCenterInAppViewController {
     this.lastBounds = bounds;
     this.sessionInvalidated = false;
     this.shouldBeVisible = true;
-    if (this.viewController.webContents) {
+    const openUrl = this.resolveOpenUrl();
+    const existingWebContents = this.viewController.webContents;
+    if (existingWebContents) {
       this.viewController.setBounds(bounds);
+      if (this.shouldNavigateToOpenUrl(existingWebContents.getURL(), openUrl)) {
+        this.reportStatus({ status: 'loading' });
+        await existingWebContents.loadURL(openUrl);
+        if (operationId !== this.operationId) {
+          return false;
+        }
+      }
       if (this.lastStatus.status !== 'error') {
         this.viewController.show();
       }
@@ -90,7 +100,7 @@ export class BusinessCenterInAppViewController {
     this.reportStatus({ status: 'loading' });
     const openResult = await this.viewController.open({
       parentWindow,
-      url: this.businessCenterUrl,
+      url: openUrl,
       bounds,
       visible: this.shouldBeVisible,
       focus: false,
@@ -203,6 +213,29 @@ export class BusinessCenterInAppViewController {
       return new URL(url).origin === this.businessCenterOrigin;
     } catch {
       return false;
+    }
+  }
+
+  private resolveOpenUrl(): string {
+    const authenticatedEntryUrl = this.options.getAuthenticatedEntryUrl();
+    return authenticatedEntryUrl && this.isBusinessCenterUrl(authenticatedEntryUrl)
+      ? authenticatedEntryUrl
+      : this.businessCenterUrl;
+  }
+
+  private shouldNavigateToOpenUrl(currentUrl: string, openUrl: string): boolean {
+    if (openUrl === this.businessCenterUrl) return false;
+    try {
+      const current = new URL(currentUrl);
+      const target = new URL(openUrl);
+      if (current.origin !== target.origin) return true;
+      if (BUSINESS_CENTER_LOGIN_PATHS.has(current.pathname)) return true;
+
+      const targetPath = target.pathname.replace(/\/$/, '');
+      return current.pathname !== targetPath
+        && !current.pathname.startsWith(`${targetPath}/`);
+    } catch {
+      return true;
     }
   }
 

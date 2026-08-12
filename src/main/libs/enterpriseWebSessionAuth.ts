@@ -159,6 +159,19 @@ const matchesTargetReference = (
   && value.profileUrl === target.profileUrl
   && value.logoutUrl === target.logoutUrl;
 
+export const resolveEnterpriseWebSessionPortalUrl = (
+  reference: EnterpriseWebSessionReference,
+  isDevelopment: boolean,
+): string | null => {
+  const target = ENTERPRISE_WEB_SESSION_TARGETS.find(candidate => (
+    candidate.isDevelopment === isDevelopment
+    && matchesTargetReference(reference, candidate)
+  ));
+  return target
+    ? new URL(`${target.pathPrefix}/`, target.origin).toString()
+    : null;
+};
+
 export const isEnterpriseWebSessionReference = (
   value: unknown,
   isDevelopment: boolean,

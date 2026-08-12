@@ -5,6 +5,7 @@ import {
   isEnterpriseWebSessionReference,
   logoutEnterpriseWebSession,
   recoverEnterpriseWebSession,
+  resolveEnterpriseWebSessionPortalUrl,
   resolveEnterpriseWebSessionReference,
   resolveEnterpriseWebSessionTarget,
   validateEnterpriseWebSession,
@@ -49,6 +50,22 @@ describe('resolveEnterpriseWebSessionTarget', () => {
       entryType: 'admin',
       profileUrl: 'https://qiye.srmtj.com/admin/api/v1/me',
     });
+  });
+
+  test('resolves the role-scoped portal URL that receives the authenticated cookie', () => {
+    const adminReference = resolveEnterpriseWebSessionReference('admin', false);
+    const employeeReference = resolveEnterpriseWebSessionReference('employee', true);
+
+    expect(resolveEnterpriseWebSessionPortalUrl(adminReference!, false)).toBe(
+      'https://qiye.srmtj.com/admin/',
+    );
+    expect(resolveEnterpriseWebSessionPortalUrl(employeeReference!, true)).toBe(
+      'https://qiye.srmtj.com/employee/',
+    );
+    expect(resolveEnterpriseWebSessionPortalUrl({
+      ...adminReference!,
+      profileUrl: 'https://qiye.srmtj.com/employee/api/v1/me',
+    }, false)).toBeNull();
   });
 
   test('recognizes authenticated online portal routes in every build mode', () => {

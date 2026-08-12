@@ -339,6 +339,7 @@ import {
   isEnterpriseWebSessionReference,
   logoutEnterpriseWebSession,
   recoverEnterpriseWebSession,
+  resolveEnterpriseWebSessionPortalUrl,
   resolveEnterpriseWebSessionReference,
   resolveEnterpriseWebSessionTarget,
   validateEnterpriseWebSession,
@@ -4194,6 +4195,12 @@ if (!gotTheLock) {
     });
     businessCenterInAppView = new BusinessCenterInAppViewController({
       getMainWindow: () => mainWindow,
+      getAuthenticatedEntryUrl: () => {
+        const reference = getEnterpriseAuthSession();
+        return reference
+          ? resolveEnterpriseWebSessionPortalUrl(reference, authIsDevelopment)
+          : null;
+      },
       session: lzclawWebSession,
       isDev,
       onStatus: sendBusinessCenterStatus,
